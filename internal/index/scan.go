@@ -28,11 +28,17 @@ func (ix *Indexer) FullScan(ctx context.Context) (Stats, error) {
 	}
 
 	var st Stats
+	found := 0 // 走査で見つかった対象ファイル数（ルートが空/未マウントかどうかの判定に使う。Statsには含めない）
 	walkErr := filepath.WalkDir(ix.root, func(path string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
 		if err != nil {
+			if path == ix.root {
+				// ルート自体が読めない場合は「中身が空だった」と区別できないため
+				// 削除フェーズに進まず、走査全体を中断する。
+				return err
+			}
 			// 読めないディレクトリやファイルは飛ばす（権限エラーなど）
 			ix.log.Warn("走査をスキップ", "path", path, "err", err)
 			st.Skipped++
@@ -41,6 +47,7 @@ func (ix *Indexer) FullScan(ctx context.Context) (Stats, error) {
 		if d.IsDir() || !photo.IsSupported(path) {
 			return nil
 		}
+		found++
 
 		fi, err := d.Info()
 		if err != nil {
@@ -67,6 +74,14 @@ func (ix *Indexer) FullScan(ctx context.Context) (Stats, error) {
 	})
 	if walkErr != nil {
 		return st, walkErr
+	}
+
+	if found == 0 && len(known) > 0 {
+		// 走査が1件も見つけられなかったのにインデックスには残りがある。
+		// ドライブが未マウントなどでルートが「たまたま空に見える」場合と、
+		// 本当に全部消された場合を区別できないため、安全側に倒して削除しない。
+		ix.log.Warn("走査結果が空のため削除をスキップした", "root", ix.root, "remaining", len(known))
+		return st, nil
 	}
 
 	for path := range known {

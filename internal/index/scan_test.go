@@ -120,3 +120,33 @@ func TestFullScanStopsOnCancelledContext(t *testing.T) {
 
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestFullScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	pathA := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+	pathB := writeTestJPEG(t, f.root, "b.jpg", 40, 20)
+	_, err := f.ix.FullScan(ctx)
+	require.NoError(t, err)
+	n, err := f.st.Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	thumbA := f.gen.Path(store.IDFor(pathA))
+	thumbB := f.gen.Path(store.IDFor(pathB))
+	require.FileExists(t, thumbA)
+	require.FileExists(t, thumbB)
+
+	// ドライブが未マウントで中身が空に見えるケースを模す：ファイルだけ消してルートは残す
+	require.NoError(t, os.Remove(pathA))
+	require.NoError(t, os.Remove(pathB))
+
+	stats, err := f.ix.FullScan(ctx)
+
+	require.NoError(t, err)
+	require.Equal(t, 0, stats.Removed, "走査結果が空のときはインデックスを消さない")
+	n2, err := f.st.Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, n2, "未マウントの可能性があるため既存の登録は残す")
+	require.FileExists(t, thumbA, "サムネイルも残る")
+	require.FileExists(t, thumbB)
+}
