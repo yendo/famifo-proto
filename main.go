@@ -66,11 +66,15 @@ func run() error {
 
 	// スキャンの完了を待たずに配信を始める。大量の写真でも、
 	// インデックスができた分から順に見られるほうがよい。
+	// serveErrは1要素バッファ: ListenAndServeの失敗をrunの戻り値まで伝え、
+	// プロセスが異常終了時に0で終了しないようにする。
+	serveErr := make(chan error, 1)
 	httpSrv := &http.Server{Addr: cfg.Addr, Handler: srv.Handler()}
 	go func() {
 		log.Info("HTTPサーバーを開始", "addr", cfg.Addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("HTTPサーバーが停止しました", "err", err)
+			serveErr <- err
 			stop()
 		}
 	}()
@@ -83,11 +87,11 @@ func run() error {
 	if err != nil && ctx.Err() == nil {
 		return err
 	}
-	log.Info("フルスキャンが完了",
-		"indexed", stats.Indexed, "unchanged", stats.Unchanged,
-		"removed", stats.Removed, "skipped", stats.Skipped)
-
 	if ctx.Err() == nil {
+		log.Info("フルスキャンが完了",
+			"indexed", stats.Indexed, "unchanged", stats.Unchanged,
+			"removed", stats.Removed, "skipped", stats.Skipped)
+
 		watcher, err := index.NewWatcher(ix, log, watchDebounce)
 		if err != nil {
 			return err
@@ -101,10 +105,30 @@ func run() error {
 		log.Info("変更の監視を開始", "dir", cfg.PhotoDir)
 	}
 
-	<-ctx.Done()
+	// ListenAndServeの失敗はstop()経由でctx.Done()も閉じるため、どちらが
+	// 先に見えるかは決まらない。両方をselectで待ち、失敗はrunの戻り値まで伝える。
+	var listenErr error
+	select {
+	case <-ctx.Done():
+	case err := <-serveErr:
+		listenErr = err
+	}
 	log.Info("シャットダウンします")
 
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return httpSrv.Shutdown(shutCtx)
+	shutErr := httpSrv.Shutdown(shutCtx)
+
+	if listenErr == nil {
+		// ctx.Done()側が先に選ばれていた場合に備えて、取りこぼしが無いか確認する。
+		select {
+		case err := <-serveErr:
+			listenErr = err
+		default:
+		}
+	}
+	if listenErr != nil {
+		return listenErr
+	}
+	return shutErr
 }
