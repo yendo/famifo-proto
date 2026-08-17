@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config はアプリの実行時設定。すべてコマンドライン引数から与えられる。
@@ -53,7 +54,35 @@ func (c Config) Validate() error {
 	if c.Addr == "" {
 		return errors.New("-addr は必須です")
 	}
+	if inside, err := dirContains(c.PhotoDir, c.DataDir); err != nil {
+		return fmt.Errorf("-data を解決できません: %w", err)
+	} else if inside {
+		return fmt.Errorf("-data は -dir の外に置いてください（自己増殖の原因になります）: %s は %s の中です", c.DataDir, c.PhotoDir)
+	}
 	return nil
+}
+
+// dirContains はabsパスに変換したうえで、dataがphoto自身か、その配下にあるかを判定する。
+// filepath.Relを使うのは文字列プレフィックス比較を避けるため
+// （例えば "/photos-data" は "/photos" の中ではない）。
+func dirContains(photoDir, dataDir string) (bool, error) {
+	absPhoto, err := filepath.Abs(photoDir)
+	if err != nil {
+		return false, err
+	}
+	absData, err := filepath.Abs(dataDir)
+	if err != nil {
+		return false, err
+	}
+	rel, err := filepath.Rel(absPhoto, absData)
+	if err != nil {
+		return false, err
+	}
+	if rel == "." {
+		return true, nil // 同一ディレクトリ
+	}
+	first, _, _ := strings.Cut(rel, string(filepath.Separator))
+	return first != "..", nil
 }
 
 // DBPath はSQLiteファイルのパスを返す。

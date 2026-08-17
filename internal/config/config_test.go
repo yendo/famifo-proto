@@ -46,6 +46,8 @@ func TestParseRejectsBadInput(t *testing.T) {
 		"thumbが小さすぎる":    {"-dir", dir, "-thumb", "0"},
 		"thumbが大きすぎる":    {"-dir", dir, "-thumb", "4097"},
 		"addrが空":         {"-dir", dir, "-addr", ""},
+		"dataがdirの中":     {"-dir", dir, "-data", filepath.Join(dir, "famifo-data")},
+		"dataがdirと同じ":    {"-dir", dir, "-data", dir},
 	}
 	for name, args := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -53,6 +55,19 @@ func TestParseRejectsBadInput(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestParseAcceptsSiblingDataDir(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "photos")
+	data := filepath.Join(base, "photos-data")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	// "photos-data" は文字列としては "photos" で始まるが、兄弟ディレクトリであり
+	// 中には無い。プレフィックス比較ではなくパス階層で判定できていることの確認。
+	_, err := Parse([]string{"-dir", dir, "-data", data}, io.Discard)
+
+	require.NoError(t, err)
 }
 
 func TestDerivedPaths(t *testing.T) {
