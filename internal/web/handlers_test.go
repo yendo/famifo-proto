@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,7 +36,8 @@ func newWebFixture(t *testing.T, pageSize int) *webFixture {
 	photoDir := filepath.Join(base, "photos")
 	require.NoError(t, os.MkdirAll(photoDir, 0o755))
 
-	srv, err := NewServer(st, thumbDir, pageSize)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv, err := NewServer(st, thumbDir, pageSize, log)
 	require.NoError(t, err)
 	return &webFixture{h: srv.Handler(), st: st, thumbDir: thumbDir, photoDir: photoDir}
 }

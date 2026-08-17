@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"log/slog"
 	"net/http"
 
 	"github.com/yendo/famifo-proto/internal/store"
@@ -21,16 +22,17 @@ type Server struct {
 	tmpl     *template.Template
 	thumbDir string
 	pageSize int
+	log      *slog.Logger
 }
 
 // NewServer はテンプレートを読み込んでServerを作る。
 // pageSize は一覧1ページあたりの枚数。
-func NewServer(st *store.Store, thumbDir string, pageSize int) (*Server, error) {
+func NewServer(st *store.Store, thumbDir string, pageSize int, log *slog.Logger) (*Server, error) {
 	tmpl, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("テンプレートを読み込めません: %w", err)
 	}
-	return &Server{st: st, tmpl: tmpl, thumbDir: thumbDir, pageSize: pageSize}, nil
+	return &Server{st: st, tmpl: tmpl, thumbDir: thumbDir, pageSize: pageSize, log: log}, nil
 }
 
 // Handler はルーティング済みのハンドラを返す。
