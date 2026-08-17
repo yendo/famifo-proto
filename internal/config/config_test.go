@@ -40,12 +40,12 @@ func TestParseRejectsBadInput(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
 
 	tests := map[string][]string{
-		"dirが未指定":         {},
-		"dirが存在しない":       {"-dir", filepath.Join(dir, "nope")},
+		"dirが未指定":        {},
+		"dirが存在しない":      {"-dir", filepath.Join(dir, "nope")},
 		"dirがディレクトリではない": {"-dir", file},
-		"thumbが小さすぎる":     {"-dir", dir, "-thumb", "0"},
-		"thumbが大きすぎる":     {"-dir", dir, "-thumb", "4097"},
-		"addrが空":          {"-dir", dir, "-addr", ""},
+		"thumbが小さすぎる":    {"-dir", dir, "-thumb", "0"},
+		"thumbが大きすぎる":    {"-dir", dir, "-thumb", "4097"},
+		"addrが空":         {"-dir", dir, "-addr", ""},
 	}
 	for name, args := range tests {
 		t.Run(name, func(t *testing.T) {
