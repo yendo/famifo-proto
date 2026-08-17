@@ -2206,7 +2206,11 @@ func (w *Watcher) enqueueTree(root string, pending map[string]time.Time) {
 
 - [ ] **Step 4: テストが通ることを確認する**
 
-Run: `CGO_ENABLED=0 go test ./internal/index/ -v -race`
+Run: `CGO_ENABLED=0 go test ./internal/index/ -v` に加えて `CGO_ENABLED=1 go test ./internal/index/ -race -count=1`
+
+`-race` はレースディテクタ自体がcgoを要求するため `CGO_ENABLED=0` とは併用できない（`-race requires cgo` で即座に失敗する）。
+`CGO_ENABLED=0` は単一バイナリ配布のための制約であって、開発中の検証まで縛るものではない。
+配布形態の確認（cgoなしでビルド・テストが通る）と競合検出（cgoありで `-race`）は別々に実行する。
 Expected: 全テストPASS（`-race` でデータ競合が無いことも確認する）
 
 - [ ] **Step 5: コミット**
