@@ -2225,7 +2225,7 @@ HTTPルーティングと、サムネイル・原本の配信を実装する。�
 **Files:**
 - Create: `internal/web/server.go`
 - Create: `internal/web/handlers.go`
-- Create: `internal/web/static/.gitkeep`（Task 10・11で中身を入れる）
+- Create: `internal/web/static/htmx.min.js`（ダウンロード。Task 10で使う）
 - Test: `internal/web/handlers_test.go`
 
 **Interfaces:**
@@ -2516,11 +2516,16 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) (store.Photo, bo
 
 ```bash
 mkdir -p internal/web/templates internal/web/static
-touch internal/web/static/.gitkeep
+# htmxはここで取得する。go:embed はドットファイル（.gitkeep等）を除外するため、
+# static/ に実体のあるファイルが1つも無いと
+# "cannot embed directory static: contains no embeddable files" でビルドが落ちる。
+curl -fsSL https://unpkg.com/htmx.org@2.0.7/dist/htmx.min.js -o internal/web/static/htmx.min.js
 printf '{{define "placeholder"}}{{end}}\n' > internal/web/templates/placeholder.html
+ls -l internal/web/static/htmx.min.js
 ```
 
-`//go:embed` は空ディレクトリを許さないため、Task 10で実物を入れるまでのつなぎを置く。
+Expected: htmx.min.js が約50KBで取得できる。
+`templates/placeholder.html` は `template.ParseFS` が最低1ファイルを要求するためのつなぎで、Task 10で実物に置き換える。
 
 - [ ] **Step 5: テストが通ることを確認する**
 
@@ -2545,7 +2550,6 @@ git commit -m "feat: Webサーバー基盤と画像配信を追加"
 - Create: `internal/web/templates/gallery.html`
 - Create: `internal/web/templates/items.html`
 - Delete: `internal/web/templates/placeholder.html`
-- Create: `internal/web/static/htmx.min.js`（ダウンロード）
 - Test: `internal/web/gallery_test.go`
 
 **Interfaces:**
@@ -2554,15 +2558,15 @@ git commit -m "feat: Webサーバー基盤と画像配信を追加"
 
 **設計メモ:** 一覧のマークアップは `items.html` の1箇所だけに置き、初回ページも追加読み込みも同じテンプレートを使う。これがHTMLフラグメントパターンの要点で、JSON APIにしてJS側で組み立てると同じマークアップを二重に持つことになる。次ページの有無は `pageSize+1` 件取得して判定する。
 
-- [ ] **Step 1: htmxを取得する**
+- [ ] **Step 1: htmxが配置済みであることを確認する**
+
+htmx本体はTask 9 Step 4で取得済み。ここでは存在だけ確認する。
 
 ```bash
-curl -fsSL https://unpkg.com/htmx.org@2.0.7/dist/htmx.min.js -o internal/web/static/htmx.min.js
-rm internal/web/static/.gitkeep
 ls -l internal/web/static/htmx.min.js
 ```
 
-Expected: 約50KBのファイルが取得できる
+Expected: 約50KBのファイルがある（無ければTask 9 Step 4のcurlを実行する）
 
 - [ ] **Step 2: 失敗するテストを書く**
 
