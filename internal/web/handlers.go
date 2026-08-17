@@ -94,7 +94,7 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "gallery", galleryView{itemsView: items, Total: total}); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		s.log.Error("gallery テンプレートの描画に失敗", "handler", "handleGallery", "error", err)
+		s.log.Error("gallery テンプレートの描画に失敗", "err", err)
 		return
 	}
 }
@@ -116,7 +116,7 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "items", items); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		s.log.Error("items テンプレートの描画に失敗", "handler", "handleItems", "error", err)
+		s.log.Error("items テンプレートの描画に失敗", "err", err)
 		return
 	}
 }
