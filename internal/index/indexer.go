@@ -84,3 +84,24 @@ func (ix *Indexer) RemoveFile(ctx context.Context, path string) error {
 	}
 	return nil
 }
+
+// RemoveTree はdir配下に登録されている写真をまとめてインデックスとサムネイル
+// キャッシュから消す。ディレクトリのリネーム/移動はfsnotifyでは子ファイルごとの
+// イベントが来ないため、パスの前方一致で一括削除する必要がある。
+// 該当が無いパスに対しては何もしない。
+func (ix *Indexer) RemoveTree(ctx context.Context, dir string) error {
+	photos, err := ix.st.DeleteByPathPrefix(ctx, dir)
+	if err != nil {
+		return err
+	}
+	for _, p := range photos {
+		if !p.HasThumb {
+			continue
+		}
+		if err := ix.gen.Remove(p.ID); err != nil {
+			// DBからは消えているので、キャッシュの消し残しは致命的ではない
+			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID, "err", err)
+		}
+	}
+	return nil
+}

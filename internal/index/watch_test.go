@@ -102,6 +102,47 @@ func TestWatcherPicksUpDirectoryMovedInWholesale(t *testing.T) {
 	requireCount(t, f, 2)
 }
 
+func TestWatcherRemovesRowsWhenDirectoryRenamedWithinTree(t *testing.T) {
+	f := newFixture(t)
+	startWatcher(t, f)
+
+	album := filepath.Join(f.root, "album")
+	require.NoError(t, os.MkdirAll(album, 0o755))
+	time.Sleep(50 * time.Millisecond) // 監視登録を待つ
+	writeTestJPEG(t, album, "a.jpg", 40, 20)
+	writeTestJPEG(t, album, "b.jpg", 40, 20)
+	requireCount(t, f, 2)
+
+	// ディレクトリ内でのリネーム: 子ファイルには個別イベントが来ない。
+	// RemoveTreeでの前方一致削除が無いと、古いパスの行が残ったまま
+	// 新しいパスの行が二重に増える。
+	renamed := filepath.Join(f.root, "album2")
+	require.NoError(t, os.Rename(album, renamed))
+	time.Sleep(50 * time.Millisecond) // 監視登録を待つ
+	// 新しい場所は監視外で作られたのと同様、Createの一括取り込みで拾われる。
+	requireCount(t, f, 2)
+
+	paths, err := f.st.AllPaths(context.Background())
+	require.NoError(t, err)
+	for p := range paths {
+		require.Contains(t, p, "album2", "旧パス album の行が残ってはいけない: %s", p)
+	}
+}
+
+func TestWatcherHandlesFileRenameWithinTree(t *testing.T) {
+	// Remove/RenameでRemoveTreeも呼ぶようになったため、ファイルのリネームでも
+	// RemoveFileとRemoveTreeの両方が呼ばれる。該当の無い方は静かにno-opであることを確認する。
+	f := newFixture(t)
+	startWatcher(t, f)
+	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+	requireCount(t, f, 1)
+
+	require.NoError(t, os.Rename(path, filepath.Join(f.root, "renamed.jpg")))
+
+	time.Sleep(150 * time.Millisecond)
+	requireCount(t, f, 1) // 消えたのはa.jpgの行のみ。renamed.jpgはCreateで拾われて1件のまま
+}
+
 func TestWatcherDebouncesRepeatedWrites(t *testing.T) {
 	f := newFixture(t)
 	startWatcher(t, f)

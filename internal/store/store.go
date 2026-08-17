@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure Goのsqliteドライバ。cgo不要。
@@ -142,6 +144,38 @@ func (s *Store) DeleteByPath(ctx context.Context, path string) (Photo, bool, err
 	}
 	return p, true, nil
 }
+
+// DeleteByPathPrefix はディレクトリ配下の写真をまとめて削除し、削除した行を返す。
+// prefixにセパレータを1つ補ってから前方一致させるため、"album" が
+// "album2" のような兄弟ディレクトリを巻き込むことはない。
+func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]Photo, error) {
+	dirPrefix := prefix
+	if !strings.HasSuffix(dirPrefix, string(filepath.Separator)) {
+		dirPrefix += string(filepath.Separator)
+	}
+	// LIKEのワイルドカード（% _）をエスケープしたうえで前方一致させる。
+	escaped := likeEscaper.Replace(dirPrefix)
+
+	rows, err := s.db.QueryContext(ctx,
+		`DELETE FROM photos WHERE path LIKE ? ESCAPE '\' RETURNING `+selectCols,
+		escaped+"%")
+	if err != nil {
+		return nil, fmt.Errorf("ディレクトリ配下の写真を削除できません (%s): %w", prefix, err)
+	}
+	defer rows.Close()
+
+	var out []Photo
+	for rows.Next() {
+		p, err := scanPhoto(rows)
+		if err != nil {
+			return nil, fmt.Errorf("削除結果を読めません: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // ListPage は撮影日時の新しい順に1ページ分を返す。
 // 同一撮影日時の写真が並んでもページ境界で重複・欠落しないよう、IDを第2キーにする。

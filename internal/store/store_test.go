@@ -105,6 +105,25 @@ func TestDeleteByPath(t *testing.T) {
 	require.False(t, ok, "2回目の削除は見つからないと報告する")
 }
 
+func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	a := photoAt("/p/album/a.jpg", time.Unix(1600000000, 0))
+	b := photoAt("/p/album2/b.jpg", time.Unix(1600000001, 0))
+	require.NoError(t, s.Upsert(ctx, a))
+	require.NoError(t, s.Upsert(ctx, b))
+
+	deleted, err := s.DeleteByPathPrefix(ctx, "/p/album")
+
+	require.NoError(t, err)
+	require.Len(t, deleted, 1, "album2 まで巻き込んではいけない")
+	require.Equal(t, a.Path, deleted[0].Path)
+
+	n, err := s.Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "album2 の行は残る")
+}
+
 func TestListPagePaginatesNewestFirst(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

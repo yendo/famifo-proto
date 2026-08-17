@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/yendo/famifo-proto/internal/photo"
 )
 
 // Watcher はfsnotifyでディレクトリツリーを監視し、変更をインデックスに反映する。
@@ -71,9 +72,17 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 	switch {
 	case ev.Has(fsnotify.Remove), ev.Has(fsnotify.Rename):
 		// Renameは「この名前から消えた」を意味する。移動先は別途Createで届く。
+		// この時点では消えたのがファイルかディレクトリか os.Stat では判別できないため
+		// 両方呼ぶ。該当しない方は何もマッチせずno-opになるだけなので安全。
+		// ディレクトリの場合、中の個々のファイルにはイベントが来ない
+		//（mv album ../elsewhere や mv album album2 のケース）ので、
+		// RemoveTreeで配下の行をパスの前方一致でまとめて消す。
 		delete(pending, ev.Name)
 		if err := w.ix.RemoveFile(ctx, ev.Name); err != nil {
 			w.log.Warn("削除の反映に失敗", "path", ev.Name, "err", err)
+		}
+		if err := w.ix.RemoveTree(ctx, ev.Name); err != nil {
+			w.log.Warn("ディレクトリ配下の削除の反映に失敗", "path", ev.Name, "err", err)
 		}
 
 	case ev.Has(fsnotify.Create):
@@ -82,7 +91,9 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 			return // すぐ消された等。何もしない
 		}
 		if !fi.IsDir() {
-			pending[ev.Name] = time.Now()
+			if photo.IsSupported(ev.Name) {
+				pending[ev.Name] = time.Now()
+			}
 			return
 		}
 		// 新しいディレクトリ: 監視に加えたうえで、既に入っている中身も拾う。
@@ -93,7 +104,9 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 		w.enqueueTree(ev.Name, pending)
 
 	case ev.Has(fsnotify.Write):
-		pending[ev.Name] = time.Now()
+		if photo.IsSupported(ev.Name) {
+			pending[ev.Name] = time.Now()
+		}
 	}
 }
 
@@ -130,11 +143,11 @@ func (w *Watcher) addTree(root string) error {
 	})
 }
 
-// enqueueTree は root 以下の全ファイルを保留キューに積む。
+// enqueueTree は root 以下の対象ファイルを保留キューに積む。
 func (w *Watcher) enqueueTree(root string, pending map[string]time.Time) {
 	now := time.Now()
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil || d.IsDir() || !photo.IsSupported(path) {
 			return nil
 		}
 		pending[path] = now
