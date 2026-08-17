@@ -4,20 +4,118 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
-// handleGallery はギャラリーのトップページを返す。Task 10で実装する。
-func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+// photoView は1枚分のテンプレート入力。
+type photoView struct {
+	ID       string
+	ThumbURL string
+	FullURL  string
 }
 
-// handleItems は無限スクロール用のHTML断片を返す。Task 10で実装する。
+// cursorView は次ページを指すカーソル。
+type cursorView struct {
+	TakenAt int64
+	ID      string
+}
+
+// itemsView は items.html の入力。
+type itemsView struct {
+	Photos []photoView
+	Next   *cursorView
+}
+
+// galleryView は gallery.html の入力。itemsViewを埋め込むので
+// {{template "items" .}} にそのまま渡せる。
+type galleryView struct {
+	itemsView
+	Total int
+}
+
+// buildPage は1ページ分を組み立てる。次ページの有無を知るために
+// pageSize+1 件取得し、余った1件は描画せず「続きがある」印としてだけ使う。
+func (s *Server) buildPage(r *http.Request, cur store.Cursor) (itemsView, error) {
+	photos, err := s.st.ListPage(r.Context(), cur, s.pageSize+1)
+	if err != nil {
+		return itemsView{}, err
+	}
+
+	var v itemsView
+	if len(photos) > s.pageSize {
+		photos = photos[:s.pageSize]
+		last := photos[len(photos)-1]
+		v.Next = &cursorView{TakenAt: last.TakenAt.Unix(), ID: last.ID}
+	}
+
+	v.Photos = make([]photoView, 0, len(photos))
+	for _, p := range photos {
+		pv := photoView{ID: p.ID, FullURL: "/photo/" + p.ID, ThumbURL: "/photo/" + p.ID}
+		if p.HasThumb {
+			pv.ThumbURL = "/thumb/" + p.ID
+		}
+		v.Photos = append(v.Photos, pv)
+	}
+	return v, nil
+}
+
+// parseCursor はクエリからカーソルを読む。パラメータが無ければ先頭ページ。
+func parseCursor(r *http.Request) (store.Cursor, error) {
+	raw := r.URL.Query().Get("t")
+	id := r.URL.Query().Get("id")
+	if raw == "" && id == "" {
+		return store.Cursor{}, nil
+	}
+	at, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return store.Cursor{}, err
+	}
+	return store.Cursor{TakenAt: time.Unix(at, 0), ID: id, Set: true}, nil
+}
+
+// handleGallery はギャラリーのトップページを返す。
+func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
+	items, err := s.buildPage(r, store.Cursor{})
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	total, err := s.st.Count(r.Context())
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "gallery", galleryView{itemsView: items, Total: total}); err != nil {
+		// ヘッダ送出後なのでステータスは変えられない。ログに残すのみ。
+		return
+	}
+}
+
+// handleItems は無限スクロール用のHTML断片を返す。
+// 初回ページと同じテンプレートを使うことで、マークアップの二重管理を避ける。
 func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	cur, err := parseCursor(r)
+	if err != nil {
+		http.Error(w, "bad cursor", http.StatusBadRequest)
+		return
+	}
+	items, err := s.buildPage(r, cur)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "items", items); err != nil {
+		return
+	}
 }
 
 // handleThumb はサムネイルを配信する。

@@ -1,0 +1,13 @@
+{{define "items"}}
+{{range .Photos}}
+<a class="tile" href="{{.FullURL}}" data-full="{{.FullURL}}">
+  <img src="{{.ThumbURL}}" alt="" loading="lazy" decoding="async">
+</a>
+{{end}}
+{{if .Next}}
+<div class="sentinel"
+     hx-get="/items?t={{.Next.TakenAt}}&id={{.Next.ID}}"
+     hx-trigger="revealed"
+     hx-swap="outerHTML"></div>
+{{end}}
+{{end}}

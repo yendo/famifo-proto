@@ -1,0 +1,28 @@
+{{define "gallery"}}<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>famifo</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <h1>famifo</h1>
+  <span class="count">{{.Total}} 枚</span>
+</header>
+
+<main id="gallery" class="gallery">
+{{template "items" .}}
+</main>
+
+<div id="lightbox" class="lightbox" hidden>
+  <img alt="">
+  <button class="lb-nav lb-prev" type="button" aria-label="前の写真">‹</button>
+  <button class="lb-nav lb-next" type="button" aria-label="次の写真">›</button>
+</div>
+</body>
+</html>
+{{end}}
