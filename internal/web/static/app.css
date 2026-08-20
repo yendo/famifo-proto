@@ -3,6 +3,9 @@
   --fg: #eee;
   --tile-bg: #222;
   --gap: 4px;
+  /* ヘッダーの高さ。ノッチ端末では safe-area の分だけ伸びる。
+     スクラバーの開始位置がこれに追従する必要があるため1箇所で定義する。 */
+  --topbar-h: calc(max(12px, env(safe-area-inset-top)) + 32px);
 }
 
 * { box-sizing: border-box; }
@@ -29,6 +32,8 @@ body.locked { overflow: hidden; }
   padding-top: max(12px, env(safe-area-inset-top));
   background: rgba(17, 17, 17, 0.9);
   backdrop-filter: blur(8px);
+  min-height: var(--topbar-h);
+  box-sizing: border-box;
 }
 .topbar h1 { margin: 0; font-size: 1rem; letter-spacing: 0.08em; }
 .count { font-size: 0.8rem; opacity: 0.6; }
@@ -113,7 +118,7 @@ body.locked { overflow: hidden; }
 /* 日付スクラバー。スクロール中だけ現れる */
 .scrubber {
   position: fixed;
-  top: 56px;
+  top: var(--topbar-h);
   right: 0;
   bottom: 0;
   width: 32px;
