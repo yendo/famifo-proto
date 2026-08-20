@@ -127,6 +127,7 @@ const famifo = (() => {
 
   seedFirstChunk();
   measure();
+  render();
   window.addEventListener('scroll', render, { passive: true });
   window.addEventListener('resize', onResize);
 
