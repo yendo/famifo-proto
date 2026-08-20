@@ -182,3 +182,67 @@ func TestAllPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, map[string]int64{"/photos/a.jpg": 1650000000}, got)
 }
+
+func TestListRangeReturnsRequestedWindow(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	// 新しい順に e, d, c, b, a になるよう投入する
+	for i, name := range []string{"a", "b", "c", "d", "e"} {
+		require.NoError(t, s.Upsert(ctx, photoAt("/photos/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
+	}
+
+	got, err := s.ListRange(ctx, 1, 2)
+
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, "/photos/d.jpg", got[0].Path)
+	require.Equal(t, "/photos/c.jpg", got[1].Path)
+}
+
+func TestListRangeMatchesListPageOrdering(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	for i, name := range []string{"a", "b", "c", "d", "e"} {
+		require.NoError(t, s.Upsert(ctx, photoAt("/photos/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
+	}
+
+	byCursor, err := s.ListPage(ctx, Cursor{}, 5)
+	require.NoError(t, err)
+	byOffset, err := s.ListRange(ctx, 0, 5)
+	require.NoError(t, err)
+
+	require.Len(t, byOffset, 5)
+	for i := range byCursor {
+		require.Equal(t, byCursor[i].Path, byOffset[i].Path, "移行の前後で並び順が変わらないこと")
+	}
+}
+
+func TestListRangeHandlesBoundaries(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	for i, name := range []string{"a", "b", "c"} {
+		require.NoError(t, s.Upsert(ctx, photoAt("/photos/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
+	}
+
+	tail, err := s.ListRange(ctx, 2, 10) // limitが残数を超える
+	require.NoError(t, err)
+	require.Len(t, tail, 1)
+
+	past, err := s.ListRange(ctx, 99, 10) // 範囲外
+	require.NoError(t, err)
+	require.Empty(t, past)
+
+	zero, err := s.ListRange(ctx, 0, 0) // limit=0
+	require.NoError(t, err)
+	require.Empty(t, zero)
+}
+
+func TestListRangeRejectsNegativeArguments(t *testing.T) {
+	s := openTestStore(t)
+
+	_, err := s.ListRange(context.Background(), -1, 10)
+	require.Error(t, err)
+
+	_, err = s.ListRange(context.Background(), 0, -1)
+	require.Error(t, err)
+}

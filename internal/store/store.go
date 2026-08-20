@@ -207,6 +207,36 @@ func (s *Store) ListPage(ctx context.Context, cur Cursor, limit int) ([]Photo, e
 	return out, rows.Err()
 }
 
+// ListRange は撮影日時の新しい順で offset 番目から limit 件を返す。
+// 仮想スクロールは任意の位置へ飛ぶため、カーソルではなくオフセットで引く。
+func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]Photo, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("offset は0以上で指定してください: %d", offset)
+	}
+	if limit < 0 {
+		return nil, fmt.Errorf("limit は0以上で指定してください: %d", limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+selectCols+` FROM photos
+		 ORDER BY taken_at DESC, id DESC
+		 LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("一覧を取得できません: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Photo
+	for rows.Next() {
+		p, err := scanPhoto(rows)
+		if err != nil {
+			return nil, fmt.Errorf("一覧を読めません: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // AllPaths は登録済みの全パスとそのmtimeを返す。フルスキャンでの差分検出に使う。
 func (s *Store) AllPaths(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT path, mod_time FROM photos`)
