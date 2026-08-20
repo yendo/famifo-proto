@@ -22,7 +22,39 @@ func TestGalleryRendersTiles(t *testing.T) {
 	body := rec.Body.String()
 	require.Contains(t, body, `src="/thumb/`+p.ID+`"`)
 	require.Contains(t, body, `data-full="/photo/`+p.ID+`"`)
-	require.Contains(t, body, "/static/htmx.min.js")
+}
+
+func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
+	f := newWebFixture(t, 60)
+	for i := range 3 {
+		f.addPhoto(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), true)
+	}
+
+	body := do(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `data-total="3"`)
+	require.Contains(t, body, `id="spacer"`)
+	require.Contains(t, body, `id="window"`)
+	require.Equal(t, 3, strings.Count(body, `class="tile"`), "先頭の塊を埋めて返すこと")
+}
+
+func TestGalleryDropsHtmx(t *testing.T) {
+	f := newWebFixture(t, 60)
+	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), true)
+
+	body := do(t, f.h, "/").Body.String()
+
+	require.NotContains(t, body, "htmx.min.js")
+	require.NotContains(t, body, "hx-")
+}
+
+func TestGalleryEmptyLibrary(t *testing.T) {
+	f := newWebFixture(t, 60)
+
+	body := do(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `data-total="0"`)
+	require.NotContains(t, body, `class="tile"`)
 }
 
 func TestGalleryUsesOriginalAsThumbForHEIC(t *testing.T) {

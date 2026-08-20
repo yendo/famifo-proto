@@ -37,7 +37,8 @@ type itemsView struct {
 // {{template "items" .}} にそのまま渡せる。
 type galleryView struct {
 	itemsView
-	Total int
+	Total     int
+	ChunkSize int
 }
 
 // monthView は /dates の1要素。転送量を抑えるためキー名を短くしている。
@@ -125,8 +126,9 @@ func parseCursor(r *http.Request) (store.Cursor, error) {
 }
 
 // handleGallery はギャラリーのトップページを返す。
+// 先頭の塊を埋めた状態で返すので、開いた直後に灰色の画面が出ない。
 func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
-	items, err := s.buildPage(r, store.Cursor{})
+	items, err := s.buildRange(r, 0, s.pageSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -138,7 +140,8 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "gallery", galleryView{itemsView: items, Total: total}); err != nil {
+	view := galleryView{itemsView: items, Total: total, ChunkSize: s.pageSize}
+	if err := s.tmpl.ExecuteTemplate(w, "gallery", view); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
 		s.log.Error("gallery テンプレートの描画に失敗", "err", err)
 		return
