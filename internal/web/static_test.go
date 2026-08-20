@@ -50,6 +50,16 @@ func TestAppJSLightboxUsesGlobalIndex(t *testing.T) {
 		"DOM上のタイル一覧に依存する実装は残さない")
 }
 
+func TestAppJSImplementsScrubber(t *testing.T) {
+	f := newWebFixture(t, 10)
+
+	body := do(t, f.h, "/static/app.js").Body.String()
+
+	require.Contains(t, body, "#scrubber")
+	require.Contains(t, body, "/dates")
+	require.Contains(t, body, "scrub-label", "ドラッグ中に年月を表示する")
+}
+
 func TestAppCSSIsResponsive(t *testing.T) {
 	f := newWebFixture(t, 10)
 

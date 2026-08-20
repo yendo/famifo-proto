@@ -240,3 +240,91 @@ const famifo = (() => {
     }
   }, { passive: true });
 })();
+
+// 日付スクラバー。ドラッグで全期間の任意の位置へ飛ぶ。
+(() => {
+  const bar = document.querySelector('#scrubber');
+  if (!bar || !famifo || famifo.total === 0) return;
+
+  const thumb = bar.querySelector('.scrub-thumb');
+  const label = bar.querySelector('.scrub-label');
+
+  let months = []; // [{m:"2022-11", o:1777}, ...] 新しい順
+  let dragging = false;
+  let hideTimer = 0;
+
+  fetch('/dates')
+    .then((r) => (r.ok ? r.json() : []))
+    .then((data) => { months = data; })
+    .catch(() => { months = []; }); // ラベルが出ないだけでドラッグは効く
+
+  bar.hidden = false;
+
+  // オフセットが属する月を二分探索で求める
+  function monthAt(offset) {
+    if (months.length === 0) return '';
+    let lo = 0;
+    let hi = months.length - 1;
+    let found = months[0];
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (months[mid].o <= offset) { found = months[mid]; lo = mid + 1; } else { hi = mid - 1; }
+    }
+    const [y, m] = found.m.split('-');
+    return `${y}年${Number(m)}月`;
+  }
+
+  function show() {
+    bar.classList.add('visible');
+    clearTimeout(hideTimer);
+    if (!dragging) {
+      hideTimer = setTimeout(() => bar.classList.remove('visible'), 1500);
+    }
+  }
+
+  // スクロール位置からつまみの位置を更新する
+  function sync() {
+    const frac = famifo.scroller.scrollTop / famifo.maxScroll();
+    const top = frac * (bar.clientHeight - thumb.offsetHeight);
+    thumb.style.top = `${top}px`;
+    show();
+  }
+
+  function seek(clientY) {
+    const rect = bar.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+    famifo.scroller.scrollTop = frac * famifo.maxScroll();
+
+    const offset = Math.floor(frac * famifo.total);
+    const text = monthAt(offset);
+    if (text) {
+      label.textContent = text;
+      label.hidden = false;
+      label.style.top = `${Math.min(rect.height - 24, Math.max(0, clientY - rect.top - 12))}px`;
+    }
+  }
+
+  function startDrag(clientY) {
+    dragging = true;
+    bar.classList.add('visible');
+    clearTimeout(hideTimer);
+    seek(clientY);
+  }
+
+  function endDrag() {
+    dragging = false;
+    label.hidden = true;
+    show();
+  }
+
+  bar.addEventListener('pointerdown', (e) => {
+    bar.setPointerCapture(e.pointerId);
+    startDrag(e.clientY);
+  });
+  bar.addEventListener('pointermove', (e) => { if (dragging) seek(e.clientY); });
+  bar.addEventListener('pointerup', endDrag);
+  bar.addEventListener('pointercancel', endDrag);
+
+  window.addEventListener('scroll', sync, { passive: true });
+  sync();
+})();
