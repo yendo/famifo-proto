@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -245,4 +246,53 @@ func TestListRangeRejectsNegativeArguments(t *testing.T) {
 
 	_, err = s.ListRange(context.Background(), 0, -1)
 	require.Error(t, err)
+}
+
+func TestMonthOffsetsMarksMonthBoundaries(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	// 新しい順に: 2022-12 が2枚、2022-11 が1枚、2021-05 が2枚
+	times := []time.Time{
+		time.Date(2022, 12, 5, 10, 0, 0, 0, time.Local),
+		time.Date(2022, 12, 1, 10, 0, 0, 0, time.Local),
+		time.Date(2022, 11, 8, 10, 0, 0, 0, time.Local),
+		time.Date(2021, 5, 20, 10, 0, 0, 0, time.Local),
+		time.Date(2021, 5, 2, 10, 0, 0, 0, time.Local),
+	}
+	for i, at := range times {
+		require.NoError(t, s.Upsert(ctx, photoAt(fmt.Sprintf("/photos/%d.jpg", i), at)))
+	}
+
+	got, err := s.MonthOffsets(ctx)
+
+	require.NoError(t, err)
+	require.Equal(t, []MonthOffset{
+		{Month: "2022-12", Offset: 0},
+		{Month: "2022-11", Offset: 2},
+		{Month: "2021-05", Offset: 3},
+	}, got)
+}
+
+func TestMonthOffsetsUsesLocalTime(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	// ローカルで11月1日の未明。UTCに直すと10月31日になる時刻を選ぶ。
+	at := time.Date(2022, 11, 1, 0, 30, 0, 0, time.Local)
+	require.NoError(t, s.Upsert(ctx, photoAt("/photos/a.jpg", at)))
+
+	got, err := s.MonthOffsets(ctx)
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, "2022-11", got[0].Month,
+		"UTCで切ると2022-10になる。ローカル時刻で分類すること")
+}
+
+func TestMonthOffsetsEmptyStore(t *testing.T) {
+	s := openTestStore(t)
+
+	got, err := s.MonthOffsets(context.Background())
+
+	require.NoError(t, err)
+	require.Empty(t, got)
 }

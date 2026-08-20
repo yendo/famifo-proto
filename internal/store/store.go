@@ -265,3 +265,38 @@ func (s *Store) Count(ctx context.Context) (int, error) {
 	}
 	return n, nil
 }
+
+// MonthOffset は、その月の写真が一覧の何番目から始まるかを表す。
+type MonthOffset struct {
+	Month  string // "2006-01" 形式。ローカル時刻で判定する
+	Offset int    // 0 起点
+}
+
+// MonthOffsets は月の境目を新しい順に返す。日付スクラバーの目盛りに使う。
+//
+// SQLの strftime は UTC で月を切るため使わない。ローカルで月初の未明に
+// 撮った写真が前月に分類されてしまう。Go 側で time.Local に変換して数える。
+func (s *Store) MonthOffsets(ctx context.Context) ([]MonthOffset, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT taken_at FROM photos ORDER BY taken_at DESC, id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("撮影日時を取得できません: %w", err)
+	}
+	defer rows.Close()
+
+	var out []MonthOffset
+	last := ""
+	i := 0
+	for rows.Next() {
+		var at int64
+		if err := rows.Scan(&at); err != nil {
+			return nil, fmt.Errorf("撮影日時を読めません: %w", err)
+		}
+		if m := time.Unix(at, 0).Format("2006-01"); m != last {
+			out = append(out, MonthOffset{Month: m, Offset: i})
+			last = m
+		}
+		i++
+	}
+	return out, rows.Err()
+}
