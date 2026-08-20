@@ -155,26 +155,33 @@ const famifo = (() => {
   };
 })();
 
-// ギャラリーのライトボックス。htmxが後から差し込むタイルにも効くよう、
-// クリックはdocumentへの委譲で捕まえる。
+// ライトボックス。仮想スクロールではDOM上に可視範囲のタイルしか無いため、
+// 全体の通し番号で動かす。そうしないと窓枠の端でスワイプが止まる。
 (() => {
   const box = document.querySelector('#lightbox');
-  if (!box) return;
+  if (!box || !famifo) return;
 
   const img = box.querySelector('img');
-  const SWIPE_X = 50;  // 左右送りとみなす最小移動量(px)
-  const SWIPE_Y = 80;  // 下スワイプで閉じる最小移動量(px)
+  const SWIPE_X = 50; // 左右送りとみなす最小移動量(px)
+  const SWIPE_Y = 80; // 下スワイプで閉じる最小移動量(px)
 
-  let urls = [];
   let idx = -1;
+  let requestSeq = 0; // 連続スワイプで古いurlAtの解決が新しいものを上書きしないための世代番号
 
-  const tiles = () => Array.from(document.querySelectorAll('#gallery .tile[data-full]'));
-
-  function open(i) {
-    urls = tiles().map((a) => a.dataset.full);
-    if (i < 0 || i >= urls.length) return;
+  async function show(i) {
+    if (i < 0 || i >= famifo.total) return;
+    const mySeq = ++requestSeq;
+    const url = await famifo.urlAt(i);
+    if (!url || mySeq !== requestSeq) return; // 待っている間に追い越されたら破棄
     idx = i;
-    img.src = urls[idx];
+    img.src = url;
+    famifo.ensureChunk(i + 1); // 次を先読みしておく
+    famifo.ensureChunk(i - 1);
+  }
+
+  async function open(i) {
+    await show(i);
+    if (idx < 0) return;
     box.hidden = false;
     document.body.classList.add('locked');
   }
@@ -185,31 +192,26 @@ const famifo = (() => {
     document.body.classList.remove('locked');
   }
 
-  function step(delta) {
-    const next = idx + delta;
-    if (next < 0 || next >= urls.length) return;
-    idx = next;
-    img.src = urls[idx];
-  }
-
   document.addEventListener('click', (e) => {
-    const tile = e.target.closest('#gallery .tile');
+    const tile = e.target.closest('#window .tile');
     if (!tile) return;
     e.preventDefault();
-    open(tiles().indexOf(tile));
+    // 窓枠内で何番目か + 貼り付けの先頭 = 全体の通し番号
+    const within = [...tile.parentElement.querySelectorAll('.tile')].indexOf(tile);
+    open(famifo.pastedIndex() + within);
   });
 
   box.addEventListener('click', (e) => {
-    if (e.target.closest('.lb-prev')) { step(-1); return; }
-    if (e.target.closest('.lb-next')) { step(1); return; }
+    if (e.target.closest('.lb-prev')) { show(idx - 1); return; }
+    if (e.target.closest('.lb-next')) { show(idx + 1); return; }
     close();
   });
 
   document.addEventListener('keydown', (e) => {
     if (box.hidden) return;
     if (e.key === 'Escape') close();
-    else if (e.key === 'ArrowRight') step(1);
-    else if (e.key === 'ArrowLeft') step(-1);
+    else if (e.key === 'ArrowRight') show(idx + 1);
+    else if (e.key === 'ArrowLeft') show(idx - 1);
   });
 
   let startX = 0;
@@ -232,7 +234,7 @@ const famifo = (() => {
     const dy = t.clientY - startY;
 
     if (Math.abs(dx) > SWIPE_X && Math.abs(dx) > Math.abs(dy)) {
-      step(dx < 0 ? 1 : -1);
+      show(dx < 0 ? idx + 1 : idx - 1);
     } else if (dy > SWIPE_Y && Math.abs(dy) > Math.abs(dx)) {
       close();
     }

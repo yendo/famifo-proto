@@ -38,6 +38,18 @@ func TestAppJSImplementsVirtualScroll(t *testing.T) {
 	require.Contains(t, body, "famifo", "他のスクリプトから使える形で公開する")
 }
 
+func TestAppJSLightboxUsesGlobalIndex(t *testing.T) {
+	f := newWebFixture(t, 10)
+
+	body := do(t, f.h, "/static/app.js").Body.String()
+
+	require.Contains(t, body, "#lightbox")
+	require.Contains(t, body, "urlAt", "DOMではなく通し番号でURLを引く")
+	require.Contains(t, body, "touchstart", "スワイプ操作を実装している")
+	require.NotContains(t, body, "tiles().indexOf",
+		"DOM上のタイル一覧に依存する実装は残さない")
+}
+
 func TestAppCSSIsResponsive(t *testing.T) {
 	f := newWebFixture(t, 10)
 
