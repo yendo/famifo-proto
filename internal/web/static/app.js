@@ -29,6 +29,7 @@ const famifo = (() => {
     const urls = [...win.querySelectorAll('[data-full]')].map((a) => a.dataset.full);
     if (urls.length > 0) {
       chunks.set(0, { html: win.innerHTML, urls });
+      renderedKey = '0:1';
     }
   }
 
@@ -38,7 +39,11 @@ const famifo = (() => {
     const cs = getComputedStyle(win);
     const tracks = cs.gridTemplateColumns.split(' ').filter((t) => t.length > 0);
     cols = Math.max(1, tracks.length);
-    const tileW = parseFloat(tracks[0]) || 0;
+    const tileW = parseFloat(tracks[0]);
+    if (!(tileW > 0)) {
+      rowH = 0; // スタイル未適用。次の resize/scroll で測り直す
+      return;
+    }
     const gap = parseFloat(cs.rowGap) || 0;
     rowH = tileW + gap; // タイルは正方形なので幅がそのまま高さになる
     const rows = Math.ceil(total / cols);
@@ -117,6 +122,13 @@ const famifo = (() => {
     pastedFrom = firstChunk * chunkSize;
     win.innerHTML = parts.join('');
     win.style.transform = `translateY(${Math.floor(pastedFrom / cols) * rowH}px)`;
+
+    // グリッドは貼り付けた最初のタイルを列0に置くため、塊の先頭が行頭でないと
+    // 横方向にずれる。開始列を明示して以降の自動配置をそこから流す。
+    const firstTile = win.firstElementChild;
+    if (firstTile) {
+      firstTile.style.gridColumnStart = (pastedFrom % cols) + 1;
+    }
   }
 
   function onResize() {
