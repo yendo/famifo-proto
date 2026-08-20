@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
@@ -21,16 +20,9 @@ type photoView struct {
 	FullURL  string
 }
 
-// cursorView は次ページを指すカーソル。
-type cursorView struct {
-	TakenAt int64
-	ID      string
-}
-
 // itemsView は items.html の入力。
 type itemsView struct {
 	Photos []photoView
-	Next   *cursorView
 }
 
 // galleryView は gallery.html の入力。itemsViewを埋め込むので
@@ -45,32 +37,6 @@ type galleryView struct {
 type monthView struct {
 	M string `json:"m"` // "2006-01"
 	O int    `json:"o"` // その月が始まるオフセット
-}
-
-// buildPage は1ページ分を組み立てる。次ページの有無を知るために
-// pageSize+1 件取得し、余った1件は描画せず「続きがある」印としてだけ使う。
-func (s *Server) buildPage(r *http.Request, cur store.Cursor) (itemsView, error) {
-	photos, err := s.st.ListPage(r.Context(), cur, s.pageSize+1)
-	if err != nil {
-		return itemsView{}, err
-	}
-
-	var v itemsView
-	if len(photos) > s.pageSize {
-		photos = photos[:s.pageSize]
-		last := photos[len(photos)-1]
-		v.Next = &cursorView{TakenAt: last.TakenAt.Unix(), ID: last.ID}
-	}
-
-	v.Photos = make([]photoView, 0, len(photos))
-	for _, p := range photos {
-		pv := photoView{ID: p.ID, FullURL: "/photo/" + p.ID, ThumbURL: "/photo/" + p.ID}
-		if p.HasThumb {
-			pv.ThumbURL = "/thumb/" + p.ID
-		}
-		v.Photos = append(v.Photos, pv)
-	}
-	return v, nil
 }
 
 // buildRange はオフセット指定で1窓枠分を組み立てる。
@@ -109,20 +75,6 @@ func parseWindow(r *http.Request, defaultLimit int) (offset, limit int, err erro
 		}
 	}
 	return offset, limit, nil
-}
-
-// parseCursor はクエリからカーソルを読む。パラメータが無ければ先頭ページ。
-func parseCursor(r *http.Request) (store.Cursor, error) {
-	raw := r.URL.Query().Get("t")
-	id := r.URL.Query().Get("id")
-	if raw == "" && id == "" {
-		return store.Cursor{}, nil
-	}
-	at, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return store.Cursor{}, err
-	}
-	return store.Cursor{TakenAt: time.Unix(at, 0), ID: id, Set: true}, nil
 }
 
 // handleGallery はギャラリーのトップページを返す。

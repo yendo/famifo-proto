@@ -10,9 +10,8 @@ import (
 func TestStaticAssetsAreServed(t *testing.T) {
 	f := newWebFixture(t, 10)
 	tests := map[string]string{
-		"/static/app.css":     "text/css",
-		"/static/app.js":      "text/javascript",
-		"/static/htmx.min.js": "text/javascript",
+		"/static/app.css": "text/css",
+		"/static/app.js":  "text/javascript",
 	}
 	for target, wantType := range tests {
 		t.Run(target, func(t *testing.T) {

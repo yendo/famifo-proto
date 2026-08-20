@@ -30,13 +30,6 @@ type Photo struct {
 	HasThumb bool   // サムネイルキャッシュが存在するか
 }
 
-// Cursor はページネーションの位置。Setがfalseなら先頭ページ。
-type Cursor struct {
-	TakenAt time.Time
-	ID      string
-	Set     bool
-}
-
 // IDFor はパスから安定したIDを導出する。
 // URLにファイルシステムのパスを露出させないためと、
 // 未インデックスのパスを配信させないための両方の役割を持つ。
@@ -176,36 +169,6 @@ func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]Photo,
 }
 
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-
-// ListPage は撮影日時の新しい順に1ページ分を返す。
-// 同一撮影日時の写真が並んでもページ境界で重複・欠落しないよう、IDを第2キーにする。
-func (s *Store) ListPage(ctx context.Context, cur Cursor, limit int) ([]Photo, error) {
-	query := `SELECT ` + selectCols + ` FROM photos ORDER BY taken_at DESC, id DESC LIMIT ?`
-	args := []any{limit}
-	if cur.Set {
-		query = `SELECT ` + selectCols + ` FROM photos
-		         WHERE taken_at < ? OR (taken_at = ? AND id < ?)
-		         ORDER BY taken_at DESC, id DESC LIMIT ?`
-		at := cur.TakenAt.Unix()
-		args = []any{at, at, cur.ID, limit}
-	}
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("一覧を取得できません: %w", err)
-	}
-	defer rows.Close()
-
-	var out []Photo
-	for rows.Next() {
-		p, err := scanPhoto(rows)
-		if err != nil {
-			return nil, fmt.Errorf("一覧を読めません: %w", err)
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
-}
 
 // ListRange は撮影日時の新しい順で offset 番目から limit 件を返す。
 // 仮想スクロールは任意の位置へ飛ぶため、カーソルではなくオフセットで引く。

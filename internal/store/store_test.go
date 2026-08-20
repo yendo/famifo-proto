@@ -125,52 +125,6 @@ func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
 	require.Equal(t, 1, n, "album2 の行は残る")
 }
 
-func TestListPagePaginatesNewestFirst(t *testing.T) {
-	s := openTestStore(t)
-	ctx := context.Background()
-	// 撮影日時が新しい順に c, b, a になるよう投入する
-	for i, name := range []string{"a", "b", "c"} {
-		p := photoAt("/photos/"+name+".jpg", time.Unix(int64(1600000000+i), 0))
-		require.NoError(t, s.Upsert(ctx, p))
-	}
-
-	first, err := s.ListPage(ctx, Cursor{}, 2)
-	require.NoError(t, err)
-	require.Len(t, first, 2)
-	require.Equal(t, "/photos/c.jpg", first[0].Path)
-	require.Equal(t, "/photos/b.jpg", first[1].Path)
-
-	last := first[len(first)-1]
-	second, err := s.ListPage(ctx, Cursor{TakenAt: last.TakenAt, ID: last.ID, Set: true}, 2)
-	require.NoError(t, err)
-	require.Len(t, second, 1)
-	require.Equal(t, "/photos/a.jpg", second[0].Path)
-}
-
-func TestListPageBreaksTiesByID(t *testing.T) {
-	s := openTestStore(t)
-	ctx := context.Background()
-	same := time.Unix(1600000000, 0)
-	for _, name := range []string{"a", "b", "c"} {
-		require.NoError(t, s.Upsert(ctx, photoAt("/photos/"+name+".jpg", same)))
-	}
-
-	// 撮影日時が全て同じでも、ページをまたいで重複や欠落が起きないこと
-	var seen []string
-	cur := Cursor{}
-	for range 3 {
-		page, err := s.ListPage(ctx, cur, 1)
-		require.NoError(t, err)
-		if len(page) == 0 {
-			break
-		}
-		seen = append(seen, page[0].Path)
-		cur = Cursor{TakenAt: page[0].TakenAt, ID: page[0].ID, Set: true}
-	}
-
-	require.ElementsMatch(t, []string{"/photos/a.jpg", "/photos/b.jpg", "/photos/c.jpg"}, seen)
-}
-
 func TestAllPaths(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
@@ -200,22 +154,25 @@ func TestListRangeReturnsRequestedWindow(t *testing.T) {
 	require.Equal(t, "/photos/c.jpg", got[1].Path)
 }
 
-func TestListRangeMatchesListPageOrdering(t *testing.T) {
+func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
-	for i, name := range []string{"a", "b", "c", "d", "e"} {
-		require.NoError(t, s.Upsert(ctx, photoAt("/photos/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
+	same := time.Unix(1600000000, 0)
+	for _, name := range []string{"a", "b", "c"} {
+		require.NoError(t, s.Upsert(ctx, photoAt("/photos/"+name+".jpg", same)))
 	}
 
-	byCursor, err := s.ListPage(ctx, Cursor{}, 5)
-	require.NoError(t, err)
-	byOffset, err := s.ListRange(ctx, 0, 5)
-	require.NoError(t, err)
-
-	require.Len(t, byOffset, 5)
-	for i := range byCursor {
-		require.Equal(t, byCursor[i].Path, byOffset[i].Path, "移行の前後で並び順が変わらないこと")
+	// 撮影日時が同じでも、1件ずつ辿って重複も欠落も起きないこと
+	var seen []string
+	for i := range 3 {
+		page, err := s.ListRange(ctx, i, 1)
+		require.NoError(t, err)
+		require.Len(t, page, 1)
+		seen = append(seen, page[0].Path)
 	}
+
+	require.ElementsMatch(t,
+		[]string{"/photos/a.jpg", "/photos/b.jpg", "/photos/c.jpg"}, seen)
 }
 
 func TestListRangeHandlesBoundaries(t *testing.T) {
