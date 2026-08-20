@@ -25,15 +25,17 @@ func TestStaticAssetsAreServed(t *testing.T) {
 	}
 }
 
-func TestAppJSWiresLightbox(t *testing.T) {
+func TestAppJSImplementsVirtualScroll(t *testing.T) {
 	f := newWebFixture(t, 10)
 
 	body := do(t, f.h, "/static/app.js").Body.String()
 
-	// gallery.html が出力するフックと食い違っていないこと
-	require.Contains(t, body, "#lightbox")
-	require.Contains(t, body, "data-full")
-	require.Contains(t, body, "touchstart", "スワイプ操作を実装している")
+	require.Contains(t, body, "#spacer")
+	require.Contains(t, body, "#window")
+	require.Contains(t, body, "gridTemplateColumns", "列数はブラウザの計算結果から読む")
+	require.Contains(t, body, "/items?offset=")
+	require.Contains(t, body, "data-full", "塊からURLを控えてライトボックスに渡す")
+	require.Contains(t, body, "famifo", "他のスクリプトから使える形で公開する")
 }
 
 func TestAppCSSIsResponsive(t *testing.T) {
