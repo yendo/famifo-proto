@@ -276,6 +276,12 @@ func TestMonthOffsetsMarksMonthBoundaries(t *testing.T) {
 func TestMonthOffsetsUsesLocalTime(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
+	// TZ=UTC の環境ではローカル集計とUTC集計が同じ結果になり、
+	// このテストが回帰を検出できなくなる。テスト中だけ固定オフセットに差し替える。
+	orig := time.Local
+	time.Local = time.FixedZone("JST", 9*60*60)
+	t.Cleanup(func() { time.Local = orig })
+
 	// ローカルで11月1日の未明。UTCに直すと10月31日になる時刻を選ぶ。
 	at := time.Date(2022, 11, 1, 0, 30, 0, 0, time.Local)
 	require.NoError(t, s.Upsert(ctx, photoAt("/photos/a.jpg", at)))
