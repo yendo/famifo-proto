@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -37,6 +38,12 @@ type itemsView struct {
 type galleryView struct {
 	itemsView
 	Total int
+}
+
+// monthView は /dates の1要素。転送量を抑えるためキー名を短くしている。
+type monthView struct {
+	M string `json:"m"` // "2006-01"
+	O int    `json:"o"` // その月が始まるオフセット
 }
 
 // buildPage は1ページ分を組み立てる。次ページの有無を知るために
@@ -157,6 +164,26 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
 		s.log.Error("items テンプレートの描画に失敗", "err", err)
 		return
+	}
+}
+
+// handleDates は月ごとの開始位置を返す。日付スクラバーの目盛りに使う。
+// ここだけJSONなのは、マークアップではなくデータだから。
+func (s *Server) handleDates(w http.ResponseWriter, r *http.Request) {
+	months, err := s.st.MonthOffsets(r.Context())
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	out := make([]monthView, 0, len(months))
+	for _, m := range months {
+		out = append(out, monthView{M: m.Month, O: m.Offset})
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		s.log.Error("dates の書き出しに失敗", "err", err)
 	}
 }
 

@@ -47,6 +47,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /{$}", s.handleGallery)
 	mux.HandleFunc("GET /items", s.handleItems)
+	mux.HandleFunc("GET /dates", s.handleDates)
 	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
 	mux.HandleFunc("GET /photo/{id}", s.handlePhoto)
 	return mux

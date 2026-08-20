@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -108,4 +109,34 @@ func TestItemsDefaultsToFirstWindow(t *testing.T) {
 	body := do(t, f.h, "/items").Body.String()
 
 	require.Contains(t, body, p.ID)
+}
+
+func TestDatesReturnsMonthOffsets(t *testing.T) {
+	f := newWebFixture(t, 60)
+	f.addPhoto(t, "a.jpg", time.Date(2022, 12, 5, 10, 0, 0, 0, time.Local), true)
+	f.addPhoto(t, "b.jpg", time.Date(2022, 11, 8, 10, 0, 0, 0, time.Local), true)
+
+	rec := do(t, f.h, "/dates")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+
+	var got []struct {
+		M string `json:"m"`
+		O int    `json:"o"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, "2022-12", got[0].M)
+	require.Equal(t, 0, got[0].O)
+	require.Equal(t, "2022-11", got[1].M)
+	require.Equal(t, 1, got[1].O)
+}
+
+func TestDatesOnEmptyLibraryReturnsEmptyArray(t *testing.T) {
+	f := newWebFixture(t, 60)
+
+	rec := do(t, f.h, "/dates")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.JSONEq(t, `[]`, rec.Body.String(), "null ではなく空配列を返すこと")
 }
