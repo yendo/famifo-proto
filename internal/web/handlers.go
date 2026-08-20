@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -64,6 +65,44 @@ func (s *Server) buildPage(r *http.Request, cur store.Cursor) (itemsView, error)
 	return v, nil
 }
 
+// buildRange はオフセット指定で1窓枠分を組み立てる。
+func (s *Server) buildRange(r *http.Request, offset, limit int) (itemsView, error) {
+	photos, err := s.st.ListRange(r.Context(), offset, limit)
+	if err != nil {
+		return itemsView{}, err
+	}
+
+	v := itemsView{Photos: make([]photoView, 0, len(photos))}
+	for _, p := range photos {
+		pv := photoView{ID: p.ID, FullURL: "/photo/" + p.ID, ThumbURL: "/photo/" + p.ID}
+		if p.HasThumb {
+			pv.ThumbURL = "/thumb/" + p.ID
+		}
+		v.Photos = append(v.Photos, pv)
+	}
+	return v, nil
+}
+
+// parseWindow はクエリから窓枠の範囲を読む。省略時は先頭から pageSize 件。
+func parseWindow(r *http.Request, defaultLimit int) (offset, limit int, err error) {
+	limit = defaultLimit
+	q := r.URL.Query()
+
+	if raw := q.Get("offset"); raw != "" {
+		offset, err = strconv.Atoi(raw)
+		if err != nil || offset < 0 {
+			return 0, 0, fmt.Errorf("offset が不正です: %q", raw)
+		}
+	}
+	if raw := q.Get("limit"); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 0 {
+			return 0, 0, fmt.Errorf("limit が不正です: %q", raw)
+		}
+	}
+	return offset, limit, nil
+}
+
 // parseCursor はクエリからカーソルを読む。パラメータが無ければ先頭ページ。
 func parseCursor(r *http.Request) (store.Cursor, error) {
 	raw := r.URL.Query().Get("t")
@@ -99,15 +138,15 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleItems は無限スクロール用のHTML断片を返す。
-// 初回ページと同じテンプレートを使うことで、マークアップの二重管理を避ける。
+// handleItems は仮想スクロール用のHTML断片を返す。
+// 初回ページと同じテンプレートを使い、マークアップを1箇所に保つ。
 func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
-	cur, err := parseCursor(r)
+	offset, limit, err := parseWindow(r, s.pageSize)
 	if err != nil {
-		http.Error(w, "bad cursor", http.StatusBadRequest)
+		http.Error(w, "bad range", http.StatusBadRequest)
 		return
 	}
-	items, err := s.buildPage(r, cur)
+	items, err := s.buildRange(r, offset, limit)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

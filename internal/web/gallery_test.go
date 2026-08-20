@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -45,28 +46,6 @@ func TestGalleryOrdersNewestFirst(t *testing.T) {
 		"撮影日時の新しい順に並べる")
 }
 
-func TestGalleryEmitsSentinelWhenMorePagesExist(t *testing.T) {
-	f := newWebFixture(t, 1)
-	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), true)
-	last := f.addPhoto(t, "b.jpg", time.Unix(1700000000, 0), true)
-
-	body := do(t, f.h, "/").Body.String()
-
-	require.Contains(t, body, `hx-trigger="revealed"`)
-	// html/template は属性内のリテラルな & をエスケープしない（検証済み）
-	require.Contains(t, body, "/items?t=1700000000&id="+last.ID,
-		"次ページのカーソルは最後に描画した写真を指す")
-}
-
-func TestGalleryOmitsSentinelOnLastPage(t *testing.T) {
-	f := newWebFixture(t, 10)
-	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), true)
-
-	body := do(t, f.h, "/").Body.String()
-
-	require.NotContains(t, body, "hx-trigger")
-}
-
 func TestItemsReturnsFragmentOnly(t *testing.T) {
 	f := newWebFixture(t, 1)
 	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), true)
@@ -81,16 +60,49 @@ func TestItemsReturnsFragmentOnly(t *testing.T) {
 	require.Contains(t, body, "/photo/")
 }
 
-func TestItemsRejectsBadCursor(t *testing.T) {
-	f := newWebFixture(t, 10)
+func TestItemsReturnsRequestedWindow(t *testing.T) {
+	f := newWebFixture(t, 60)
+	var ids []string
+	for i := range 5 {
+		p := f.addPhoto(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), true)
+		ids = append(ids, p.ID)
+	}
 
-	rec := do(t, f.h, "/items?t=notanumber&id=abc")
+	body := do(t, f.h, "/items?offset=1&limit=2").Body.String()
 
-	require.Equal(t, http.StatusBadRequest, rec.Code)
+	// 新しい順は p4,p3,p2,p1,p0 なので offset=1 の2件は p3,p2
+	require.Contains(t, body, ids[3])
+	require.Contains(t, body, ids[2])
+	require.NotContains(t, body, ids[4])
+	require.NotContains(t, body, ids[1])
 }
 
-func TestItemsWithoutCursorReturnsFirstPage(t *testing.T) {
-	f := newWebFixture(t, 10)
+func TestItemsHasNoSentinel(t *testing.T) {
+	f := newWebFixture(t, 60)
+	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), true)
+
+	body := do(t, f.h, "/items?offset=0&limit=1").Body.String()
+
+	require.NotContains(t, body, "hx-", "htmxの属性は残さない")
+	require.NotContains(t, body, "sentinel")
+}
+
+func TestItemsRejectsBadOffset(t *testing.T) {
+	f := newWebFixture(t, 60)
+	for _, target := range []string{
+		"/items?offset=abc&limit=10",
+		"/items?offset=-1&limit=10",
+		"/items?offset=0&limit=abc",
+		"/items?offset=0&limit=-1",
+	} {
+		t.Run(target, func(t *testing.T) {
+			require.Equal(t, http.StatusBadRequest, do(t, f.h, target).Code)
+		})
+	}
+}
+
+func TestItemsDefaultsToFirstWindow(t *testing.T) {
+	f := newWebFixture(t, 60)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), true)
 
 	body := do(t, f.h, "/items").Body.String()
