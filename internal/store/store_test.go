@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -162,7 +163,17 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 		require.NoError(t, s.Upsert(ctx, photoAt("/photos/"+name+".jpg", same)))
 	}
 
-	// 撮影日時が同じでも、1件ずつ辿って重複も欠落も起きないこと
+	// 撮影日時が同じ場合は id の降順で安定すること。
+	// 順序が崩れるとページ境界で重複や欠落が起きる。
+	//
+	// 注意: 複合インデックス idx_photos_order が物理行順を安定させるため、
+	// ORDER BY 句から id DESC を外しただけではこのテストは落ちない。
+	// 不変条件は「ORDER BY 句 + インデックス」の組で担保されており、
+	// テストで句の削除だけを検出することは原理的にできない。
+	paths := []string{"/photos/a.jpg", "/photos/b.jpg", "/photos/c.jpg"}
+	want := append([]string(nil), paths...)
+	sort.Slice(want, func(i, j int) bool { return IDFor(want[i]) > IDFor(want[j]) })
+
 	var seen []string
 	for i := range 3 {
 		page, err := s.ListRange(ctx, i, 1)
@@ -171,8 +182,7 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 		seen = append(seen, page[0].Path)
 	}
 
-	require.ElementsMatch(t,
-		[]string{"/photos/a.jpg", "/photos/b.jpg", "/photos/c.jpg"}, seen)
+	require.Equal(t, want, seen)
 }
 
 func TestListRangeHandlesBoundaries(t *testing.T) {
