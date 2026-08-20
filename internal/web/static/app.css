@@ -33,17 +33,31 @@ body.locked { overflow: hidden; }
 .topbar h1 { margin: 0; font-size: 1rem; letter-spacing: 0.08em; }
 .count { font-size: 0.8rem; opacity: 0.6; }
 
+/* スクロール領域。高さは #spacer が決める */
 .gallery {
+  padding: var(--gap);
+}
+
+/* 全枚数分の高さを持つ箱。ブラウザのスクロールバーはこれを見る */
+#spacer {
+  position: relative;
+}
+
+/* 可視範囲のタイルだけを並べる。位置は JS が translateY で動かす */
+#window {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
   display: grid;
   gap: var(--gap);
-  padding: var(--gap);
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
 }
 @media (min-width: 700px) {
-  .gallery { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  #window { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
 }
 @media (min-width: 1100px) {
-  .gallery { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  #window { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
 }
 
 .tile {
@@ -59,9 +73,6 @@ body.locked { overflow: hidden; }
   height: 100%;
   object-fit: cover;
 }
-
-/* htmxが次ページを読みに行くトリガー。見た目は持たせない */
-.sentinel { grid-column: 1 / -1; height: 1px; }
 
 .lightbox {
   position: fixed;
@@ -98,3 +109,39 @@ body.locked { overflow: hidden; }
 @media (hover: hover) {
   .lb-nav:hover { color: rgba(255, 255, 255, 0.7); }
 }
+
+/* 日付スクラバー。スクロール中だけ現れる */
+.scrubber {
+  position: fixed;
+  top: 56px;
+  right: 0;
+  bottom: 0;
+  width: 32px;
+  z-index: 6;
+  touch-action: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.scrubber[hidden] { display: none; }
+.scrubber.visible { opacity: 1; }
+
+.scrub-thumb {
+  position: absolute;
+  right: 4px;
+  width: 24px;
+  height: 40px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.scrub-label {
+  position: absolute;
+  right: 36px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.85);
+  color: var(--fg);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.scrub-label[hidden] { display: none; }

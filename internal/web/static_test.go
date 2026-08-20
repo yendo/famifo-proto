@@ -43,4 +43,6 @@ func TestAppCSSIsResponsive(t *testing.T) {
 
 	require.Contains(t, body, "@media", "画面幅に応じて列数を変える")
 	require.Contains(t, body, "grid-template-columns")
+	require.Contains(t, body, "#window", "グリッドは #window 側に定義する")
+	require.Contains(t, body, ".scrubber", "日付スクラバーの見た目を定義する")
 }
