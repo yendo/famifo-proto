@@ -43,6 +43,28 @@ CGO_ENABLED=0 go build -o famifo-proto .
 - 画面右端のスクラバーをドラッグすると、年月を見ながら一気に移動できる
 - タイルをタップすると拡大表示。左右スワイプで送り、下スワイプで閉じる
 
+## ブラウザテスト
+
+`internal/web/app.js`（仮想スクロール・ライトボックス・日付スクラバー）を、
+Dockerコンテナ上のヘッドレスChromeで実際に動かして検証するテストがある。
+`//go:build browser` を付けているため、通常の `go test ./...` には含まれない。
+
+事前にイメージを取得しておく（ホストのChromeは使わない。コンテナ内のChromeに
+`chromedp.NewRemoteAllocator` で接続する）。
+
+```bash
+docker pull chromedp/headless-shell:latest
+```
+
+実行:
+
+```bash
+CGO_ENABLED=0 go test -tags browser ./internal/web/ -v
+```
+
+`TestMain` がコンテナの起動・待ち受け・後始末を行う。Dockerが無い、または
+イメージが無い環境では、失敗ではなくスキップ（0終了）として扱う。
+
 ## 制約
 
 - **ローカルディスク専用。** fsnotify はネットワークファイルシステム（NFS/SMB）の
