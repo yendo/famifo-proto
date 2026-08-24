@@ -94,8 +94,10 @@ const famifo = (() => {
     const firstChunk = Math.floor(from / chunkSize);
     const lastChunk = Math.floor((to - 1) / chunkSize);
 
-    // 足りない塊は取りに行く。届いたら描き直す。
-    for (let ci = firstChunk; ci <= lastChunk; ci++) {
+    // 可視範囲の前後1塊も先読みしておく。貼り付ける範囲は広げない。
+    const fetchFrom = Math.max(0, firstChunk - 1);
+    const fetchTo = Math.min(Math.floor((total - 1) / chunkSize), lastChunk + 1);
+    for (let ci = fetchFrom; ci <= fetchTo; ci++) {
       if (!chunks.has(ci)) {
         fetchChunk(ci).then(render).catch(() => {});
       }
@@ -132,8 +134,15 @@ const famifo = (() => {
   }
 
   function onResize() {
+    // 回転やリサイズで列数が変わると spacer の高さが変わるため、
+    // scrollTop をそのまま残すと別の写真の位置に飛ぶ。
+    // 先頭に見えていた写真の通し番号を保持して復元する。
+    const topIndex = rowH > 0 ? Math.floor(scroller.scrollTop / rowH) * cols : 0;
     renderedKey = ''; // 列数が変われば貼り直しが必要
     measure();
+    if (rowH > 0 && cols > 0) {
+      scroller.scrollTop = Math.floor(topIndex / cols) * rowH;
+    }
     render();
   }
 
@@ -142,6 +151,9 @@ const famifo = (() => {
   render();
   window.addEventListener('scroll', render, { passive: true });
   window.addEventListener('resize', onResize);
+  // スクロールバーの出現で #window の幅が変わっても resize は発火しない。
+  // 要素そのものを監視して、列数とタイル高を測り直す。
+  new ResizeObserver(onResize).observe(win);
 
   return {
     total,
@@ -190,6 +202,8 @@ const famifo = (() => {
     box.hidden = true;
     img.removeAttribute('src');
     document.body.classList.remove('locked');
+    idx = -1;
+    requestSeq++; // 閉じた後に届く古い解決を破棄する
   }
 
   document.addEventListener('click', (e) => {
@@ -198,7 +212,7 @@ const famifo = (() => {
     e.preventDefault();
     // 窓枠内で何番目か + 貼り付けの先頭 = 全体の通し番号
     const within = [...tile.parentElement.querySelectorAll('.tile')].indexOf(tile);
-    open(famifo.pastedIndex() + within);
+    open(famifo.pastedIndex() + within).catch(() => {});
   });
 
   box.addEventListener('click', (e) => {

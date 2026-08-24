@@ -125,10 +125,11 @@ body.locked { overflow: hidden; }
   z-index: 6;
   touch-action: none;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.2s;
 }
 .scrubber[hidden] { display: none; }
-.scrubber.visible { opacity: 1; }
+.scrubber.visible { opacity: 1; pointer-events: auto; }
 
 .scrub-thumb {
   position: absolute;
