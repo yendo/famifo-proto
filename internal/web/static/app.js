@@ -138,8 +138,19 @@ const famifo = (() => {
     // scrollTop をそのまま残すと別の写真の位置に飛ぶ。
     // 先頭に見えていた写真の通し番号を保持して復元する。
     const topIndex = rowH > 0 ? Math.floor(scroller.scrollTop / rowH) * cols : 0;
-    renderedKey = ''; // 列数が変われば貼り直しが必要
+    const prevCols = cols;
+    const prevRowH = rowH;
+
     measure();
+
+    // ResizeObserver は #window 自身の高さの変化でも発火する。
+    // 貼り付ける塊の数はスクロール中に増減するため、通常のスクロールでも呼ばれる。
+    // 実際に列数もタイル高も変わっていないなら、貼り直しも位置の復元も不要。
+    if (cols === prevCols && rowH === prevRowH) {
+      return;
+    }
+
+    renderedKey = ''; // 列数が変われば貼り直しが必要
     if (rowH > 0 && cols > 0) {
       scroller.scrollTop = Math.floor(topIndex / cols) * rowH;
     }
