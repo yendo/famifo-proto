@@ -873,7 +873,8 @@ git commit -m "feat: move the grid onto the virtual window and style the scrubbe
   - `famifo.urlAt(i)` → `Promise<string|null>` 全体の通し番号から写真URLを引く
   - `famifo.ensureChunk(i)` → `void` その番号を含む塊を先読みする
   - `famifo.pastedIndex()` → `number` いま `#window` に貼ってある先頭の通し番号
-  - `famifo.gallery` (Element) / `famifo.render()` → `void`
+  - `famifo.scroller` (Element) 文書のスクロール要素 / `famifo.maxScroll()` → `number`
+  - `famifo.render()` → `void`
   - 写真が0枚のときなど土台が無い場合は `null` になる。利用側は必ず判定すること
 
 **設計メモ:**
@@ -922,6 +923,11 @@ const famifo = (() => {
   const total = Number(gallery.dataset.total || 0);
   const chunkSize = Number(gallery.dataset.chunk || 60);
   const OVERSCAN_ROWS = 4; // 可視範囲の上下に余分に描く行数
+
+  // スクロールしているのは #gallery ではなく文書全体。
+  // ライトボックスの body.locked { overflow: hidden } もこれを前提にしている。
+  const scroller = document.scrollingElement || document.documentElement;
+  const maxScroll = () => Math.max(1, scroller.scrollHeight - window.innerHeight);
 
   // 塊番号 -> { html, urls }
   const chunks = new Map();
@@ -988,8 +994,8 @@ const famifo = (() => {
   function render() {
     if (rowH <= 0 || total === 0) return;
 
-    const viewRows = Math.ceil(gallery.clientHeight / rowH);
-    const firstRow = Math.max(0, Math.floor(gallery.scrollTop / rowH) - OVERSCAN_ROWS);
+    const viewRows = Math.ceil(window.innerHeight / rowH);
+    const firstRow = Math.max(0, Math.floor(scroller.scrollTop / rowH) - OVERSCAN_ROWS);
     const lastRow = Math.min(Math.ceil(total / cols) - 1, firstRow + viewRows + OVERSCAN_ROWS * 2);
 
     const from = firstRow * cols;
@@ -1035,7 +1041,7 @@ const famifo = (() => {
 
   seedFirstChunk();
   measure();
-  gallery.addEventListener('scroll', render, { passive: true });
+  window.addEventListener('scroll', render, { passive: true });
   window.addEventListener('resize', onResize);
 
   return {
@@ -1043,7 +1049,8 @@ const famifo = (() => {
     chunkSize,
     urlAt,
     ensureChunk,
-    gallery,
+    scroller,
+    maxScroll,
     render,
     pastedIndex: () => pastedFrom, // 貼り付け先頭の通し番号。Task 8 が使う
   };
@@ -1210,7 +1217,7 @@ git commit -m "feat: navigate the lightbox by global photo index"
 - Test: `internal/web/static_test.go`
 
 **Interfaces:**
-- Consumes: `GET /dates`, `famifo.total`, `famifo.gallery`
+- Consumes: `GET /dates`, `famifo.total`, `famifo.scroller`, `famifo.maxScroll()`
 - Produces: なし（ブラウザ側のみ）
 
 **設計メモ:** ドラッグ位置の割合 → 写真オフセット → スクロール位置、と変換する。吹き出しの年月は `/dates` を二分探索して求める。`/dates` の取得に失敗してもスクラバー自体は動く（ラベルが出ないだけ）。
@@ -1244,7 +1251,6 @@ Expected: FAIL
 
   const thumb = bar.querySelector('.scrub-thumb');
   const label = bar.querySelector('.scrub-label');
-  const gallery = famifo.gallery;
 
   let months = []; // [{m:"2022-11", o:1777}, ...] 新しい順
   let dragging = false;
@@ -1271,10 +1277,6 @@ Expected: FAIL
     return `${y}年${Number(m)}月`;
   }
 
-  function maxScroll() {
-    return Math.max(1, gallery.scrollHeight - gallery.clientHeight);
-  }
-
   function show() {
     bar.classList.add('visible');
     clearTimeout(hideTimer);
@@ -1285,7 +1287,7 @@ Expected: FAIL
 
   // スクロール位置からつまみの位置を更新する
   function sync() {
-    const frac = gallery.scrollTop / maxScroll();
+    const frac = famifo.scroller.scrollTop / famifo.maxScroll();
     const top = frac * (bar.clientHeight - thumb.offsetHeight);
     thumb.style.top = `${top}px`;
     show();
@@ -1294,7 +1296,7 @@ Expected: FAIL
   function seek(clientY) {
     const rect = bar.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
-    gallery.scrollTop = frac * maxScroll();
+    famifo.scroller.scrollTop = frac * famifo.maxScroll();
 
     const offset = Math.floor(frac * famifo.total);
     const text = monthAt(offset);
@@ -1326,7 +1328,7 @@ Expected: FAIL
   bar.addEventListener('pointerup', endDrag);
   bar.addEventListener('pointercancel', endDrag);
 
-  gallery.addEventListener('scroll', sync, { passive: true });
+  window.addEventListener('scroll', sync, { passive: true });
   sync();
 })();
 ```
