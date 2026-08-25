@@ -1091,7 +1091,7 @@ func TestAppJSImplementsVirtualScroll(t *testing.T) {
 	require.Contains(t, body, "gridTemplateColumns", "列数はブラウザの計算結果から読む")
 	require.Contains(t, body, "--label-h", "ラベル高はCSSの1箇所から読む")
 	require.Contains(t, body, "/items?offset=")
-	require.Contains(t, body, "data-full", "塊からURLを控えてライトボックスに渡す")
+	require.Contains(t, body, "dataset.full", "塊からURLを控えてライトボックスに渡す")
 	require.Contains(t, body, "daycard", "日ごとのカードを組み立てる")
 	require.Contains(t, body, "famifo", "他のスクリプトから使える形で公開する")
 	require.NotContains(t, body, "gridColumnStart",
