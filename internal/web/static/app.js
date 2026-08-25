@@ -30,6 +30,10 @@ const famifo = (() => {
     if (urls.length > 0) {
       chunks.set(0, { html: win.innerHTML, urls });
       renderedKey = '0:1';
+      // render() は renderedKey が一致して早期returnするため、ここで貼り済みの
+      // タイルには通し番号が付かない。サーバが埋めた先頭の塊にも自分で書く。
+      const seeded = win.querySelectorAll('.tile');
+      for (let k = 0; k < seeded.length; k++) seeded[k].dataset.i = k;
     }
   }
 
@@ -131,6 +135,13 @@ const famifo = (() => {
     if (firstTile) {
       firstTile.style.gridColumnStart = (pastedFrom % cols) + 1;
     }
+
+    // 各タイルに通し番号を書く。ライトボックスはDOM上の位置を数えるのではなく
+    // これを読む。位置を数える方式はタイルがカードに入ると成立しない。
+    const tiles = win.querySelectorAll('.tile');
+    for (let k = 0; k < tiles.length; k++) {
+      tiles[k].dataset.i = pastedFrom + k;
+    }
   }
 
   function onResize() {
@@ -221,9 +232,11 @@ const famifo = (() => {
     const tile = e.target.closest('#window .tile');
     if (!tile) return;
     e.preventDefault();
-    // 窓枠内で何番目か + 貼り付けの先頭 = 全体の通し番号
-    const within = [...tile.parentElement.querySelectorAll('.tile')].indexOf(tile);
-    open(famifo.pastedIndex() + within).catch(() => {});
+    const i = Number(tile.dataset.i);
+    if (!Number.isInteger(i)) return; // 通し番号が無いタイルは無視する。
+                                      // NaN は i < 0 も i >= total も満たさず、
+                                      // offset=NaN のリクエストまで素通りする
+    open(i).catch(() => {});
   });
 
   box.addEventListener('click', (e) => {

@@ -45,8 +45,11 @@ func TestAppJSLightboxUsesGlobalIndex(t *testing.T) {
 	require.Contains(t, body, "#lightbox")
 	require.Contains(t, body, "urlAt", "DOMではなく通し番号でURLを引く")
 	require.Contains(t, body, "touchstart", "スワイプ操作を実装している")
+	require.Contains(t, body, "dataset.i", "タイルに書いた通し番号をそのまま読む")
 	require.NotContains(t, body, "tiles().indexOf",
 		"DOM上のタイル一覧に依存する実装は残さない")
+	require.NotContains(t, body, "parentElement.querySelectorAll",
+		"DOM上の位置を数える実装は残さない。カードに入ると数えられなくなる")
 }
 
 func TestAppJSImplementsScrubber(t *testing.T) {
