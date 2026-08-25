@@ -1327,7 +1327,6 @@ func TestCardPositionsMatchTheLayout(t *testing.T) {
 		waitForTiles(10*time.Second),
 		chromedp.Evaluate(`(() => {
 			const L = famifo.current();
-			const r = famifo.pastedRange();
 			const spacerTop = document.querySelector('#spacer').getBoundingClientRect().top;
 			const bad = [];
 			for (const card of document.querySelectorAll('.daycard')) {
@@ -1435,6 +1434,10 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 // 入るため）。月境界は「先頭の日を過ぎた直後」の1箇所しかないので、
 // スクラバーの中間（frac=0.5）まで下げれば、1行に複数の日が同居しても
 // 月をまたぐ心配がない。
+// 注意: これはドラッグとラベル表示の経路を通すテストであって、座標変換の
+// 正しさは検出できない。月単位で比べており、この corpus の月境界は文書の
+// 先頭にしか無いため、48px程度のずれでは答えが変わらない（実測で確認済み）。
+// 座標変換そのものは TestScrollMapsIntoLayoutSpace が押さえている。
 func TestScrubberLabelMatchesTheTopPhoto(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
@@ -1531,4 +1534,43 @@ func TestScrubberLabelMatchesTheTopPhoto(t *testing.T) {
 	require.Containsf(t, res.Label, wantMonth+"月",
 		"スクラバーのラベル(%q)の月が、可視範囲の先頭写真(i=%d, day=%s)の月と一致しない",
 		res.Label, res.TopI, day)
+}
+
+// 文書のスクロール位置とレイアウト座標の変換を直接押さえる。
+//
+// これは描画の窓・スクラバー・リサイズ復元が共有する1本の橋で、
+// このブランチ中に2回壊れた。ところが間接的には検出できない。
+// オーバースキャンが4行(1600px幅で816px)あるので、48pxのずれは
+// 描画結果に出ないまま吸収されてしまう。だから橋そのものを測る。
+func TestScrollMapsIntoLayoutSpace(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+
+	var got struct {
+		Converted float64 `json:"converted"`
+		Expected  float64 `json:"expected"`
+		SpacerTop float64 `json:"spacerTop"`
+	}
+	err := chromedp.Run(ctx,
+		chromedp.EmulateViewport(1600, 900),
+		chromedp.Navigate(baseURL),
+		waitForTiles(10*time.Second),
+		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
+		chromedp.Evaluate(fmt.Sprintf(`(() => {
+			const L = famifo.current();
+			const spacer = document.querySelector('#spacer');
+			return {
+				converted: famifo.toLayoutY(famifo.scroller.scrollTop),
+				expected: famifo.yForIndex(L, %d),
+				spacerTop: spacer.getBoundingClientRect().top + famifo.scroller.scrollTop,
+			};
+		})()`, deepScrollIndex), &got),
+	)
+	require.NoError(t, err)
+
+	require.Greater(t, got.SpacerTop, 1.0,
+		"#spacer が文書の先頭にあるなら、この変換は何も変換していないので"+
+			"テストとして意味がない。上部バーが場所を占めているか確認すること")
+	require.InDelta(t, got.Expected, got.Converted, 1.0,
+		"スクロール位置をレイアウト座標に直した値が、その写真の段の上端と一致しない")
 }

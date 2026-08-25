@@ -94,6 +94,12 @@ const famifo = (() => {
     return found;
   }
 
+  // レイアウトのy座標は #spacer の上端が0。文書のスクロール位置とは、
+  // 上部バー（sticky でも流れの中で場所を占める）とギャラリーの余白の
+  // ぶんだけずれる。変換はこの2つに集約する。
+  function toLayoutY(docY) { return docY - spacerTop; }
+  function toDocY(layoutY) { return layoutY + spacerTop; }
+
   // 通し番号 i の写真が属する段の上端。
   function yForIndex(L, i) {
     if (L.entries.length === 0) return 0;
@@ -226,7 +232,7 @@ const famifo = (() => {
     if (!L || L.height <= 0 || total === 0) return;
 
     const over = OVERSCAN_ROWS * (L.tileH + L.gap);
-    const top = scroller.scrollTop - spacerTop;
+    const top = toLayoutY(scroller.scrollTop);
     const w = visibleWindow(L, top - over, top + window.innerHeight + over);
     if (!w) return;
 
@@ -299,7 +305,7 @@ const famifo = (() => {
   }
 
   // "2026-02-08" → "2026年2月8日"。今年なら年を省く。
-  // 最狭の1列(約120px)に収めるため、これ以上長い表記にはしない。
+  // 最狭の1列(CSSの最小値110px)に収めるため、これ以上長い表記にはしない。
   function formatDay(d) {
     if (!d) return '';
     const [y, m, day] = d.split('-');
@@ -339,7 +345,7 @@ const famifo = (() => {
     renderedKey = ''; // 列数が変われば貼り直しが必要
     if (L && L.height > 0) {
       // yForIndex が返すのはレイアウト座標。scrollTop は文書座標なので戻す。
-      scroller.scrollTop = yForIndex(L, topIndex) + spacerTop;
+      scroller.scrollTop = toDocY(yForIndex(L, topIndex));
     }
     render();
   }
@@ -367,8 +373,8 @@ const famifo = (() => {
     yForIndex,
     dayAtY,
     visibleWindow,
-    toLayoutY: (docY) => docY - spacerTop,
-    toDocY: (layoutY) => layoutY + spacerTop,
+    toLayoutY,
+    toDocY,
   };
 })();
 
