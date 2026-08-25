@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -26,18 +27,23 @@ type itemsView struct {
 	Photos []photoView
 }
 
+// dayView は埋め込む日ごとの表の1要素。
+// 転送量を抑えるためキー名を短くしている（数千日ぶんになりうる）。
+type dayView struct {
+	D string `json:"d"` // "2006-01-02"
+	N int    `json:"n"` // その日の枚数
+}
+
 // galleryView は gallery.html の入力。itemsViewを埋め込むので
 // {{template "items" .}} にそのまま渡せる。
 type galleryView struct {
 	itemsView
 	Total     int
 	ChunkSize int
-}
-
-// monthView は /dates の1要素。転送量を抑えるためキー名を短くしている。
-type monthView struct {
-	M string `json:"m"` // "2006-01"
-	O int    `json:"o"` // その月が始まるオフセット
+	// DayGroups は日ごとの枚数のJSON配列。html/template に再エスケープさせず
+	// そのまま出すため template.JS で渡す。中身は日付と数値だけなので
+	// "</script>" は構造上現れない。
+	DayGroups template.JS
 }
 
 // buildRange はオフセット指定で1窓枠分を組み立てる。
@@ -96,9 +102,26 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	days, err := s.st.DayGroups(r.Context())
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	dv := make([]dayView, 0, len(days))
+	for _, d := range days {
+		dv = append(dv, dayView{D: d.Date, N: d.Count})
+	}
+	raw, err := json.Marshal(dv)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	view := galleryView{itemsView: items, Total: total, ChunkSize: s.pageSize}
+	view := galleryView{
+		itemsView: items, Total: total, ChunkSize: s.pageSize,
+		DayGroups: template.JS(raw),
+	}
 	if err := s.tmpl.ExecuteTemplate(w, "gallery", view); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
 		s.log.Error("gallery テンプレートの描画に失敗", "err", err)
@@ -125,31 +148,6 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
 		s.log.Error("items テンプレートの描画に失敗", "err", err)
 		return
-	}
-}
-
-// handleDates は月ごとの開始位置を返す。日付スクラバーの目盛りに使う。
-// ここだけJSONなのは、マークアップではなくデータだから。
-func (s *Server) handleDates(w http.ResponseWriter, r *http.Request) {
-	days, err := s.st.DayGroups(r.Context())
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	out := make([]monthView, 0)
-	offset := 0
-	for _, d := range days {
-		m := d.Date[:7]
-		if len(out) == 0 || out[len(out)-1].M != m {
-			out = append(out, monthView{M: m, O: offset})
-		}
-		offset += d.Count
-	}
-
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if err := json.NewEncoder(w).Encode(out); err != nil {
-		s.log.Error("dates の書き出しに失敗", "err", err)
 	}
 }
 

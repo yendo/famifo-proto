@@ -55,7 +55,8 @@ func TestAppJSImplementsScrubber(t *testing.T) {
 	body := do(t, f.h, "/static/app.js").Body.String()
 
 	require.Contains(t, body, "#scrubber")
-	require.Contains(t, body, "/dates")
+	require.Contains(t, body, "daygroups", "日ごとの表は埋め込みから読む")
+	require.NotContains(t, body, "/dates", "エンドポイントは廃止した")
 	require.Contains(t, body, "scrub-label", "ドラッグ中に年月を表示する")
 }
 

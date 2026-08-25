@@ -274,14 +274,24 @@ const famifo = (() => {
   const thumb = bar.querySelector('.scrub-thumb');
   const label = bar.querySelector('.scrub-label');
 
-  let months = []; // [{m:"2022-11", o:1777}, ...] 新しい順
   let dragging = false;
   let hideTimer = 0;
 
-  fetch('/dates')
-    .then((r) => (r.ok ? r.json() : []))
-    .then((data) => { months = data; })
-    .catch(() => { months = []; }); // ラベルが出ないだけでドラッグは効く
+  // 日ごとの表は初回HTMLに埋め込まれている。これが無いと1枚も描けないため、
+  // 非同期で取りに行く形にはしない。
+  const daysEl = document.querySelector('#daygroups');
+  const days = daysEl ? JSON.parse(daysEl.textContent) : [];
+
+  // 月の境目を日ごとの表から導出する。月専用の口は持たない。
+  const months = [];
+  let offset = 0;
+  for (const g of days) {
+    const m = g.d.slice(0, 7);
+    if (months.length === 0 || months[months.length - 1].m !== m) {
+      months.push({ m, o: offset });
+    }
+    offset += g.n;
+  }
 
   bar.hidden = false;
 
