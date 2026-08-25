@@ -487,7 +487,14 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 func TestScrollPositionSurvivesReload(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	// このRun群の中でタイムアウト付きに待つ箇所の合計:
+	//   初回描画待ち(waitForTiles 10s) + 初回貼り付け待ち(Poll 10s) +
+	//   履歴書き込み猶予のSleep(0.5s) + リロード後描画待ち(waitForTiles 10s) +
+	//   スクロール復元待ち(Poll 10s) + 交差枚数待ち(Poll 10s) = 50.5s。
+	// これらは同じrctxを共有しているため、外側が短いと合計より先に
+	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
+	// （実測）。Evaluate・Reloadなど残りの実行時間の余裕を見て60秒とする。
+	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	err := chromedp.Run(rctx,
@@ -537,8 +544,34 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 	require.NoError(t, err)
 
 	// ブラウザのスクロール位置復元が効くまで待つ（history.scrollRestoration既定）。
-	err = chromedp.Run(rctx, chromedp.Poll(pollScrollJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
+	// Pollが失敗したときにも実測値を報告したいので、値はPollの後に読み直す
+	// （下のintersectCountJSと同じ形。ここを素のrequire.NoErrorのままにすると、
+	// 原因不明の"waiting for function failed: timeout"だけで落ちる
+	// 到達不能寸前のアサーションになってしまう＝spec F4と同型の欠陥）。
+	scrollPollErr := chromedp.Run(rctx, chromedp.Poll(pollScrollJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
+
+	var scrollGeom struct {
+		ScrollTop float64 `json:"scrollTop"`
+		RowH      float64 `json:"rowH"`
+	}
+	err = chromedp.Run(rctx, chromedp.Evaluate(`(() => {
+		const win = document.querySelector('#window');
+		const tile = win.querySelector('.tile');
+		const gap = parseFloat(getComputedStyle(win).rowGap) || 0;
+		const rowH = tile ? tile.getBoundingClientRect().height + gap : 0;
+		return { scrollTop: famifo.scroller.scrollTop, rowH };
+	})()`, &scrollGeom))
 	require.NoError(t, err)
+
+	scrollDiff := scrollGeom.ScrollTop - scrollBefore
+	if scrollDiff < 0 {
+		scrollDiff = -scrollDiff
+	}
+	require.NoErrorf(t, scrollPollErr,
+		"リロード後のスクロール位置が復元前と%.1fpxずれている"+
+			"（復元後=%.1fpx 復元前=%.1fpx 許容差=±%.1fpx=半行）。"+
+			"復元処理が1行分ずれている、またはhistory.scrollRestorationが効いていない疑い",
+		scrollDiff, scrollGeom.ScrollTop, scrollBefore, scrollGeom.RowH/2)
 
 	// リロード後の列数を測る。可視範囲に何枚あるべきかはここから決まる。
 	var cols int
