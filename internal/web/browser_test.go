@@ -64,17 +64,21 @@ var allocCtx context.Context
 // baseURL はテスト用に起動したアプリのURL（例: http://127.0.0.1:54321）。
 var baseURL string
 
+// browserReady はブラウザ環境（Docker上のheadless-shellとテスト用アプリ）を
+// 用意できたか。TestMain が設定し、requireBrowser が読む。
+var browserReady bool
+
+// browserSkipReason は用意できなかった理由。requireBrowser が表示する。
+var browserSkipReason string
+
 func TestMain(m *testing.M) {
 	cleanup, ready := setupBrowserEnv()
-	if !ready {
-		// Dockerが無い/使えない環境でも `-tags browser` を付けて実行した
-		// 開発者に失敗として見せない。理由は setupBrowserEnv 内で出力済み。
-		os.Exit(0)
-	}
+	browserReady = ready
 
 	code := 1
 	func() {
 		// パニックが起きてもコンテナと一時ディレクトリの後始末は必ず行う。
+		// ready が false でも cleanup は安全な no-op / 部分片付けになっている。
 		defer cleanup()
 		defer func() {
 			if r := recover(); r != nil {
@@ -94,13 +98,12 @@ func setupBrowserEnv() (cleanup func(), ok bool) {
 	noop := func() {}
 
 	if _, err := exec.LookPath("docker"); err != nil {
-		fmt.Println("SKIP: dockerが見つからないためブラウザテストをスキップします:", err)
+		browserSkipReason = fmt.Sprintf("dockerが見つかりません: %v", err)
 		return noop, false
 	}
 
 	if err := exec.Command("docker", "image", "inspect", dockerImage).Run(); err != nil {
-		fmt.Println("SKIP: イメージ " + dockerImage + " が無いためブラウザテストをスキップします" +
-			"（`docker pull " + dockerImage + "` してから再実行してください）")
+		browserSkipReason = fmt.Sprintf("イメージ %s がありません（`docker pull %s` してから再実行してください）", dockerImage, dockerImage)
 		return noop, false
 	}
 
@@ -110,20 +113,20 @@ func setupBrowserEnv() (cleanup func(), ok bool) {
 	runOut, err := exec.Command("docker", "run", "-d", "--rm", "--network", "host",
 		"--name", containerName, dockerImage).CombinedOutput()
 	if err != nil {
-		fmt.Printf("SKIP: docker runに失敗したためブラウザテストをスキップします: %v: %s\n", err, runOut)
+		browserSkipReason = fmt.Sprintf("docker run に失敗しました: %v: %s", err, runOut)
 		return noop, false
 	}
 	stopContainer := func() { _ = exec.Command("docker", "stop", containerName).Run() }
 
 	if !waitForDebugger(20 * time.Second) {
-		fmt.Println("SKIP: headless-shellの起動待ちがタイムアウトしたためブラウザテストをスキップします")
+		browserSkipReason = "headless-shellの起動待ちがタイムアウトしました"
 		stopContainer()
 		return noop, false
 	}
 
 	tempDir, srv, closeStore, err := startTestApp()
 	if err != nil {
-		fmt.Println("SKIP: テスト用アプリの起動に失敗したためブラウザテストをスキップします:", err)
+		browserSkipReason = fmt.Sprintf("テスト用アプリの起動に失敗しました: %v", err)
 		stopContainer()
 		return noop, false
 	}
@@ -140,6 +143,26 @@ func setupBrowserEnv() (cleanup func(), ok bool) {
 		stopContainer()
 	}
 	return cleanup, true
+}
+
+// requireBrowser はブラウザ環境が無ければ、このテストだけをスキップする。
+//
+// 判定を TestMain で行って os.Exit(0) すると、ブラウザテストだけでなく
+// 同じパッケージの非ブラウザテスト（gallery_test.go / handlers_test.go /
+// static_test.go の計25本）まで実行されないまま ok と表示されてしまう。
+// CIが緑になるので誰も気づかない。判定は必ず各テストで行う。
+//
+// CI では FAMIFO_BROWSER_TESTS=required を立てる。ブラウザテストが
+// 環境の都合で黙って消えることを防ぐため、スキップを失敗として扱う。
+func requireBrowser(t *testing.T) {
+	t.Helper()
+	if browserReady {
+		return
+	}
+	if os.Getenv("FAMIFO_BROWSER_TESTS") == "required" {
+		t.Fatalf("ブラウザテスト環境を用意できませんでした（FAMIFO_BROWSER_TESTS=required のためスキップせず失敗させます）: %s", browserSkipReason)
+	}
+	t.Skipf("ブラウザテスト環境が無いためスキップします: %s", browserSkipReason)
 }
 
 // waitForDebugger はheadless-shellのDevToolsエンドポイントが応答するまで
@@ -305,6 +328,7 @@ const rectJS = `(() => {
 // すべてtestPageSizeを割り切る列数になり、デスクトップ幅（1600px, 7列）だけが
 // 割り切らない。
 func TestGridAlignmentPastFirstChunk(t *testing.T) {
+	requireBrowser(t)
 	ctx := newTab(t)
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -372,6 +396,7 @@ func TestGridAlignmentPastFirstChunk(t *testing.T) {
 
 // --- Task: TestInitialRenderFillsViewport ---
 func TestInitialRenderFillsViewport(t *testing.T) {
+	requireBrowser(t)
 	ctx := newTab(t)
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -395,6 +420,7 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 
 // --- Task: TestScrollPositionSurvivesReload ---
 func TestScrollPositionSurvivesReload(t *testing.T) {
+	requireBrowser(t)
 	ctx := newTab(t)
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -456,6 +482,7 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 
 // --- Task: TestScrollAnchoredOnResize ---
 func TestScrollAnchoredOnResize(t *testing.T) {
+	requireBrowser(t)
 	ctx := newTab(t)
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -526,6 +553,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 // （画像の再読み込み・スクロールのカクつきの原因）。ここでは、塊境界を跨いだ
 // 直後にタイルへ印を付け、その後の通常スクロールで印が残るかを見る。
 func TestNoRepaintOnPlainScroll(t *testing.T) {
+	requireBrowser(t)
 	ctx := newTab(t)
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -567,6 +595,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 
 // --- Task: TestLightboxCrossesChunkBoundary ---
 func TestLightboxCrossesChunkBoundary(t *testing.T) {
+	requireBrowser(t)
 	ctx := newTab(t)
 	rctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
@@ -609,6 +638,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 
 // --- Task: TestScrubberReachesBothEnds ---
 func TestScrubberReachesBothEnds(t *testing.T) {
+	requireBrowser(t)
 	ctx := newTab(t)
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -686,6 +716,7 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 // この帯は「触られていないときは隠れている」のが正しい挙動なので、
 // ページ読み込み直後の一時表示（1.5秒）が終わるのを待ってから検証する。
 func TestTileTapOpensLightbox(t *testing.T) {
+	requireBrowser(t)
 	ctx := newTab(t)
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()

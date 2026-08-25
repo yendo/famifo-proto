@@ -63,7 +63,11 @@ CGO_ENABLED=0 go test -tags browser ./internal/web/ -v
 ```
 
 `TestMain` がコンテナの起動・待ち受け・後始末を行う。Dockerが無い、または
-イメージが無い環境では、失敗ではなくスキップ（0終了）として扱う。
+イメージが無い環境では、各テストが `requireBrowser` によって個別にスキップされる
+（同じパッケージの非ブラウザテストは通常どおり実行される）。
+
+CI など、環境が無いことを黙認したくない場面では `FAMIFO_BROWSER_TESTS=required`
+を立てる。Docker やイメージが用意できていない場合、スキップではなく失敗になる。
 
 ## 制約
 
