@@ -172,3 +172,29 @@ func TestDatesOnEmptyLibraryReturnsEmptyArray(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.JSONEq(t, `[]`, rec.Body.String(), "null ではなく空配列を返すこと")
 }
+
+func TestItemsTagsEachTileWithLocalDate(t *testing.T) {
+	f := newWebFixture(t, 60)
+	// TZ=UTC の環境でも回帰を検出できるよう、テスト中だけ固定オフセットにする。
+	orig := time.Local
+	time.Local = time.FixedZone("JST", 9*60*60)
+	t.Cleanup(func() { time.Local = orig })
+
+	// ローカルで2月8日の未明。UTCに直すと2月7日になる時刻。
+	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 0, 30, 0, 0, time.Local), true)
+
+	body := do(t, f.h, "/items?offset=0&limit=60").Body.String()
+
+	require.Contains(t, body, `data-date="2026-02-08"`,
+		"UTCで切ると2026-02-07になる。ローカル時刻で分類すること")
+}
+
+func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
+	f := newWebFixture(t, 60)
+	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local), true)
+
+	body := do(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `data-date="2026-02-08"`,
+		"初回HTMLの先頭の塊にも日付が要る")
+}

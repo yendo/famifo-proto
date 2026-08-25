@@ -18,6 +18,7 @@ type photoView struct {
 	ID       string
 	ThumbURL string
 	FullURL  string
+	Date     string // "2006-01-02"。ローカル時刻。クライアントが日の区切りに使う
 }
 
 // itemsView は items.html の入力。
@@ -48,7 +49,12 @@ func (s *Server) buildRange(r *http.Request, offset, limit int) (itemsView, erro
 
 	v := itemsView{Photos: make([]photoView, 0, len(photos))}
 	for _, p := range photos {
-		pv := photoView{ID: p.ID, FullURL: "/photo/" + p.ID, ThumbURL: "/photo/" + p.ID}
+		pv := photoView{
+			ID:       p.ID,
+			FullURL:  "/photo/" + p.ID,
+			ThumbURL: "/photo/" + p.ID,
+			Date:     p.TakenAt.Format("2006-01-02"),
+		}
 		if p.HasThumb {
 			pv.ThumbURL = "/thumb/" + p.ID
 		}
