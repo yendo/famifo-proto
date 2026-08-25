@@ -395,27 +395,92 @@ func TestGridAlignmentPastFirstChunk(t *testing.T) {
 }
 
 // --- Task: TestInitialRenderFillsViewport ---
+//
+// 読み込み直後に、可視範囲が写真で埋まっているかを見る。
+//
+// 注意: サーバは gallery.html の中で最初の1塊（testPageSize枚）を #window に
+// 直接描画して返す。そのため「タイルが存在する」「下端がビューポートを超える」
+// だけを見ると、app.js が一切動かなくても通ってしまう。仮想スクロールが
+// 実際に働いて塊を追加で貼ったこと（tileCount > testPageSize）まで見る。
 func TestInitialRenderFillsViewport(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	var lastBottom, viewportH float64
+	// 可視範囲の先頭行のサムネイルがデコードされるまで待つ。
+	// タイルの寸法は CSS の aspect-ratio で決まるため、srcが404でも
+	// レイアウトは成立してしまう。naturalWidth で実際の描画を確かめる。
+	const decodedInViewJS = `(() => {
+		const vh = window.innerHeight;
+		return [...document.querySelectorAll('#window .tile img')].filter((img) => {
+			const r = img.getBoundingClientRect();
+			return r.bottom > 0 && r.top < vh && img.naturalWidth > 0;
+		}).length;
+	})()`
+
+	var res struct {
+		LastBottom float64 `json:"lastBottom"`
+		ViewportH  float64 `json:"viewportH"`
+		RowH       float64 `json:"rowH"`
+		Cols       int     `json:"cols"`
+		TileCount  int     `json:"tileCount"`
+	}
+	measureJS := `(() => {
+		const win = document.querySelector('#window');
+		const tiles = [...win.querySelectorAll('.tile')];
+		const r = tiles[0].getBoundingClientRect();
+		const gap = parseFloat(getComputedStyle(win).rowGap) || 0;
+		return {
+			lastBottom: tiles[tiles.length - 1].getBoundingClientRect().bottom,
+			viewportH: window.innerHeight,
+			rowH: r.height + gap,
+			cols: getComputedStyle(win).gridTemplateColumns.split(' ').filter(Boolean).length,
+			tileCount: tiles.length,
+		};
+	})()`
+
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 2000),
 		chromedp.Navigate(baseURL),
 		waitForTiles(10*time.Second),
-		chromedp.Evaluate(`(() => {
-			const tiles = [...document.querySelectorAll('#window .tile')];
-			return tiles[tiles.length - 1].getBoundingClientRect().bottom;
-		})()`, &lastBottom),
-		chromedp.Evaluate(`window.innerHeight`, &viewportH),
 	)
 	require.NoError(t, err)
-	require.Greater(t, lastBottom, viewportH,
-		"読み込み直後、最後のタイルの下端(%.0f)がビューポート高(%.0f)に届いていない（空白帯がある）",
-		lastBottom, viewportH)
+
+	// 仮想スクロールが初回の描画を終えるまで待つ。固定sleepにしない。
+	// Poll のエラーをそのまま require.NoError に渡すと、失敗時のメッセージが
+	// "waiting for function failed: timeout" だけになり、何枚あったのかが
+	// 分からない。エラーは受け取っておき、実測してから報告する。
+	pollErr := chromedp.Run(rctx, chromedp.Poll(
+		fmt.Sprintf(`document.querySelectorAll('#window .tile').length > %d`, testPageSize),
+		nil, chromedp.WithPollingTimeout(10*time.Second)))
+
+	err = chromedp.Run(rctx, chromedp.Evaluate(measureJS, &res))
+	require.NoError(t, err)
+	require.NotZero(t, res.Cols, "列数を取得できなかった")
+	require.Greater(t, res.RowH, 0.0, "行の高さを取得できなかった")
+
+	// app.js が動いていなければ、#window にはサーバが埋めた1塊しか無い。
+	require.NoErrorf(t, pollErr,
+		"#windowのタイルが%d枚のまま増えない。サーバが埋めた最初の1塊(%d枚)のままで、"+
+			"仮想スクロールが追加の塊を貼っていない（app.jsが動いていない疑い）",
+		res.TileCount, testPageSize)
+	require.Greater(t, res.TileCount, testPageSize)
+
+	// 「ぎりぎり超えている」を成功とみなすと、ビューポート高やCSSの変更で
+	// 正しい実装のまま落ちる。1行分の余裕を要求する。
+	require.GreaterOrEqualf(t, res.LastBottom, res.ViewportH+res.RowH,
+		"読み込み直後、最後のタイルの下端(%.0f)がビューポート高(%.0f)+1行(%.0f)に届いていない（空白帯がある）",
+		res.LastBottom, res.ViewportH, res.RowH)
+
+	var decoded int
+	err = chromedp.Run(rctx,
+		chromedp.Poll(fmt.Sprintf(`%s >= %d`, decodedInViewJS, res.Cols), nil,
+			chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Evaluate(decodedInViewJS, &decoded),
+	)
+	require.NoErrorf(t, err, "可視範囲のサムネイルが1行分(%d枚)もデコードされなかった（画像が表示されていない）", res.Cols)
+	require.GreaterOrEqual(t, decoded, res.Cols)
 }
 
 // --- Task: TestScrollPositionSurvivesReload ---
