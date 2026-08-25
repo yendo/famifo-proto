@@ -20,6 +20,7 @@ const famifo = (() => {
   const inFlight = new Map();
 
   let L = null;
+  let spacerTop = 0; // #spacer の文書上のオフセット。レイアウト座標との差
   let pasted = { from: 0, to: 0 };
   let renderedKey = ''; // 「どの塊を何個貼ったか」。同じなら描き直さない
 
@@ -170,6 +171,10 @@ const famifo = (() => {
 
     L = layout(days, cols, tileW, labelH, gap); // タイルは正方形なので幅がそのまま高さ
     spacer.style.height = `${Math.max(0, L.height)}px`;
+    // レイアウトのy座標は #spacer の上端が0。文書のスクロール位置とは、
+    // 上部バー（sticky でも流れの中で場所を占める）とギャラリーの余白の
+    // ぶんだけずれる。その差をここで1回だけ測る。
+    spacerTop = spacer.getBoundingClientRect().top + scroller.scrollTop;
   }
 
   async function fetchChunk(ci) {
@@ -211,9 +216,8 @@ const famifo = (() => {
     if (!L || L.height <= 0 || total === 0) return;
 
     const over = OVERSCAN_ROWS * (L.tileH + L.gap);
-    const w = visibleWindow(L,
-      scroller.scrollTop - over,
-      scroller.scrollTop + window.innerHeight + over);
+    const top = scroller.scrollTop - spacerTop;
+    const w = visibleWindow(L, top - over, top + window.innerHeight + over);
     if (!w) return;
 
     // 日ごとの表と総枚数はサーバが別々に読むため、開いたまま新着が入ると
@@ -327,6 +331,7 @@ const famifo = (() => {
     yForIndex,
     dayAtY,
     visibleWindow,
+    toLayoutY: (docY) => docY - spacerTop,
   };
 })();
 
@@ -461,7 +466,7 @@ const famifo = (() => {
     // エントリ（並びが新しい順なので一番古い日）を返す。表示は月なので、
     // 1つの行が月をまたぐときにしか差は出ない。承知のうえで許容する。
     const L = famifo.current();
-    const d = L ? famifo.dayAtY(L, y) : '';
+    const d = L ? famifo.dayAtY(L, famifo.toLayoutY(y)) : '';
     if (d) {
       // ドラッグは17年ぶんを一気に動かすので、日まで出すとちらつく。月で止める。
       const [yy, mm] = d.split('-');
