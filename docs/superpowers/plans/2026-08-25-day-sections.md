@@ -1372,6 +1372,13 @@ MSG
 
 ### Task 7: スクラバーをレイアウトに載せ替える
 
+> **実行中の訂正（2026-08-26）**: この節と Task 6 の `render()` は、レイアウトのy座標に
+> 文書の `scrollTop` をそのまま渡していた。レイアウトのyは `#spacer` の上端が0で、
+> `#spacer` は sticky なヘッダー（sticky でも流れの中で場所を占める）とギャラリーの
+> 余白のぶん約48px下にある。`measure()` で差を測って `famifo.toLayoutY()` として
+> 公開し、`render()` と `seek()` の両方から使う形に直した。実装はコミット `2de5177`
+> を参照すること。
+
 **Files:**
 - Modify: `internal/web/static/app.js`（スクラバーのIIFE）
 
