@@ -101,7 +101,7 @@ func TestAppJSRestoresPositionByPhotoIndex(t *testing.T) {
 
 	body := do(t, f.h, "/static/app.js").Body.String()
 
-	require.Contains(t, body, "yForIndex",
+	require.Contains(t, body, "yForIndex(L, topIndex)",
 		"復元先は通し番号から引く。行の高さが不均一なので掛け算では出ない")
 	require.NotContains(t, body, "Math.floor(topIndex / cols) * rowH",
 		"均一な行を前提にした復元は残さない")

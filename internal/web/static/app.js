@@ -307,8 +307,13 @@ const famifo = (() => {
     // オーバースキャン抜きの、いま実際に画面上端にある写真を取る。
     const prev = L;
     const prevTop = spacerTop; // measure() で測り直される前の値
+    // 高さ0の窓で問い合わせると、ストライプ間の隙間(gap)にちょうど当たった
+    // ときに空振りして null が返り、アンカーが先頭に落ちる。1行ぶんの高さを
+    // 持たせて、必ずどこかのストライプに当てる。隙間に当たった場合は次の
+    // ストライプが返るが、そこが実際に最初に見える内容なので正しい。
+    const anchorY = scroller.scrollTop - prevTop;
     const at = prev
-      ? visibleWindow(prev, scroller.scrollTop - prevTop, scroller.scrollTop - prevTop)
+      ? visibleWindow(prev, anchorY, anchorY + prev.tileH + prev.gap)
       : null;
     const topIndex = at ? at.from : 0;
 
