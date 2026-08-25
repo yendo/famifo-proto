@@ -51,14 +51,79 @@ const (
 	dockerImage     = "chromedp/headless-shell:latest"
 	debugVersionURL = "http://127.0.0.1:9222/json/version"
 
-	// testPhotoCount / testPageSize: 60枚の塊を複数跨ぐのに十分な枚数。
-	testPhotoCount = 200
-	testPageSize   = 60
+	testPageSize = 60
 
 	// deepScrollIndex は「複数の塊を跨いだ、十分に奥」の位置。
 	// 塊を2つ跨いだうえで、境界のちょうど上に止まらないよう半端に足す。
 	deepScrollIndex = testPageSize*2 + 30
 )
+
+// testDayCounts は日ごとの枚数(新しい順)。1枚の日・数枚の日・列数を超える
+// 大きい日を混ぜる。日ごとの枚数がそのままレイアウトを決めるため、以前の
+// 「1日1枚」のcorpusでは横並びも行占有も検証できない。
+// デスクトップ幅(1600px)は7列なので、8枚以上の日が行を占有する側になる。
+var testDayCounts = []int{
+	20, 1, 3, 1, 9, 2, 1, 5, 14, 1,
+	1, 4, 30, 2, 1, 7, 1, 3, 25, 1,
+	6, 1, 2, 11, 1, 1, 4, 18, 3, 1,
+	20,
+}
+
+// testPhotoCount は testDayCounts の合計(200枚)。
+var testPhotoCount = func() int {
+	n := 0
+	for _, c := range testDayCounts {
+		n += c
+	}
+	return n
+}()
+
+// dayOfPhoto は通し番号iの写真が属する日を "2006-01-02" で返す。
+func dayOfPhoto(i int) string {
+	seen := 0
+	for d, c := range testDayCounts {
+		if i < seen+c {
+			return corpusBase.AddDate(0, 0, -d).Format("2006-01-02")
+		}
+		seen += c
+	}
+	return ""
+}
+
+// dayStartIndex は d 日目(0起点、新しい順)の先頭写真の通し番号。
+func dayStartIndex(d int) int {
+	n := 0
+	for k := 0; k < d; k++ {
+		n += testDayCounts[k]
+	}
+	return n
+}
+
+// corpusBase は最も新しい日。seedCorpus と上記2つが共有する。
+var corpusBase = time.Date(2026, 1, 1, 12, 0, 0, 0, time.Local)
+
+// corpus 自体が壊れると、他のブラウザテストが理由不明で落ちる。先に押さえる。
+func TestCorpusHasMixedDaySizes(t *testing.T) {
+	require.Equal(t, 200, testPhotoCount)
+	small, big, single := 0, 0, 0
+	for _, c := range testDayCounts {
+		switch {
+		case c == 1:
+			single++
+		case c <= 7: // デスクトップ(1600px)は7列。ここまでが横に並ぶ側
+			small++
+		default:
+			big++
+		}
+	}
+	require.Greater(t, single, 2, "1枚だけの日が要る（横並びの検証に使う）")
+	require.Greater(t, small, 2, "数枚の日が要る")
+	require.Greater(t, big, 2, "列数を超える日が要る（行占有の検証に使う）")
+	require.Equal(t, 0, dayStartIndex(0))
+	require.Equal(t, testDayCounts[0], dayStartIndex(1))
+	require.Equal(t, dayOfPhoto(0), dayOfPhoto(testDayCounts[0]-1), "同じ日に入ること")
+	require.NotEqual(t, dayOfPhoto(0), dayOfPhoto(testDayCounts[0]), "次は別の日")
+}
 
 // allocCtx はコンテナ内Chromeに接続したchromedpのアロケータcontext。
 // 各テストはこれを親にタブ(chromedp.NewContext)を作る。ブラウザ本体は
@@ -219,7 +284,7 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 		return tempDir, nil, nil, err
 	}
 
-	if err := seedCorpus(st, gen, photoDir, testPhotoCount); err != nil {
+	if err := seedCorpus(st, gen, photoDir); err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
 	}
@@ -235,35 +300,39 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	return tempDir, srv, func() { st.Close() }, nil
 }
 
-// seedCorpus はn枚の実画像ファイルを生成してストアに登録する。
+// seedCorpus は testDayCounts のとおりに実画像ファイルを生成して登録する。
 // ユーザーの実ライブラリを読むと実行環境ごとに結果が変わりCIで再現できない
-// ため、写真は常にこの場で作る。撮影日時は1日ずつずらすので、
+// ため、写真は常にこの場で作る。1日の中では撮影時刻を1分ずつ古くするので、
 // 通し番号iがそのままギャラリー上の並び順(新しい順)に対応する。
-func seedCorpus(st *store.Store, gen *thumb.Generator, photoDir string, n int) error {
+func seedCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
 	ctx := context.Background()
-	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.Local)
 
-	for i := 0; i < n; i++ {
-		name := fmt.Sprintf("p%04d.jpg", i)
-		path := filepath.Join(photoDir, name)
-		if err := writeTestJPEG(path, i); err != nil {
-			return fmt.Errorf("テスト画像を書けません (%s): %w", name, err)
-		}
+	i := 0
+	for d, count := range testDayCounts {
+		for k := 0; k < count; k++ {
+			name := fmt.Sprintf("p%04d.jpg", i)
+			path := filepath.Join(photoDir, name)
+			if err := writeTestJPEG(path, i); err != nil {
+				return fmt.Errorf("テスト画像を書けません (%s): %w", name, err)
+			}
 
-		id := store.IDFor(path)
-		hasThumb := gen.Generate(path, id) == nil
+			id := store.IDFor(path)
+			hasThumb := gen.Generate(path, id) == nil
 
-		takenAt := base.Add(-time.Duration(i) * 24 * time.Hour)
-		fi, statErr := os.Stat(path)
-		if statErr != nil {
-			return fmt.Errorf("テスト画像を統計できません (%s): %w", name, statErr)
-		}
-		p := store.Photo{
-			ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
-			Size: fi.Size(), Ext: ".jpg", HasThumb: hasThumb,
-		}
-		if err := st.Upsert(ctx, p); err != nil {
-			return fmt.Errorf("写真を登録できません (%s): %w", name, err)
+			// 分単位で戻す。最大30枚なので日をまたがない。
+			takenAt := corpusBase.AddDate(0, 0, -d).Add(-time.Duration(k) * time.Minute)
+			fi, statErr := os.Stat(path)
+			if statErr != nil {
+				return fmt.Errorf("テスト画像を統計できません (%s): %w", name, statErr)
+			}
+			p := store.Photo{
+				ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
+				Size: fi.Size(), Ext: ".jpg", HasThumb: hasThumb,
+			}
+			if err := st.Upsert(ctx, p); err != nil {
+				return fmt.Errorf("写真を登録できません (%s): %w", name, err)
+			}
+			i++
 		}
 	}
 	return nil
