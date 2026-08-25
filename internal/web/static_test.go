@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -90,10 +91,33 @@ func TestAppCSSIsResponsive(t *testing.T) {
 
 	require.Contains(t, body, "@media", "画面幅に応じて列数を変える")
 	require.Contains(t, body, "grid-template-columns")
-	require.Contains(t, body, "#window", "グリッドは #window 側に定義する")
+	require.Contains(t, body, "#window", "グリッドは #window と #colprobe に定義する")
 	require.Contains(t, body, ".scrubber", "日付スクラバーの見た目を定義する")
 	require.Contains(t, body, ".scrub-thumb")
 	require.Contains(t, body, ".scrub-label")
+}
+
+// #window と #colprobe は同じトラック定義を共有していなければならない。
+// 片方だけに breakpoint を足すと、測る列数と描く列数が食い違う。どちらの
+// 要素も単体では辻褄が合っているため、何も落ちないまま全部ずれる。
+func TestGridTracksAreSharedByWindowAndProbe(t *testing.T) {
+	f := newWebFixture(t, 10)
+
+	body := do(t, f.h, "/static/app.css").Body.String()
+
+	found := 0
+	for _, block := range strings.Split(body, "}") {
+		if !strings.Contains(block, "grid-template-columns") {
+			continue
+		}
+		found++
+		open := strings.LastIndex(block, "{")
+		require.GreaterOrEqual(t, open, 0, "セレクタが見つからない: %q", block)
+		sel := block[:open]
+		require.Contains(t, sel, "#window", "セレクタ: %q", sel)
+		require.Contains(t, sel, "#colprobe", "セレクタ: %q", sel)
+	}
+	require.GreaterOrEqual(t, found, 3, "基本 + breakpoint 2つで最低3つあるはず")
 }
 
 func TestAppJSRestoresPositionByPhotoIndex(t *testing.T) {

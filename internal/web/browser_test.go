@@ -753,15 +753,23 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	// この等式は貼り付け窓が最終行まで届くことに依存しており、corpus や
 	// viewport を変えると無言のPollタイムアウトで落ちる（元のコメント参照）。
 	// 総枚数から逆算するのをやめれば、その脆さごと消える。
+	// 「範囲が変わらない」だけでは、render()が塊の取得待ちで早期returnして
+	// pastedが初期値(from=0)のまま固まっているケースを区別できない。
+	// chromedp.Pollの既定間隔(約16ms)では3回連続で約64msしか経っておらず、
+	// 混雑したDocker上ではdeepScrollIndex(150番)ぶんのfetchがそれより
+	// 長くかかりうる。そうなると「塊境界を2つ跨ぐ」という前提が満たされない
+	// まま先へ進み、遅れて届いた描画が再描画計測の窓に入り込んで、
+	// 見当違いの再描画回数の失敗として現れる（実測）。範囲が実際に
+	// 最初の塊を超えて進んだこと（from >= chunkSize）も併せて要求する。
 	const rangeSettledJS = `(() => {
 		const r = famifo.pastedRange();
 		const k = r.from + ':' + r.to;
-		if (window.__lastRange === k) {
-			return (window.__rangeStable = (window.__rangeStable || 0) + 1) >= 3;
+		if (window.__lastRange !== k) {
+			window.__lastRange = k;
+			window.__rangeStable = 0;
+			return false;
 		}
-		window.__lastRange = k;
-		window.__rangeStable = 0;
-		return false;
+		return r.from >= famifo.chunkSize && (window.__rangeStable = (window.__rangeStable || 0) + 1) >= 3;
 	})()`
 
 	// スクロールが落ち着いたか（__repaintsが3フレーム連続で増えていないか、
