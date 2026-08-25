@@ -64,6 +64,10 @@ var allocCtx context.Context
 // baseURL はテスト用に起動したアプリのURL（例: http://127.0.0.1:54321）。
 var baseURL string
 
+// testPhotoDir は seedCorpus が写真を書いたディレクトリ。
+// 期待される写真の並びを再現するために使う。
+var testPhotoDir string
+
 // browserReady はブラウザ環境（Docker上のheadless-shellとテスト用アプリ）を
 // 用意できたか。TestMain が設定し、requireBrowser が読む。
 var browserReady bool
@@ -194,6 +198,7 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	}
 
 	photoDir := filepath.Join(tempDir, "photos")
+	testPhotoDir = photoDir
 	thumbDir := filepath.Join(tempDir, "thumbs")
 	if err := os.MkdirAll(photoDir, 0o755); err != nil {
 		return tempDir, nil, nil, err
@@ -308,6 +313,22 @@ func scrollToPhotoJS(index int) string {
 		const cols = getComputedStyle(win).gridTemplateColumns.split(' ').filter(Boolean).length;
 		famifo.scroller.scrollTop = Math.floor(%d / cols) * rowH;
 	})()`, index)
+}
+
+// expectedPhotoURLs はギャラリーの並び順どおりの原寸URLをn件返す。
+//
+// seedCorpus は p0000.jpg から順に takenAt を1日ずつ古くしていくので、
+// 通し番号がそのまま並び順（新しい順）になる。サーバの ListRange を
+// 呼ばずにここで組み立てるのは、クライアント側のオフセット計算を
+// サーバと独立に検証するため。両方が同じ計算を共有すると、
+// ずれが打ち消し合って見えなくなる。
+func expectedPhotoURLs(n int) []string {
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		path := filepath.Join(testPhotoDir, fmt.Sprintf("p%04d.jpg", i))
+		out[i] = "/photo/" + store.IDFor(path)
+	}
+	return out
 }
 
 // rect はDOM要素の getBoundingClientRect() を受け取るための入れ物。
@@ -798,11 +819,35 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 }
 
 // --- Task: TestLightboxCrossesChunkBoundary ---
+//
+// ライトボックスの送りが塊(testPageSize枚)の境界で止まらないこと、
+// そして境界の継ぎ目で写真がずれないことを見る。
+//
+// 「srcが前回と変わったか」だけでは、2塊目以降で常に1枚ずれた写真を
+// 返す off-by-one を検出できない（実測でPASSした）。期待される並びと
+// 完全一致で突き合わせる。
 func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	rctx, cancel := context.WithTimeout(ctx, 40*time.Second)
+	// このRun群の中でタイムアウト付きに待つ箇所の合計:
+	//   初回描画待ち(waitForTiles 10s) + ライトボックスが開く待ち(Poll 5s) +
+	//   原寸画像デコード待ち(Poll 10s) = 25s。
+	// ループ本体(steps=130回、各Poll上限5s)は理論上の最大では650sにも
+	// なるが、実測では130ステップ全体が数秒で終わる（キー送りのたびに
+	// 塊取得済みのURLを引くだけで、境界をまたぐ2回だけ先読み済みの
+	// 次塊を使う。ネットワーク待ちはほぼ発生しない）。全ステップが
+	// 揃って5秒ぎりぎりまでかかる状況は実装が壊れている場合であり、
+	// その場合はループ内のrequireが最初の失敗でテストを止めるため、
+	// 650s分の予算を常時確保する必要はない。だが数ステップが負荷で
+	// 5秒近くかかっても「context deadline exceeded」に化けて
+	// カスタムメッセージが読めなくならないよう、実測(数秒)の10倍以上
+	// の余裕を見て90秒とする。
+	rctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+
+	// 塊の境界を2回（testPageSize番目・testPageSize*2番目）跨ぐのに十分な回数。
+	steps := testPageSize*2 + 10
+	want := expectedPhotoURLs(steps + 1)
 
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
@@ -813,31 +858,38 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	var firstSrc string
-	err = chromedp.Run(rctx, chromedp.Evaluate(`document.querySelector('#lightbox img').src`, &firstSrc))
-	require.NoError(t, err)
-	require.NotEmpty(t, firstSrc)
+	// 原寸画像が実際にデコードされたことまで見る。srcが404でもライトボックスは
+	// 開いてしまうため、開いたかどうかだけでは表示を保証できない。
+	const lbDecodedJS = `(() => { const i = document.querySelector('#lightbox img'); return i.complete && i.naturalWidth > 0; })()`
+	err = chromedp.Run(rctx, chromedp.Poll(lbDecodedJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
+	require.NoError(t, err, "ライトボックスの原寸画像がデコードされなかった（画像が表示されていない）")
 
-	distinct := map[string]bool{firstSrc: true}
-	prev := firstSrc
-	// 塊(testPageSize枚)の境界を2回（testPageSize番目・testPageSize*2番目）
-	// 跨ぐのに十分な回数。
-	steps := testPageSize*2 + 10
-	for i := 0; i < steps; i++ {
-		var src string
-		pollExpr := fmt.Sprintf(`document.querySelector('#lightbox img').src !== %s`, strconv.Quote(prev))
+	// getAttribute('src') は絶対URLに解決されないので、テンプレートが書いた
+	// 相対パスとそのまま突き合わせられる。
+	const srcAttrJS = `document.querySelector('#lightbox img').getAttribute('src')`
+
+	var got string
+	err = chromedp.Run(rctx, chromedp.Evaluate(srcAttrJS, &got))
+	require.NoError(t, err)
+	require.Equalf(t, want[0], got,
+		"最初に開いた写真が先頭(0番)ではない: got=%s want=%s", got, want[0])
+
+	prev := got
+	for i := 1; i <= steps; i++ {
+		pollExpr := fmt.Sprintf(`%s !== %s`, srcAttrJS, strconv.Quote(prev))
 		err = chromedp.Run(rctx,
 			chromedp.KeyEvent(kb.ArrowRight),
 			chromedp.Poll(pollExpr, nil, chromedp.WithPollingTimeout(5*time.Second)),
-			chromedp.Evaluate(`document.querySelector('#lightbox img').src`, &src),
+			chromedp.Evaluate(srcAttrJS, &got),
 		)
-		require.NoErrorf(t, err, "ステップ%dでsrcが変化しなかった（境界での停止の疑い）: prev=%s", i, prev)
-		distinct[src] = true
-		prev = src
+		require.NoErrorf(t, err,
+			"%d枚目でsrcが変化しなかった（塊の境界=%dで止まっている疑い）: prev=%s",
+			i, testPageSize, prev)
+		require.Equalf(t, want[i], got,
+			"%d枚目の写真が期待と違う（塊の境界=%dでの継ぎ目のずれの疑い）: got=%s want=%s",
+			i, testPageSize, got, want[i])
+		prev = got
 	}
-
-	require.GreaterOrEqualf(t, len(distinct), 20,
-		"%d回送っても20種類以上のsrcにならなかった: got=%d", steps, len(distinct))
 }
 
 // --- Task: TestScrubberReachesBothEnds ---
