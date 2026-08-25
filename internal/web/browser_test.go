@@ -447,7 +447,13 @@ func TestGridAlignmentPastFirstChunk(t *testing.T) {
 func TestInitialRenderFillsViewport(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	// このRun群の中でタイムアウト付きに待つ箇所の合計:
+	//   初回描画待ち(waitForTiles 10s) + 塊追加の貼り付け待ち(Poll 10s) +
+	//   可視範囲のサムネイルデコード待ち(Poll 10s) = 30s。
+	// これらは同じrctxを共有しているため、外側が短いと合計より先に
+	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
+	// （実測）。Evaluateなど残りの実行時間の余裕を見て40秒とする。
+	rctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 
 	// 可視範囲の先頭行のサムネイルがデコードされるまで待つ。
@@ -515,13 +521,17 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 		"読み込み直後、最後のタイルの下端(%.0f)がビューポート高(%.0f)+1行(%.0f)に届いていない（空白帯がある）",
 		res.LastBottom, res.ViewportH, res.RowH)
 
+	// Pollが失敗したときにも実測デコード枚数を報告したいので、エラーは
+	// 受け取っておき、値はPollの後に読み直す（上のpollErrと同じ形）。
+	decodedPollErr := chromedp.Run(rctx, chromedp.Poll(
+		fmt.Sprintf(`%s >= %d`, decodedInViewJS, res.Cols), nil,
+		chromedp.WithPollingTimeout(10*time.Second)))
 	var decoded int
-	err = chromedp.Run(rctx,
-		chromedp.Poll(fmt.Sprintf(`%s >= %d`, decodedInViewJS, res.Cols), nil,
-			chromedp.WithPollingTimeout(10*time.Second)),
-		chromedp.Evaluate(decodedInViewJS, &decoded),
-	)
-	require.NoErrorf(t, err, "可視範囲のサムネイルが1行分(%d枚)もデコードされなかった（画像が表示されていない）", res.Cols)
+	err = chromedp.Run(rctx, chromedp.Evaluate(decodedInViewJS, &decoded))
+	require.NoError(t, err)
+	require.NoErrorf(t, decodedPollErr,
+		"可視範囲のサムネイルが%d枚しかデコードされていない（1行分=%d枚を期待。画像が表示されていない疑い）",
+		decoded, res.Cols)
 	require.GreaterOrEqual(t, decoded, res.Cols)
 }
 
@@ -647,7 +657,13 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 func TestScrollAnchoredOnResize(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	// このRun群の中でタイムアウト付きに待つ箇所の合計:
+	//   初回描画待ち(waitForTiles 10s) + 初回貼り付け待ち(Poll 10s) +
+	//   リサイズ後の列数変化待ち(Poll 10s) = 30s。
+	// これらは同じrctxを共有しているため、外側が短いと合計より先に
+	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
+	// （実測）。Evaluateなど残りの実行時間の余裕を見て40秒とする。
+	rctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 
 	err := chromedp.Run(rctx,
@@ -687,13 +703,20 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 	colsChangedJS := fmt.Sprintf(
 		`getComputedStyle(document.querySelector('#window')).gridTemplateColumns.split(' ').filter(Boolean).length !== %d`,
 		before.Cols)
+	// Pollが失敗したときにも実測値(before/after)を報告したいので、エラーは
+	// 受け取っておき、値はPollの後に読み直す（他のpollErrと同じ形）。
+	// 素のrequire.NoErrorのままにすると、Pollがタイムアウトしたとき
+	// "waiting for function failed: timeout" だけで落ち、それを説明する
+	// はずの「列数が変わらなかった」というメッセージには到達しない。
+	// 逆にそこへ到達している時点でPollは成功しており、その下の
+	// NotEqualは恒真式になってしまう（実測。F4/F8と同型の欠陥だった）。
+	colsPollErr := chromedp.Run(rctx, chromedp.Poll(colsChangedJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
 	var after snapshot
-	err = chromedp.Run(rctx,
-		chromedp.Poll(colsChangedJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
-		chromedp.Evaluate(topIndexJS, &after),
-	)
+	err = chromedp.Run(rctx, chromedp.Evaluate(topIndexJS, &after))
 	require.NoError(t, err)
-	require.NotEqual(t, before.Cols, after.Cols, "リサイズしても列数が変わらなかった（前提条件を満たしていない）")
+	require.NoErrorf(t, colsPollErr,
+		"リサイズしても列数が変わらなかった（前提条件を満たしていない）: before=%d after=%d",
+		before.Cols, after.Cols)
 
 	maxCols := before.Cols
 	if after.Cols > maxCols {
@@ -723,7 +746,14 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 func TestNoRepaintOnPlainScroll(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// このRun群の中でタイムアウト付きに待つ箇所の合計:
+	//   初回描画待ち(waitForTiles 10s) + 貼り付け先頭到達待ち(Poll 10s) +
+	//   全塊貼り付け待ち(Poll 10s) + 貼り替え静定待ち(Poll 10s)×2
+	//   （塊境界越えの後と、通常スクロール後の2箇所） = 50s。
+	// これらは同じrctxを共有しているため、外側が短いと合計より先に
+	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
+	// （実測）。Evaluateなど残りの実行時間の余裕を見て60秒とする。
+	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	// スクロールを始める前に観測を仕掛ける。塊境界を跨ぐ貼り替えそのものを
@@ -748,10 +778,18 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	// 写真 deepScrollIndex 番へスクロールした後に render() が貼るのは
 	// 塊1以降のすべて（先頭の塊0だけが可視範囲から外れる）なので、
 	// 貼られるタイル数は total - chunkSize で決まる。
+	//
+	// この等式は、現在の viewport 高・cols・OVERSCAN_ROWS の下で貼り付け窓が
+	// 最終行まで届くこと（deepScrollIndexから貼っても取りこぼす行が残らない
+	// こと）にも依存している。testPhotoCount / deepScrollIndex / viewport を
+	// 変えたら、貼り付け窓が最終行に届くか再確認すること。たとえば
+	// deepScrollIndexは変えずにtestPhotoCountだけ増やすと、貼り付け枚数は
+	// 変わらないのにtotal-chunkSizeだけが増え、この等式は永遠に成立しなく
+	// なる（無言のPollタイムアウトで落ちる）。
 	const allChunksPastedJS = `document.querySelectorAll('#window .tile').length === famifo.total - famifo.chunkSize`
 
-	// スクロールが落ち着いたか（一定時間 __repaints が増えていないか）を見る。
-	// 固定 sleep で「もう終わっただろう」と決め打ちしない。
+	// スクロールが落ち着いたか（__repaintsが3フレーム連続で増えていないか、
+	// 60fpsなら約50ms）を見る。固定 sleep で「もう終わっただろう」と決め打ちしない。
 	const settledJS = `(() => {
 		const now = window.__repaints;
 		if (window.__lastSeen === now) { return (window.__stable = (window.__stable || 0) + 1) >= 3; }
@@ -769,9 +807,26 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
 		chromedp.Poll(fmt.Sprintf(`famifo.pastedIndex() >= %d`, testPageSize), nil,
 			chromedp.WithPollingTimeout(10*time.Second)),
-		chromedp.Poll(allChunksPastedJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
-		chromedp.Poll(settledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
+	require.NoError(t, err)
+
+	// 全塊貼り付け待ちだけは単独のPollに分ける。他のPollと同じRunに
+	// まとめて素のrequire.NoErrorで受けると、chromedpのPollのエラー文字列は
+	// どれも"waiting for function failed: timeout"で同一のため、失敗しても
+	// どのPollが落ちたか切り分けられない（実測）。ここは実測タイル数と
+	// 期待値(total-chunkSize、上のコメント参照)を添えて報告する。
+	allChunksPollErr := chromedp.Run(rctx, chromedp.Poll(allChunksPastedJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
+	var tileCount, wantTileCount int
+	err = chromedp.Run(rctx, chromedp.Evaluate(`document.querySelectorAll('#window .tile').length`, &tileCount))
+	require.NoError(t, err)
+	err = chromedp.Run(rctx, chromedp.Evaluate(`famifo.total - famifo.chunkSize`, &wantTileCount))
+	require.NoError(t, err)
+	require.NoErrorf(t, allChunksPollErr,
+		"貼り付け済みタイル数が%d枚のまま%d枚(total-chunkSize)に届かない（全塊が貼り付けられていない疑い。"+
+			"testPhotoCount/deepScrollIndex/viewportを変えた場合は貼り付け窓が最終行に届くか確認すること）",
+		tileCount, wantTileCount)
+
+	err = chromedp.Run(rctx, chromedp.Poll(settledJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
 	require.NoError(t, err)
 
 	var afterScroll int
@@ -1029,7 +1084,14 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 func TestTileTapOpensLightbox(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	// このRun群の中でタイムアウト付きに待つ箇所の合計:
+	//   初回描画待ち(waitForTiles 10s) + スクラバー一時表示の消滅待ち(Poll 5s) +
+	//   タップ後のライトボックスが開く待ち(Poll 3s) = 18s。
+	// これらは同じrctxを共有しているため、外側が短いと合計より先に
+	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
+	// （実測）。Evaluateなど残りの実行時間の余裕を見て、他のテストと
+	// 揃えて30秒とする。
+	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	err := chromedp.Run(rctx,

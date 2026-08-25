@@ -45,7 +45,7 @@ CGO_ENABLED=0 go build -o famifo-proto .
 
 ## ブラウザテスト
 
-`internal/web/app.js`（仮想スクロール・ライトボックス・日付スクラバー）を、
+`internal/web/static/app.js`（仮想スクロール・ライトボックス・日付スクラバー）を、
 Dockerコンテナ上のヘッドレスChromeで実際に動かして検証するテストがある。
 `//go:build browser` を付けているため、通常の `go test ./...` には含まれない。
 
