@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	_ "image/gif" // image.Decode にGIFを登録する
 	_ "image/png" // image.Decode にPNGを登録する
 
+	"github.com/evanoberholster/imagemeta"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // image.Decode にWebPを登録する（デコードのみ）
 )
@@ -51,6 +53,14 @@ func (g *Generator) Generate(srcPath, id string) error {
 	}
 	defer f.Close()
 
+	// 画素より先にEXIFを読む。image.Decode はEXIFを見ずに生の画素を返し、
+	// jpeg.Encode はEXIFを書き出さないため、ここで回転を適用しないと向きの
+	// 情報はサムネイルから完全に失われる。
+	orientation := orientationOf(f)
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("画像を読み直せません: %w", err)
+	}
+
 	src, _, err := image.Decode(f)
 	if err != nil {
 		return fmt.Errorf("画像をデコードできません: %w", err)
@@ -69,7 +79,10 @@ func (g *Generator) Generate(srcPath, id string) error {
 	}
 	defer os.Remove(tmp.Name()) // renameが成功していれば消す対象は無い
 
-	if err := jpeg.Encode(tmp, scaleToFit(src, g.size), &jpeg.Options{Quality: jpegQuality}); err != nil {
+	// 縮小してから回転する。長辺基準の縮小なので順序で結果の寸法は変わらないが、
+	// 4032x3024ではなく480x360を回すぶん安く済む。
+	dst := applyOrientation(scaleToFit(src, g.size), orientation)
+	if err := jpeg.Encode(tmp, dst, &jpeg.Options{Quality: jpegQuality}); err != nil {
 		tmp.Close()
 		return fmt.Errorf("サムネイルを書き出せません: %w", err)
 	}
@@ -111,4 +124,74 @@ func scaleToFit(src image.Image, max int) image.Image {
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, xdraw.Over, nil)
 	return dst
+}
+
+// orientationOf はEXIFのOrientationを返す。読めない場合や値が範囲外の場合は
+// 1（回転不要）を返す。EXIFを持たない画像は普通に存在するのでエラーにしない。
+//
+// imagemeta はISOBMFFとPNGのパスをrecoverで囲っていない。サムネイル生成の
+// 失敗はその写真をインデックスから落とすため、パニックでデーモンごと落ちる
+// のは避ける。internal/takenat と同じ理由のガード。
+func orientationOf(r io.ReadSeeker) (o uint16) {
+	defer func() {
+		if recover() != nil {
+			o = 1
+		}
+	}()
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return 1
+	}
+	ex, err := imagemeta.Decode(r)
+	if err != nil {
+		return 1
+	}
+	if v := uint16(ex.IFD0.Orientation); v >= 1 && v <= 8 {
+		return v
+	}
+	return 1
+}
+
+// applyOrientation はEXIFのOrientationに従って画素を並べ替える。
+func applyOrientation(src image.Image, o uint16) image.Image {
+	if o <= 1 || o > 8 {
+		return src
+	}
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	dw, dh := w, h
+	if o >= 5 {
+		dw, dh = h, w // 5..8 は縦横が入れ替わる
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, dw, dh))
+	for y := range dh {
+		for x := range dw {
+			sx, sy := sourcePixel(x, y, w, h, o)
+			dst.Set(x, y, src.At(b.Min.X+sx, b.Min.Y+sy))
+		}
+	}
+	return dst
+}
+
+// sourcePixel は表示後の(x,y)に対応する元画像の座標を返す。w,hは元画像の寸法。
+//
+// EXIFのOrientationは「元データの0行目/0列目が表示上のどこへ来るか」を表す。
+// 6なら Right-Top、つまり0行目が右端・0列目が上端に来る（右90度回転）。
+func sourcePixel(x, y, w, h int, o uint16) (int, int) {
+	switch o {
+	case 2: // Top-Right: 左右反転
+		return w - 1 - x, y
+	case 3: // Bottom-Right: 180度
+		return w - 1 - x, h - 1 - y
+	case 4: // Bottom-Left: 上下反転
+		return x, h - 1 - y
+	case 5: // Left-Top: 転置
+		return y, x
+	case 6: // Right-Top: 右90度
+		return y, h - 1 - x
+	case 7: // Right-Bottom: 逆転置
+		return w - 1 - y, h - 1 - x
+	case 8: // Left-Bottom: 右270度
+		return w - 1 - y, x
+	}
+	return x, y
 }
