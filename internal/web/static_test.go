@@ -32,9 +32,26 @@ func TestAppJSImplementsVirtualScroll(t *testing.T) {
 	require.Contains(t, body, "#spacer")
 	require.Contains(t, body, "#window")
 	require.Contains(t, body, "gridTemplateColumns", "列数はブラウザの計算結果から読む")
+	require.Contains(t, body, "--label-h", "ラベル高はCSSの1箇所から読む")
 	require.Contains(t, body, "/items?offset=")
 	require.Contains(t, body, "data-full", "塊からURLを控えてライトボックスに渡す")
+	require.Contains(t, body, "daycard", "日ごとのカードを組み立てる")
 	require.Contains(t, body, "famifo", "他のスクリプトから使える形で公開する")
+	require.NotContains(t, body, "gridColumnStart",
+		"塊単位で貼って列位置を補正する方式は廃した")
+	require.NotContains(t, body, "pastedIndex",
+		"貼り付け先頭ではなく範囲を公開する")
+}
+
+func TestAppCSSDefinesDayCards(t *testing.T) {
+	f := newWebFixture(t, 10)
+
+	body := do(t, f.h, "/static/app.css").Body.String()
+
+	require.Contains(t, body, "--label-h", "ラベル高の定義はここ1箇所だけ")
+	require.Contains(t, body, ".daycard")
+	require.Contains(t, body, ".daylabel")
+	require.Contains(t, body, "1 / -1", "ラベルはカードの全幅を占める")
 }
 
 func TestAppJSLightboxUsesGlobalIndex(t *testing.T) {

@@ -6,6 +6,8 @@
   /* ヘッダーの高さ。ノッチ端末では safe-area の分だけ伸びる。
      スクラバーの開始位置がこれに追従する必要があるため1箇所で定義する。 */
   --topbar-h: calc(max(12px, env(safe-area-inset-top)) + 32px);
+  /* 日付ラベルの高さ。JSがレイアウト計算に使うため、定義はここ1箇所だけ。 */
+  --label-h: 20px;
 }
 
 * { box-sizing: border-box; }
@@ -69,6 +71,22 @@ body.locked { overflow: hidden; }
 }
 @media (min-width: 1100px) {
   #window { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+}
+
+/* 日ごとのカード。占める列数はJSがインラインで書く（min(枚数, 列数)）。
+   repeat(var(--n), 1fr) はCSSの仕様上書けないため custom property に寄せられない。
+   内側は外側と同じgapの等幅グリッドなので、中の1枚は外側の1列と一致する。 */
+.daycard {
+  display: grid;
+  gap: var(--gap);
+}
+
+.daylabel {
+  grid-column: 1 / -1; /* 全幅を占め、以降のタイルを次の段へ送る */
+  height: var(--label-h);
+  font-size: 0.75rem;
+  line-height: var(--label-h);
+  opacity: 0.65;
 }
 
 .tile {

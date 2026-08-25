@@ -19,22 +19,27 @@ const famifo = (() => {
   const chunks = new Map();
   const inFlight = new Map();
 
-  let cols = 1;
-  let rowH = 0;
-  let pastedFrom = 0; // いま貼り付けてある先頭が全体で何番目か
+  let L = null;
+  let pasted = { from: 0, to: 0 };
   let renderedKey = ''; // 「どの塊を何個貼ったか」。同じなら描き直さない
+
+  // サーバが返したHTML断片を、タイル1枚ずつに割る。取得時に1回だけパースし、
+  // 以降はここから必要な範囲を切り出して組み立てる。data-full 属性がURL、
+  // data-date 属性が日付。
+  function parseTiles(html) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    return [...tmp.querySelectorAll('.tile')].map((a) => ({
+      html: a.outerHTML,
+      url: a.dataset.full,
+      date: a.dataset.date,
+    }));
+  }
 
   // 初回ページはサーバが先頭の塊を埋めて返しているので、取得済みとして控える。
   function seedFirstChunk() {
-    const urls = [...win.querySelectorAll('[data-full]')].map((a) => a.dataset.full);
-    if (urls.length > 0) {
-      chunks.set(0, { html: win.innerHTML, urls });
-      renderedKey = '0:1';
-      // render() は renderedKey が一致して早期returnするため、ここで貼り済みの
-      // タイルには通し番号が付かない。サーバが埋めた先頭の塊にも自分で書く。
-      const seeded = win.querySelectorAll('.tile');
-      for (let k = 0; k < seeded.length; k++) seeded[k].dataset.i = k;
-    }
+    const tiles = parseTiles(win.innerHTML);
+    if (tiles.length > 0) chunks.set(0, tiles);
   }
 
   // --- レイアウト計算 ---
@@ -144,21 +149,27 @@ const famifo = (() => {
     };
   }
 
-  // 列数とタイル高をブラウザの計算結果から読む。
-  // auto-fill の計算を自前で再現すると CSS の breakpoint と二重管理になる。
+  // 日ごとの表は初回HTMLに埋め込まれている。これが無いと1枚も描けない。
+  const daysEl = document.querySelector('#daygroups');
+  const days = daysEl ? JSON.parse(daysEl.textContent) : [];
+
+  // 列数・列幅・gap はCSSの計算結果から読む。auto-fill の計算を自前で再現すると
+  // CSSのbreakpointと二重管理になる。ラベル高も定義はCSS側の1箇所だけ。
   function measure() {
     const cs = getComputedStyle(win);
     const tracks = cs.gridTemplateColumns.split(' ').filter((t) => t.length > 0);
-    cols = Math.max(1, tracks.length);
+    const cols = Math.max(1, tracks.length);
     const tileW = parseFloat(tracks[0]);
     if (!(tileW > 0)) {
-      rowH = 0; // スタイル未適用。次の resize/scroll で測り直す
+      L = null; // スタイル未適用。次の resize/scroll で測り直す
       return;
     }
     const gap = parseFloat(cs.rowGap) || 0;
-    rowH = tileW + gap; // タイルは正方形なので幅がそのまま高さになる
-    const rows = Math.ceil(total / cols);
-    spacer.style.height = `${Math.max(0, rows * rowH)}px`;
+    const labelH = parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue('--label-h')) || 0;
+
+    L = layout(days, cols, tileW, labelH, gap); // タイルは正方形なので幅がそのまま高さ
+    spacer.style.height = `${Math.max(0, L.height)}px`;
   }
 
   async function fetchChunk(ci) {
@@ -169,12 +180,9 @@ const famifo = (() => {
       const res = await fetch(`/items?offset=${ci * chunkSize}&limit=${chunkSize}`);
       if (!res.ok) throw new Error(`items ${res.status}`);
       const html = await res.text();
-      const tmp = document.createElement('div');
-      tmp.innerHTML = html;
-      const urls = [...tmp.querySelectorAll('[data-full]')].map((a) => a.dataset.full);
-      const entry = { html, urls };
-      chunks.set(ci, entry);
-      return entry;
+      const tiles = parseTiles(html);
+      chunks.set(ci, tiles);
+      return tiles;
     })().finally(() => inFlight.delete(ci));
 
     inFlight.set(ci, job);
@@ -184,8 +192,14 @@ const famifo = (() => {
   // 全体の通し番号から写真のURLを引く。未取得なら取りに行く。
   async function urlAt(i) {
     if (i < 0 || i >= total) return null;
-    const entry = await fetchChunk(Math.floor(i / chunkSize));
-    return entry.urls[i % chunkSize] ?? null;
+    const tiles = await fetchChunk(Math.floor(i / chunkSize));
+    return tiles[i % chunkSize]?.url ?? null;
+  }
+
+  // 取得済みの塊からタイルを引く。未取得なら null。
+  function tileAt(i) {
+    const tiles = chunks.get(Math.floor(i / chunkSize));
+    return tiles ? tiles[i % chunkSize] ?? null : null;
   }
 
   function ensureChunk(i) {
@@ -194,84 +208,84 @@ const famifo = (() => {
   }
 
   function render() {
-    if (rowH <= 0 || total === 0) return;
+    if (!L || L.height <= 0 || total === 0) return;
 
-    const viewRows = Math.ceil(window.innerHeight / rowH);
-    const firstRow = Math.max(0, Math.floor(scroller.scrollTop / rowH) - OVERSCAN_ROWS);
-    const lastRow = Math.min(Math.ceil(total / cols) - 1, firstRow + viewRows + OVERSCAN_ROWS * 2);
+    const over = OVERSCAN_ROWS * (L.tileH + L.gap);
+    const w = visibleWindow(L,
+      scroller.scrollTop - over,
+      scroller.scrollTop + window.innerHeight + over);
+    if (!w) return;
 
-    const from = firstRow * cols;
-    const to = Math.min(total, (lastRow + 1) * cols);
-    const firstChunk = Math.floor(from / chunkSize);
-    const lastChunk = Math.floor((to - 1) / chunkSize);
-
-    // 可視範囲の前後1塊も先読みしておく。貼り付ける範囲は広げない。
+    // 可視範囲の前後1塊も先読みしておく。切り出す範囲は広げない。
+    const firstChunk = Math.floor(w.from / chunkSize);
+    const lastChunk = Math.floor((w.to - 1) / chunkSize);
     const fetchFrom = Math.max(0, firstChunk - 1);
     const fetchTo = Math.min(Math.floor((total - 1) / chunkSize), lastChunk + 1);
     for (let ci = fetchFrom; ci <= fetchTo; ci++) {
-      if (!chunks.has(ci)) {
-        fetchChunk(ci).then(render).catch(() => {});
-      }
+      if (!chunks.has(ci)) fetchChunk(ci).then(render).catch(() => {});
     }
 
-    // 先頭の塊が無いと貼り付け位置を決められないので、届くまで灰色のまま待つ
-    if (!chunks.has(firstChunk)) return;
-
-    // 塊は先頭から連続している分だけ貼る。途中が欠けたまま先の塊を貼ると
-    // 位置がずれて、写真が実際とは違う場所に並んでしまう。
-    const parts = [];
+    // 必要な塊が1つでも欠けていると穴の空いたカードになるので、揃うまで描かない
     for (let ci = firstChunk; ci <= lastChunk; ci++) {
-      const entry = chunks.get(ci);
-      if (!entry) break;
-      parts.push(entry.html);
+      if (!chunks.has(ci)) return;
     }
 
-    // 貼る内容が前回と同じなら触らない。スクロールのたびに
-    // innerHTML を書き換えると画像の再読み込みが起きる。
-    const key = `${firstChunk}:${parts.length}`;
+    // 貼る内容が前回と同じなら触らない。スクロールのたびに innerHTML を
+    // 書き換えると画像の再読み込みが起きる。
+    const key = `${w.from}:${w.to}:${L.cols}`;
     if (key === renderedKey) return;
     renderedKey = key;
+    pasted = { from: w.from, to: w.to };
 
-    pastedFrom = firstChunk * chunkSize;
+    const parts = [];
+    for (const p of w.pieces) {
+      const from = p.e.start + p.r0 * p.e.span;
+      const to = Math.min(p.e.start + p.e.n, p.e.start + (p.r1 + 1) * p.e.span);
+      parts.push(cardHTML(p, from, to));
+    }
     win.innerHTML = parts.join('');
-    win.style.transform = `translateY(${Math.floor(pastedFrom / cols) * rowH}px)`;
+    win.style.transform = `translateY(${w.pasteY}px)`;
 
-    // グリッドは貼り付けた最初のタイルを列0に置くため、塊の先頭が行頭でないと
-    // 横方向にずれる。開始列を明示して以降の自動配置をそこから流す。
-    const firstTile = win.firstElementChild;
-    if (firstTile) {
-      firstTile.style.gridColumnStart = (pastedFrom % cols) + 1;
-    }
-
-    // 各タイルに通し番号を書く。ライトボックスはDOM上の位置を数えるのではなく
-    // これを読む。位置を数える方式はタイルがカードに入ると成立しない。
+    // 各タイルに通し番号を書く。切り出す範囲は連続しているのでDOM順と一致する。
     const tiles = win.querySelectorAll('.tile');
-    for (let k = 0; k < tiles.length; k++) {
-      tiles[k].dataset.i = pastedFrom + k;
+    for (let k = 0; k < tiles.length; k++) tiles[k].dataset.i = w.from + k;
+  }
+
+  // 1枚のカード。占める列数はレイアウトが決め、ラベルの文言はタイル自身の
+  // data-date から作る。日ごとの表が古くても、ラベルはそのカードに実際に
+  // 写っている日を指す。
+  function cardHTML(piece, from, to) {
+    const tiles = [];
+    for (let i = from; i < to; i++) {
+      const t = tileAt(i);
+      if (!t) return '';
+      tiles.push(t.html);
     }
+    // 段の途中から貼るとき（大きい日をスクロールしている最中）はラベルを落とす
+    const head = tileAt(from);
+    const label = piece.r0 > 0 || !head ? ''
+      : `<div class="daylabel">${formatDay(head.date)}</div>`;
+    return `<div class="daycard" style="grid-column:span ${piece.e.span};`
+      + `grid-template-columns:repeat(${piece.e.span},1fr)">${label}${tiles.join('')}</div>`;
+  }
+
+  // "2026-02-08" → "2026年2月8日"。今年なら年を省く。
+  // 最狭の1列(約120px)に収めるため、これ以上長い表記にはしない。
+  function formatDay(d) {
+    if (!d) return '';
+    const [y, m, day] = d.split('-');
+    const head = Number(y) === new Date().getFullYear() ? '' : `${y}年`;
+    return `${head}${Number(m)}月${Number(day)}日`;
   }
 
   function onResize() {
-    // 回転やリサイズで列数が変わると spacer の高さが変わるため、
-    // scrollTop をそのまま残すと別の写真の位置に飛ぶ。
-    // 先頭に見えていた写真の通し番号を保持して復元する。
-    const topIndex = rowH > 0 ? Math.floor(scroller.scrollTop / rowH) * cols : 0;
-    const prevCols = cols;
-    const prevRowH = rowH;
-
+    const prev = L;
     measure();
-
-    // ResizeObserver は #window 自身の高さの変化でも発火する。
-    // 貼り付ける塊の数はスクロール中に増減するため、通常のスクロールでも呼ばれる。
-    // 実際に列数もタイル高も変わっていないなら、貼り直しも位置の復元も不要。
-    if (cols === prevCols && rowH === prevRowH) {
-      return;
-    }
-
+    // ResizeObserver は #window 自身の高さの変化でも発火する。貼り付ける量は
+    // スクロール中に増減するため、通常のスクロールでも呼ばれる。実際に列数も
+    // タイル高も変わっていないなら、貼り直しは不要。
+    if (prev && L && prev.cols === L.cols && prev.tileH === L.tileH) return;
     renderedKey = ''; // 列数が変われば貼り直しが必要
-    if (rowH > 0 && cols > 0) {
-      scroller.scrollTop = Math.floor(topIndex / cols) * rowH;
-    }
     render();
   }
 
@@ -292,7 +306,8 @@ const famifo = (() => {
     scroller,
     maxScroll,
     render,
-    pastedIndex: () => pastedFrom, // 貼り付け先頭の通し番号。Task 8 が使う
+    current: () => L,
+    pastedRange: () => pasted,
     layout,
     yForIndex,
     dayAtY,
