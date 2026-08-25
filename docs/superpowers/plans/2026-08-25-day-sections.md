@@ -1457,6 +1457,8 @@ func TestAppJSRestoresPositionByPhotoIndex(t *testing.T) {
 		"復元先は通し番号から引く。行の高さが不均一なので掛け算では出ない")
 	require.NotContains(t, body, "Math.floor(topIndex / cols) * rowH",
 		"均一な行を前提にした復元は残さない")
+	require.NotContains(t, body, "pasted.from :",
+		"アンカーに貼り付け範囲の先頭を使わない。OVERSCAN のぶん手前に着地する")
 }
 ```
 
@@ -1474,8 +1476,13 @@ Expected: FAIL
     // 回転やリサイズで列数が変わるとレイアウト全体の高さが変わるため、
     // scrollTop をそのまま残すと別の写真の位置に飛ぶ。いま先頭に見えていた
     // 写真の通し番号を保持して復元する。
+    //
+    // アンカーに pasted.from は使わない。あれは OVERSCAN のぶん画面外まで
+    // 含んだ範囲の先頭なので、復元すると毎回4行ぶん手前に着地する。
+    // オーバースキャン抜きの、いま実際に画面上端にある写真を取る。
     const prev = L;
-    const topIndex = prev ? pasted.from : 0;
+    const at = prev ? visibleWindow(prev, scroller.scrollTop, scroller.scrollTop) : null;
+    const topIndex = at ? at.from : 0;
 
     measure();
 
