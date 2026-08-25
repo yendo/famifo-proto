@@ -215,32 +215,32 @@ func TestListRangeRejectsNegativeArguments(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestMonthOffsetsMarksMonthBoundaries(t *testing.T) {
+func TestDayGroupsCountsEachDay(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
-	// 新しい順に: 2022-12 が2枚、2022-11 が1枚、2021-05 が2枚
+	// 新しい順に: 2022-12-05 が2枚、2022-12-01 が1枚、2021-05-20 が2枚
 	times := []time.Time{
+		time.Date(2022, 12, 5, 18, 0, 0, 0, time.Local),
 		time.Date(2022, 12, 5, 10, 0, 0, 0, time.Local),
 		time.Date(2022, 12, 1, 10, 0, 0, 0, time.Local),
-		time.Date(2022, 11, 8, 10, 0, 0, 0, time.Local),
-		time.Date(2021, 5, 20, 10, 0, 0, 0, time.Local),
-		time.Date(2021, 5, 2, 10, 0, 0, 0, time.Local),
+		time.Date(2021, 5, 20, 20, 0, 0, 0, time.Local),
+		time.Date(2021, 5, 20, 9, 0, 0, 0, time.Local),
 	}
 	for i, at := range times {
 		require.NoError(t, s.Upsert(ctx, photoAt(fmt.Sprintf("/photos/%d.jpg", i), at)))
 	}
 
-	got, err := s.MonthOffsets(ctx)
+	got, err := s.DayGroups(ctx)
 
 	require.NoError(t, err)
-	require.Equal(t, []MonthOffset{
-		{Month: "2022-12", Offset: 0},
-		{Month: "2022-11", Offset: 2},
-		{Month: "2021-05", Offset: 3},
+	require.Equal(t, []DayGroup{
+		{Date: "2022-12-05", Count: 2},
+		{Date: "2022-12-01", Count: 1},
+		{Date: "2021-05-20", Count: 2},
 	}, got)
 }
 
-func TestMonthOffsetsUsesLocalTime(t *testing.T) {
+func TestDayGroupsUsesLocalTime(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 	// TZ=UTC の環境ではローカル集計とUTC集計が同じ結果になり、
@@ -253,19 +253,59 @@ func TestMonthOffsetsUsesLocalTime(t *testing.T) {
 	at := time.Date(2022, 11, 1, 0, 30, 0, 0, time.Local)
 	require.NoError(t, s.Upsert(ctx, photoAt("/photos/a.jpg", at)))
 
-	got, err := s.MonthOffsets(ctx)
+	got, err := s.DayGroups(ctx)
 
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	require.Equal(t, "2022-11", got[0].Month,
-		"UTCで切ると2022-10になる。ローカル時刻で分類すること")
+	require.Equal(t, "2022-11-01", got[0].Date,
+		"UTCで切ると2022-10-31になる。ローカル時刻で分類すること")
 }
 
-func TestMonthOffsetsEmptyStore(t *testing.T) {
+func TestDayGroupsEmptyStore(t *testing.T) {
 	s := openTestStore(t)
 
-	got, err := s.MonthOffsets(context.Background())
+	got, err := s.DayGroups(context.Background())
 
 	require.NoError(t, err)
 	require.Empty(t, got)
+}
+
+// 表と実際の並びがズレると一覧全体が崩れるため、両者の整合を直接押さえる。
+func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local)
+	// 1枚の日・3枚の日・5枚の日を混ぜる
+	perDay := []int{5, 1, 3}
+	n := 0
+	for d, count := range perDay {
+		for k := 0; k < count; k++ {
+			at := base.AddDate(0, 0, -d).Add(time.Duration(-k) * time.Hour)
+			require.NoError(t, s.Upsert(ctx, photoAt(fmt.Sprintf("/photos/%d.jpg", n), at)))
+			n++
+		}
+	}
+
+	groups, err := s.DayGroups(ctx)
+	require.NoError(t, err)
+
+	total, err := s.Count(ctx)
+	require.NoError(t, err)
+	sum := 0
+	for _, g := range groups {
+		sum += g.Count
+	}
+	require.Equal(t, total, sum, "枚数の合計がCountと一致すること")
+
+	// 区切り位置が ListRange の並びと合うこと
+	all, err := s.ListRange(ctx, 0, total)
+	require.NoError(t, err)
+	offset := 0
+	for _, g := range groups {
+		for k := 0; k < g.Count; k++ {
+			require.Equal(t, g.Date, all[offset].TakenAt.Format("2006-01-02"),
+				"offset=%d の写真は %s のはず", offset, g.Date)
+			offset++
+		}
+	}
 }

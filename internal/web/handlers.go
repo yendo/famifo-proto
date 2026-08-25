@@ -125,15 +125,20 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 // handleDates は月ごとの開始位置を返す。日付スクラバーの目盛りに使う。
 // ここだけJSONなのは、マークアップではなくデータだから。
 func (s *Server) handleDates(w http.ResponseWriter, r *http.Request) {
-	months, err := s.st.MonthOffsets(r.Context())
+	days, err := s.st.DayGroups(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	out := make([]monthView, 0, len(months))
-	for _, m := range months {
-		out = append(out, monthView{M: m.Month, O: m.Offset})
+	out := make([]monthView, 0)
+	offset := 0
+	for _, d := range days {
+		m := d.Date[:7]
+		if len(out) == 0 || out[len(out)-1].M != m {
+			out = append(out, monthView{M: m, O: offset})
+		}
+		offset += d.Count
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
