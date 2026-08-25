@@ -504,8 +504,16 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, scrollBefore, 0.0)
 
-	pollScrollJS := fmt.Sprintf(`Math.abs(famifo.scroller.scrollTop - %s) < 200`,
-		strconv.FormatFloat(scrollBefore, 'f', -1, 64))
+	// 許容差は1行分の半分。固定値(200px)だと1行(実測226px)とほぼ同じで、
+	// 「1行まるごとずれて復元された」を見逃す。
+	pollScrollJS := fmt.Sprintf(`(() => {
+		const win = document.querySelector('#window');
+		const tile = win.querySelector('.tile');
+		if (!tile) { return false; }
+		const gap = parseFloat(getComputedStyle(win).rowGap) || 0;
+		const rowH = tile.getBoundingClientRect().height + gap;
+		return Math.abs(famifo.scroller.scrollTop - %s) < rowH / 2;
+	})()`, strconv.FormatFloat(scrollBefore, 'f', -1, 64))
 	const intersectCountJS = `(() => {
 		const vh = window.innerHeight;
 		return [...document.querySelectorAll('#window .tile')].filter((t) => {
@@ -532,17 +540,32 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Poll(pollScrollJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
 	require.NoError(t, err)
 
-	// スクロール位置の復元と、その位置に該当する塊の取得・描画は別のタイミングで
-	// 起きる（描画側は非同期fetch待ち）。intersectCountJS自体が真になるまで
-	// 待つことで、この競合を待ちきる。
-	err = chromedp.Run(rctx, chromedp.Poll(intersectCountJS+" > 0", nil, chromedp.WithPollingTimeout(10*time.Second)))
+	// リロード後の列数を測る。可視範囲に何枚あるべきかはここから決まる。
+	var cols int
+	err = chromedp.Run(rctx, chromedp.Evaluate(
+		`getComputedStyle(document.querySelector('#window')).gridTemplateColumns.split(' ').filter(Boolean).length`, &cols))
 	require.NoError(t, err)
+	require.NotZero(t, cols, "リロード後に列数を取得できなかった")
+
+	// 「1枚でも交差していれば良い」では、窓枠の位置合わせが完全に壊れて
+	// 画面が空白になっても、端に食い込んだ数枚で通ってしまう（実測）。
+	// 1600x900・7列なら本来35枚前後が交差する。最低でも2行分を要求する。
+	wantIntersecting := cols * 2
+
+	// スクロール位置の復元と、その位置の塊の取得・描画は別のタイミングで
+	// 起きる（描画側は非同期fetch待ち）。条件が真になるまで待ちきる。
+	// Poll が失敗したときにも枚数を報告したいので、値は Poll の後に読み直す。
+	pollErr := chromedp.Run(rctx, chromedp.Poll(
+		fmt.Sprintf(`%s >= %d`, intersectCountJS, wantIntersecting), nil,
+		chromedp.WithPollingTimeout(10*time.Second)))
 
 	var intersecting int
 	err = chromedp.Run(rctx, chromedp.Evaluate(intersectCountJS, &intersecting))
 	require.NoError(t, err)
-	require.Greater(t, intersecting, 0,
-		"リロード後、可視範囲と交差するタイルが#windowに1枚も無い（空白のまま）")
+	require.NoErrorf(t, pollErr,
+		"リロード後、可視範囲と交差するタイルが%d枚しかない（%d枚=%d列×2行を期待）。"+
+			"窓枠の位置合わせ(translateY)が効いていない疑い",
+		intersecting, wantIntersecting, cols)
 }
 
 // --- Task: TestScrollAnchoredOnResize ---
