@@ -1077,10 +1077,12 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 // （タイル描画済み・visibleクラス消滅後）では既に display:none ではない
 // （実測: display="block"）。よって getBoundingClientRect() をそのまま使える。
 // また、ブリーフが想定していた「window.innerWidth - width」でscrubLeftを
-// 組み立てる方式は、縦スクロールバー分だけ実際のフレーム右端とずれる
-// （実測: window.innerWidth=800 だが #scrubber の右端は785、
-// document.documentElement.clientWidth=785 と一致）。そのため、ここでは
-// #scrubber の getBoundingClientRect() を直接使う。
+// 組み立てる方式は、縦スクロールバーが出る環境で実際のフレーム右端とずれる
+// （当時の実測: window.innerWidth=800 に対し #scrubber の右端は785で、
+// document.documentElement.clientWidth=785 と一致）。その後 app.css で純正
+// スクロールバーを消したため、現在はどちらも800で一致する（実測）。計算で
+// 組み立てる方式に戻すと同じ罠を踏むので、#scrubber の
+// getBoundingClientRect() を直接使う。
 func TestTileTapOpensLightbox(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)

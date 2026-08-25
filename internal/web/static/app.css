@@ -10,6 +10,12 @@
 
 * { box-sizing: border-box; }
 
+/* ブラウザ純正のスクロールバーは出さない。スクロール位置の表示も操作も
+   .scrubber が引き受ける。2本並ぶとトラックの起点が違って上下にずれる。
+   スクロール自体（ホイール・キー・タッチ）は効いたまま。 */
+html { scrollbar-width: none; }            /* Firefox 64+, Chrome 121+ */
+html::-webkit-scrollbar { display: none; } /* 旧 Chrome / Safari */
+
 body {
   margin: 0;
   background: var(--bg);
