@@ -32,6 +32,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1308,4 +1309,226 @@ func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
 	require.Equal(t, float64(336), got.PasteY, "貼り付け位置は切り出した段の上端")
 	require.Greater(t, got.To, got.From)
 	require.Less(t, got.To, 100, "100枚まるごとではなく可視ぶんだけ切り出すこと")
+}
+
+// レイアウトが計算した位置と、ブラウザが実際に置いた位置が一致すること。
+//
+// これが今回いちばん壊れやすく、しかも壊れても静かに壊れる（写真が微妙に
+// 違う場所に出るだけで、例外も空白も出ない）。CSS Grid の自動配置が貪欲
+// 詰めと同じ規則であるという前提そのものを、実測で確かめる。
+func TestCardPositionsMatchTheLayout(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+
+	var mismatches []string
+	err := chromedp.Run(ctx,
+		chromedp.EmulateViewport(1600, 900),
+		chromedp.Navigate(baseURL),
+		waitForTiles(10*time.Second),
+		chromedp.Evaluate(`(() => {
+			const L = famifo.current();
+			const r = famifo.pastedRange();
+			const spacerTop = document.querySelector('#spacer').getBoundingClientRect().top;
+			const bad = [];
+			for (const card of document.querySelectorAll('.daycard')) {
+				const first = card.querySelector('.tile');
+				if (!first) continue;
+				const i = Number(first.dataset.i);
+				// このカードが属するエントリを通し番号から引く
+				const e = L.entries.find((x) => i >= x.start && i < x.start + x.n);
+				if (!e) { bad.push('entry not found for i=' + i); continue; }
+				const wantY = famifo.yForIndex(L, i);
+				const gotY = card.getBoundingClientRect().top - spacerTop
+					+ (card.querySelector('.daylabel') ? L.labelH + L.gap : 0);
+				if (Math.abs(gotY - wantY) > 1) {
+					bad.push('i=' + i + ' y got=' + gotY.toFixed(1) + ' want=' + wantY.toFixed(1));
+				}
+				const wantW = e.span * L.tileH + (e.span - 1) * L.gap;
+				const gotW = card.getBoundingClientRect().width;
+				if (Math.abs(gotW - wantW) > 1) {
+					bad.push('i=' + i + ' width got=' + gotW.toFixed(1) + ' want=' + wantW.toFixed(1));
+				}
+			}
+			return bad;
+		})()`, &mismatches),
+	)
+	require.NoError(t, err)
+	require.Empty(t, mismatches,
+		"JSの計算とブラウザの実配置がずれている（pastedRangeの範囲で検査）")
+}
+
+// 1行に収まる日が実際に横に並ぶこと。
+func TestSmallDaysSitSideBySide(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+
+	var sharedRows int
+	err := chromedp.Run(ctx,
+		chromedp.EmulateViewport(1600, 900),
+		chromedp.Navigate(baseURL),
+		waitForTiles(10*time.Second),
+		chromedp.Evaluate(`(() => {
+			// 上端が同じカードが2枚以上あるストライプの数
+			const tops = new Map();
+			for (const c of document.querySelectorAll('.daycard')) {
+				const t = Math.round(c.getBoundingClientRect().top);
+				tops.set(t, (tops.get(t) || 0) + 1);
+			}
+			return [...tops.values()].filter((n) => n >= 2).length;
+		})()`, &sharedRows),
+	)
+	require.NoError(t, err)
+	require.Greater(t, sharedRows, 0,
+		"1行に収まる日が横に並んでいない（corpusに1枚・数枚の日が入っているか確認すること）")
+}
+
+// 列数を超える日が行を占有し、ラベルがその日を指すこと。
+func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+
+	// testDayCounts[0] は20枚。1600px(7列)では行を占有する。
+	var res struct {
+		Span  int    `json:"span"`
+		Label string `json:"label"`
+		Full  bool   `json:"full"`
+	}
+	err := chromedp.Run(ctx,
+		chromedp.EmulateViewport(1600, 900),
+		chromedp.Navigate(baseURL),
+		waitForTiles(10*time.Second),
+		chromedp.Evaluate(`(() => {
+			const L = famifo.current();
+			const card = document.querySelector('.daycard');
+			const win = document.querySelector('#window');
+			return {
+				span: L.entries[0].span,
+				label: card.querySelector('.daylabel').textContent,
+				full: Math.abs(card.getBoundingClientRect().width
+				               - win.getBoundingClientRect().width) < 1,
+			};
+		})()`, &res),
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, 7, res.Span, "1600pxは7列。20枚の日は全列を占めること")
+	require.True(t, res.Full, "行を占有する日はグリッドの全幅であること")
+
+	// ラベルはタイルの data-date から作る。corpus の先頭の日と一致すること。
+	day := dayOfPhoto(0) // "2026-01-01"
+	parts := strings.Split(day, "-")
+	wantMonth, wantDay := strings.TrimLeft(parts[1], "0"), strings.TrimLeft(parts[2], "0")
+	require.Contains(t, res.Label, wantMonth+"月"+wantDay+"日",
+		"ラベルが先頭の写真の日付と一致しない")
+}
+
+// --- Task: TestScrubberLabelMatchesTheTopPhoto ---
+//
+// TestScrubberReachesBothEnds はフラクション0と1、つまり座標系の誤りが
+// 打ち消し合う特異点でしかスクラバーを検証していない。実際にこのブランチの
+// 早い段階で見つかった座標バグは、途中位置を誰も見ていなかったから
+// 気づかれずに残っていた。ここでは中間位置までドラッグし、表示される
+// ラベルの月が、可視範囲の先頭に実際に来た写真の月と一致することを見る。
+//
+// corpus は先頭の日(2026-01-01, 20枚)だけが1月で、残り(testDayCounts[1:])は
+// すべて2025年12月に収まる（corpusBase.AddDate(0,0,-d)がd>=1で前年12月に
+// 入るため）。月境界は「先頭の日を過ぎた直後」の1箇所しかないので、
+// スクラバーの中間（frac=0.5）まで下げれば、1行に複数の日が同居しても
+// 月をまたぐ心配がない。
+func TestScrubberLabelMatchesTheTopPhoto(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	rctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1600, 900),
+		chromedp.Navigate(baseURL),
+		waitForTiles(10*time.Second),
+	)
+	require.NoError(t, err)
+
+	// スクラバーを一時表示させてから掴む（TestScrubberReachesBothEndsと同じ経路）。
+	err = chromedp.Run(rctx,
+		chromedp.Evaluate(`famifo.scroller.scrollTop = 50`, nil),
+		chromedp.Poll(`document.querySelector('#scrubber').classList.contains('visible')`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+	)
+	require.NoError(t, err)
+
+	var r rect
+	err = chromedp.Run(rctx, chromedp.Evaluate(fmt.Sprintf(rectJS, `document.querySelector('#scrubber')`), &r))
+	require.NoError(t, err)
+
+	x := r.Left + r.Width/2
+	y0 := r.Top + 5
+	yMid := r.Top + r.Height*0.5
+
+	// TestScrubberReachesBothEnds と同じ技法(input.DispatchMouseEvent による
+	// press/move/release)を使う。ただしラベルは pointerup (release) で
+	// 隠れてしまうため、release は状態を読み取った後まで遅らせる。
+	press := input.DispatchMouseEvent(input.MousePressed, x, y0).WithButton(input.Left).WithClickCount(1)
+	move := input.DispatchMouseEvent(input.MouseMoved, x, yMid).WithButton(input.Left).WithButtons(1)
+	err = chromedp.Run(rctx, press, move)
+	require.NoError(t, err)
+
+	settleJS := `(() => {
+		const now = famifo.scroller.scrollTop;
+		if (window.__lastScroll === now) { return true; }
+		window.__lastScroll = now;
+		return false;
+	})()`
+	err = chromedp.Run(rctx,
+		chromedp.Evaluate(`window.__lastScroll = -1;`, nil),
+		chromedp.Poll(settleJS, nil, chromedp.WithPollingTimeout(5*time.Second)))
+	require.NoError(t, err, "ドラッグ後にスクロール位置が落ち着かなかった")
+
+	// 貼り付け(塊のfetchを挟む非同期処理)が新しいスクロール位置に追いつくまで待つ。
+	const anyTileInViewJS = `(() => {
+		const vh = window.innerHeight;
+		return [...document.querySelectorAll('#window .tile')].some((t) => {
+			const rc = t.getBoundingClientRect();
+			return rc.bottom > 0 && rc.top < vh;
+		});
+	})()`
+	pollErr := chromedp.Run(rctx, chromedp.Poll(anyTileInViewJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
+
+	var res struct {
+		Label  string `json:"label"`
+		Hidden bool   `json:"hidden"`
+		TopI   int    `json:"topI"`
+	}
+	err = chromedp.Run(rctx, chromedp.Evaluate(`(() => {
+		const label = document.querySelector('#scrubber .scrub-label');
+		const vh = window.innerHeight;
+		let topI = -1, topTop = Infinity;
+		for (const tile of document.querySelectorAll('#window .tile')) {
+			const rc = tile.getBoundingClientRect();
+			if (rc.bottom > 0 && rc.top < vh && rc.top < topTop) {
+				topTop = rc.top;
+				topI = Number(tile.dataset.i);
+			}
+		}
+		return { label: label.textContent, hidden: label.hidden, topI };
+	})()`, &res))
+	require.NoError(t, err)
+
+	// 読み取りは終わったので、掴んでいた指を離す。
+	release := input.DispatchMouseEvent(input.MouseReleased, x, yMid).WithButton(input.Left).WithClickCount(1)
+	err = chromedp.Run(rctx, release)
+	require.NoError(t, err)
+
+	require.NoErrorf(t, pollErr,
+		"ドラッグ後、可視範囲にタイルが現れなかった（貼り付けが追いついていない疑い）")
+	require.False(t, res.Hidden, "ドラッグ中はラベルが表示されているはず")
+	require.NotEqual(t, -1, res.TopI, "可視範囲の先頭タイルが見つからない")
+
+	day := dayOfPhoto(res.TopI)
+	require.NotEmpty(t, day, "先頭タイル(i=%d)の日が特定できない", res.TopI)
+	parts := strings.Split(day, "-")
+	wantMonth := strings.TrimLeft(parts[1], "0")
+	t.Logf("PROBE: label=%q topI=%d day=%s wantMonth=%s", res.Label, res.TopI, day, wantMonth)
+	require.Containsf(t, res.Label, wantMonth+"月",
+		"スクラバーのラベル(%q)の月が、可視範囲の先頭写真(i=%d, day=%s)の月と一致しない",
+		res.Label, res.TopI, day)
 }
