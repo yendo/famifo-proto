@@ -4,7 +4,8 @@ const famifo = (() => {
   const gallery = document.querySelector('#gallery');
   const spacer = document.querySelector('#spacer');
   const win = document.querySelector('#window');
-  if (!gallery || !spacer || !win) return null;
+  const probe = document.querySelector('#colprobe');
+  if (!gallery || !spacer || !win || !probe) return null;
 
   const total = Number(gallery.dataset.total || 0);
   const chunkSize = Number(gallery.dataset.chunk || 60);
@@ -156,8 +157,17 @@ const famifo = (() => {
 
   // 列数・列幅・gap はCSSの計算結果から読む。auto-fill の計算を自前で再現すると
   // CSSのbreakpointと二重管理になる。ラベル高も定義はCSS側の1箇所だけ。
+  //
+  // #window ではなく #colprobe（子を持たない空のグリッド）から測る。#window
+  // には直前のレイアウトのカードが残っており、そのカードの grid-column:
+  // span N が実際に収まる数を超えていると、CSS Grid はそれを収めるために
+  // 暗黙トラックを追加してトラック列を押し広げる。#window はそれを常に
+  // フルに収める側（span を測った cols に合わせて描く側）なので、狭めた
+  // 直後は「一番大きい span」に押し上げられた列数を読んでしまい、本当の
+  // 列数（=このビューポート幅に自然に収まる数）より多く出る。中身が無い
+  // #colprobe ならその影響を受けない。
   function measure() {
-    const cs = getComputedStyle(win);
+    const cs = getComputedStyle(probe);
     const tracks = cs.gridTemplateColumns.split(' ').filter((t) => t.length > 0);
     const cols = Math.max(1, tracks.length);
     const tileW = parseFloat(tracks[0]);

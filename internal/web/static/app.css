@@ -62,15 +62,28 @@ body.locked { overflow: hidden; }
   left: 0;
   right: 0;
   top: 0;
+}
+/* 列数を測るためだけの空のグリッド。#window から測ると、直前のレイアウトの
+   カードが持つ grid-column: span N がトラック列を押し広げてしまい、本当の
+   列数が読めない。子を持たないこの要素なら中身に左右されない。 */
+#colprobe {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 0;
+  visibility: hidden;
+}
+#window, #colprobe {
   display: grid;
   gap: var(--gap);
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
 }
 @media (min-width: 700px) {
-  #window { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  #window, #colprobe { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
 }
 @media (min-width: 1100px) {
-  #window { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  #window, #colprobe { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
 }
 
 /* 日ごとのカード。占める列数はJSがインラインで書く（min(枚数, 列数)）。
