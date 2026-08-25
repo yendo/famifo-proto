@@ -704,16 +704,6 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("PROBE: 通常スクロール後の貼り替え回数=%d（貼り付け先頭 %d→%d）", afterPlain, pastedBefore, pastedAfter)
 
-	// 塊境界の跨ぎ自体でも、必要な回数を超えて貼り替えていないこと。
-	// 正当な貼り替えは多くても3回。貼るのは塊1,2,3 で、届いた分から順に貼るため
-	// 塊1つにつき最大1回（複数の塊が揃ってから貼られれば、その分少なくなる）。
-	// 差が出る仕組み: ガードが無いと ResizeObserver → onResize → render() が
-	// #window の高さを変え、それがまた ResizeObserver を呼ぶループに入り、
-	// 同じ内容の貼り直しが毎回挟まって回数が倍増する。
-	require.LessOrEqualf(t, afterScroll, 3,
-		"塊境界を跨ぐスクロールで%d回も貼り替えている（ResizeObserverのフィードバックループの疑い）",
-		afterScroll)
-
 	// 前提の確認。この1行で貼り付け範囲が1塊ぶん進んでいなければ、検証したい
 	// 「塊境界を跨ぐ貼り替え」に到達していない。到達しなければガードの有無で
 	// 差が出ないため、黙って合格させずにここで落とす。
@@ -722,14 +712,33 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 			"塊境界を跨いでおらず、このテストの前提が崩れている",
 		pastedBefore)
 
-	// 貼り替えが起きてよいのは、貼り付ける内容が変わったときだけ。
-	// 範囲が1塊ぶん進んだのだから、貼り替えはちょうど1回で済むはず。
+	// ここが本命の検出器。貼り替えが起きてよいのは、貼り付ける内容が
+	// 変わったときだけ。範囲が1塊ぶん進んだのだから、貼り替えはちょうど1回。
 	// 同じ内容の貼り直しが挟まれば2回以上になる。
+	// 絶対回数ではなく「前後の差」を見るので、下の合体（後述）の影響を受けない。
+	// ガードが無いときの余分な貼り替えは ResizeObserver 経由で、
+	// レンダリングのステップ境界を跨いで別のコールバックとして配送されるため、
+	// 合体して1回に潰れることがない。
 	require.Equalf(t, afterScroll+1, afterPlain,
 		"1行分のスクロールで、貼り付ける内容が変わっていないのにDOMが貼り替えられた: "+
 			"スクロール前=%d 後=%d 期待=%d（貼り付け先頭 %d→%d）。"+
 			"onResize の「列数もタイル高も変わっていなければ何もしない」ガードが効いていない疑い",
 		afterScroll, afterPlain, afterScroll+1, pastedBefore, pastedAfter)
+
+	// こちらは主検出器ではなく、貼り替えの暴走を捕まえるためのゆるい健全性
+	// チェック。afterScroll は決定的な値ではない（MutationObserver の
+	// コールバック合体により実際の render 回数の下限にしかならず、
+	// スクロールバーの出入りによる正当な貼り替えも混ざる）ので、
+	// 厳密な上限を課すと正しい実装でも落ちる。
+	// 実測: 正しい実装を遅延なし・30ms・400ms で25回ずつ、計75回動かして
+	// 2が30回、3が44回、4が1回。観測最大の倍の8を上限にした。
+	// ガードを外したときにこの上限に引っかかるとは限らないが、それでよい。
+	// その場合は上の相対不変条件が落とす。
+	const repaintRunawayCeiling = 8
+	require.LessOrEqualf(t, afterScroll, repaintRunawayCeiling,
+		"塊境界を跨ぐスクロールで%d回も貼り替えている（貼り替えの暴走。"+
+			"ResizeObserverのフィードバックループの疑い）",
+		afterScroll)
 }
 
 // --- Task: TestLightboxCrossesChunkBoundary ---
