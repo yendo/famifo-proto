@@ -612,50 +612,109 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 
 // --- Task: TestNoRepaintOnPlainScroll ---
 //
-// #windowはグリッドの行数が貼り付け枚数で変わるため、塊境界を跨ぐたびに
-// ResizeObserverが発火する。以前はこれを無条件にrender()へつなげており、
-// 列数もタイル高も変わっていないのにDOMを丸ごと張り替えていた
-// （画像の再読み込み・スクロールのカクつきの原因）。ここでは、塊境界を跨いだ
-// 直後にタイルへ印を付け、その後の通常スクロールで印が残るかを見る。
+// #window はグリッドの行数が貼り付け枚数で変わるため、塊境界を跨ぐたびに
+// ResizeObserver が発火する。以前はこれを無条件に render() へつなげており、
+// 列数もタイル高も変わっていないのに DOM を丸ごと張り替えていた
+// （画像の再読み込み・スクロールのカクつきの原因）。
+//
+// 「貼り付け済みのタイルに印を付け、スクロール後も残っているか」では
+// この不具合を検出できない。印を付けられるのは貼り替えが落ち着いた後で、
+// その後の小さなスクロールは貼り付け範囲を変えないため、
+// ResizeObserver のフィードバックループの入口に届かないから（実測）。
+// ここでは MutationObserver で #window の作り直し回数そのものを数える。
 func TestNoRepaintOnPlainScroll(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+
+	// スクロールを始める前に観測を仕掛ける。塊境界を跨ぐ貼り替えそのものを
+	// 数えたいので、跨いだ後に仕掛けるのでは遅い。
+	const installObserverJS = `(() => {
+		window.__repaints = 0;
+		const win = document.querySelector('#window');
+		new MutationObserver((records) => {
+			for (const r of records) {
+				// render() は innerHTML を差し替えるので、必ず removedNodes を伴う。
+				// タイルの追加のみ（あり得ないが）を貼り替えと数えないため区別する。
+				if (r.removedNodes.length > 0) { window.__repaints++; break; }
+			}
+		}).observe(win, { childList: true });
+	})()`
+
+	// スクロールが落ち着いたか（一定時間 __repaints が増えていないか）を見る。
+	// 固定 sleep で「もう終わっただろう」と決め打ちしない。
+	const settledJS = `(() => {
+		const now = window.__repaints;
+		if (window.__lastSeen === now) { return (window.__stable = (window.__stable || 0) + 1) >= 3; }
+		window.__lastSeen = now;
+		window.__stable = 0;
+		return false;
+	})()`
 
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
 		waitForTiles(10*time.Second),
-		// 塊境界を跨ぐ、正当な貼り替えを1回起こす。
-		chromedp.Evaluate(scrollToPhotoJS(150), nil),
-		chromedp.Poll(`famifo.pastedIndex() > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
-		// レイアウトが落ち着き、ResizeObserverが発火する猶予を与える。
-		chromedp.Sleep(300*time.Millisecond),
-		// 現在貼られているタイルに印を付ける。
-		chromedp.Evaluate(`[...document.querySelectorAll('#window .tile')].forEach((t) => { t.dataset.probe = 'stamped'; })`, nil),
-		// 不具合があれば、ここでResizeObserver由来の張り直しが起きる。
-		chromedp.Sleep(500*time.Millisecond),
-		// 同じ貼り付け範囲内にとどまる、ごく普通のスクロール。
-		chromedp.Evaluate(`famifo.scroller.scrollTop += 40`, nil),
-		chromedp.Sleep(300*time.Millisecond),
+		chromedp.Evaluate(installObserverJS, nil),
+		// 塊境界を2つ跨ぐところまでスクロールする。
+		chromedp.Evaluate(scrollToPhotoJS(testPageSize*2+30), nil),
+		chromedp.Poll(fmt.Sprintf(`famifo.pastedIndex() >= %d`, testPageSize), nil,
+			chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Poll(settledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
 
-	var res struct {
-		Total   int `json:"total"`
-		Stamped int `json:"stamped"`
-	}
-	err = chromedp.Run(rctx, chromedp.Evaluate(`(() => {
-		const tiles = [...document.querySelectorAll('#window .tile')];
-		return { total: tiles.length, stamped: tiles.filter((t) => t.dataset.probe === 'stamped').length };
-	})()`, &res))
+	var afterScroll int
+	err = chromedp.Run(rctx, chromedp.Evaluate(`window.__repaints`, &afterScroll))
+	require.NoError(t, err)
+	t.Logf("PROBE: 塊境界を跨いだ後の貼り替え回数=%d", afterScroll)
+
+	// ごく普通のスクロールを1行分行う。貼り付ける内容が変わらなければ
+	// 貼り替えは起きないはずで、変わったとしても1回で済むはず。
+	const scrollOneRowJS = `(() => {
+		const win = document.querySelector('#window');
+		const r = win.querySelector('.tile').getBoundingClientRect();
+		const gap = parseFloat(getComputedStyle(win).rowGap) || 0;
+		famifo.scroller.scrollTop += r.height + gap;
+	})()`
+	var pastedBefore, pastedAfter int
+	err = chromedp.Run(rctx,
+		chromedp.Evaluate(`famifo.pastedIndex()`, &pastedBefore),
+		chromedp.Evaluate(`window.__lastSeen = -1; window.__stable = 0;`, nil),
+		chromedp.Evaluate(scrollOneRowJS, nil),
+		chromedp.Poll(settledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Evaluate(`famifo.pastedIndex()`, &pastedAfter),
+	)
 	require.NoError(t, err)
 
-	require.Greater(t, res.Total, 0)
-	require.Equal(t, res.Total, res.Stamped,
-		"通常スクロールでDOMが再構築された（印の消えたタイルがある）: total=%d stamped=%d",
-		res.Total, res.Stamped)
+	var afterPlain int
+	err = chromedp.Run(rctx, chromedp.Evaluate(`window.__repaints`, &afterPlain))
+	require.NoError(t, err)
+	t.Logf("PROBE: 通常スクロール後の貼り替え回数=%d（貼り付け先頭 %d→%d）", afterPlain, pastedBefore, pastedAfter)
+
+	// 塊境界の跨ぎ自体でも、必要な回数を超えて貼り替えていないこと。
+	// 差が出る仕組み: ガードが無いと ResizeObserver → onResize → render() が
+	// #window の高さを変え、それがまた ResizeObserver を呼ぶループに入る。
+	// 実測（1600x900・7列・塊60枚）: ガードありは2回（塊1,2が揃った時点で1回、
+	// 塊3が届いて1回）。ガードを外すと同じ内容の貼り直しが毎回挟まって4回になる。
+	require.LessOrEqualf(t, afterScroll, 2,
+		"塊境界を跨ぐスクロールで%d回も貼り替えている（ResizeObserverのフィードバックループの疑い）",
+		afterScroll)
+
+	// 貼り替えが起きてよいのは、貼り付ける内容が変わったときだけ。
+	// 1行分のスクロールで貼り付け範囲が変わらなかったなら0回、
+	// 変わったならちょうど1回。同じ内容の貼り直しは1回も起きてはならない。
+	// （この位置・この列数では1行で貼り付け範囲が1塊ぶん進む。実測）
+	want := afterScroll
+	if pastedAfter != pastedBefore {
+		want++
+	}
+	require.Equalf(t, want, afterPlain,
+		"1行分のスクロールで、貼り付ける内容が変わっていないのにDOMが貼り替えられた: "+
+			"スクロール前=%d 後=%d 期待=%d（貼り付け先頭 %d→%d）。"+
+			"onResize の「列数もタイル高も変わっていなければ何もしない」ガードが効いていない疑い",
+		afterScroll, afterPlain, want, pastedBefore, pastedAfter)
 }
 
 // --- Task: TestLightboxCrossesChunkBoundary ---
