@@ -966,11 +966,25 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 
 // --- Task: TestTileTapOpensLightbox ---
 //
-// 修正前は、スクラバーの目に見えない32px幅の帯が pointer-events:auto の
-// ままだったため、右端の列のタイルの右5分の1をタップするとギャラリーの
-// シークとして奪われてしまっていた（帯がタイル幅の約22%を覆っていたため）。
-// この帯は「触られていないときは隠れている」のが正しい挙動なので、
-// ページ読み込み直後の一時表示（1.5秒）が終わるのを待ってから検証する。
+// 修正前は、スクラバーの目に見えない帯が pointer-events:auto のままで、
+// 右端の列のタイルのうち帯と重なる部分をタップするとギャラリーのシークとして
+// 奪われていた。この帯は「触られていないときは隠れている」のが正しい挙動なので、
+// ページ読み込み直後の一時表示が終わるのを待ってから検証する。
+//
+// タップ点は必ずスクラバー帯と重なる位置にする。タイル幅の割合で決め打ちすると、
+// 帯の幅やCSSのブレークポイントが変わったときに、バグが残ったままタップ点が
+// 帯を外れて素通りする（実測。帯を32px→8pxにしたらバグ入りでPASSした）。
+//
+// タップ点導出の根拠（Step 1 実測）:
+// #scrubber は初期HTMLでは hidden 属性付き（display:none）だが、app.jsが
+// ロード直後に bar.hidden = false を実行するため、このテストが計測する時点
+// （タイル描画済み・visibleクラス消滅後）では既に display:none ではない
+// （実測: display="block"）。よって getBoundingClientRect() をそのまま使える。
+// また、ブリーフが想定していた「window.innerWidth - width」でscrubLeftを
+// 組み立てる方式は、縦スクロールバー分だけ実際のフレーム右端とずれる
+// （実測: window.innerWidth=800 だが #scrubber の右端は785、
+// document.documentElement.clientWidth=785 と一致）。そのため、ここでは
+// #scrubber の getBoundingClientRect() を直接使う。
 func TestTileTapOpensLightbox(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
@@ -986,31 +1000,71 @@ func TestTileTapOpensLightbox(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	var r rect
+	// 右端の列のタイルと、スクラバー帯の矩形を同時に測る。
+	// #scrubberはこの時点で hidden(display:none) ではないことをStep 1で確認済み
+	// なので、getBoundingClientRect() をそのまま使う（実際にpointer-eventsを
+	// 持つ範囲もこの矩形と一致する）。
+	var m struct {
+		Tile  rect `json:"tile"`
+		Scrub rect `json:"scrub"`
+	}
+	measureJS := `(() => {
+		const win = document.querySelector('#window');
+		const cols = getComputedStyle(win).gridTemplateColumns.split(' ').filter(Boolean).length;
+		const tb = win.querySelectorAll('.tile')[cols - 1].getBoundingClientRect();
+		const sb = document.querySelector('#scrubber').getBoundingClientRect();
+		const toRect = (b) => ({Left:b.left, Top:b.top, Right:b.right, Bottom:b.bottom, Width:b.width, Height:b.height});
+		return { tile: toRect(tb), scrub: toRect(sb) };
+	})()`
+
 	var scrollBefore float64
 	err = chromedp.Run(rctx,
-		chromedp.Evaluate(`(() => {
-			const win = document.querySelector('#window');
-			const cols = getComputedStyle(win).gridTemplateColumns.split(' ').filter(Boolean).length;
-			const tiles = [...win.querySelectorAll('.tile')];
-			const b = tiles[cols - 1].getBoundingClientRect();
-			return {Left:b.left, Top:b.top, Right:b.right, Bottom:b.bottom, Width:b.width, Height:b.height};
-		})()`, &r),
+		chromedp.Evaluate(measureJS, &m),
 		chromedp.Evaluate(`famifo.scroller.scrollTop`, &scrollBefore),
 	)
 	require.NoError(t, err)
-	require.Greater(t, r.Width, 0.0, "右端タイルの矩形が取得できなかった")
+	require.Greater(t, m.Tile.Width, 0.0, "右端タイルの矩形が取得できなかった")
+	require.Greater(t, m.Scrub.Width, 0.0, "スクラバー帯の矩形が取得できなかった（display:noneのまま計測した疑い）")
 
-	x := r.Right - r.Width*0.1 // 右5分の1のさらに中央寄り
-	y := r.Top + r.Height/2
+	// タイルとスクラバー帯の重なり。ここが空なら、そもそもこの不具合は
+	// 再現しない条件なので、静かに通さず前提条件の不成立として止める。
+	overlapLeft := m.Tile.Left
+	if m.Scrub.Left > overlapLeft {
+		overlapLeft = m.Scrub.Left
+	}
+	overlapRight := m.Tile.Right
+	if m.Scrub.Right < overlapRight {
+		overlapRight = m.Scrub.Right
+	}
+	overlapTop := m.Tile.Top
+	if m.Scrub.Top > overlapTop {
+		overlapTop = m.Scrub.Top
+	}
+	overlapBottom := m.Tile.Bottom
+	if m.Scrub.Bottom < overlapBottom {
+		overlapBottom = m.Scrub.Bottom
+	}
+	if overlapRight-overlapLeft <= 0 || overlapBottom-overlapTop <= 0 {
+		t.Fatalf("右端タイル(x:%.0f〜%.0f, y:%.0f〜%.0f)とスクラバー帯(x:%.0f〜%.0f, y:%.0f〜%.0f)が"+
+			"重なっていないため、この不具合は再現しない条件です。"+
+			"ビューポート幅か .scrubber の width/top を確認してください",
+			m.Tile.Left, m.Tile.Right, m.Tile.Top, m.Tile.Bottom,
+			m.Scrub.Left, m.Scrub.Right, m.Scrub.Top, m.Scrub.Bottom)
+	}
+	t.Logf("重なり幅=%.1fpx 重なり高さ=%.1fpx（タイル右端%.0f, 帯左端%.0f）",
+		overlapRight-overlapLeft, overlapBottom-overlapTop, m.Tile.Right, m.Scrub.Left)
+
+	x := (overlapLeft + overlapRight) / 2
+	y := (overlapTop + overlapBottom) / 2
 
 	err = chromedp.Run(rctx, chromedp.MouseClickXY(x, y))
 	require.NoError(t, err)
 
-	err = chromedp.Run(rctx, chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil,
+	pollErr := chromedp.Run(rctx, chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil,
 		chromedp.WithPollingTimeout(3*time.Second)))
-	require.NoError(t, err,
-		"右端タイルの右5分の1をタップしてもライトボックスが開かなかった（スクラバーに奪われている疑い）")
+	require.NoErrorf(t, pollErr,
+		"スクラバー帯と重なる位置(x=%.0f, y=%.0f)のタイルをタップしてもライトボックスが開かなかった"+
+			"（スクラバーに奪われている疑い）", x, y)
 
 	var scrollAfter float64
 	err = chromedp.Run(rctx, chromedp.Evaluate(`famifo.scroller.scrollTop`, &scrollAfter))
