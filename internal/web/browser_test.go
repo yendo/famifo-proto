@@ -637,10 +637,20 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 			for (const r of records) {
 				// render() は innerHTML を差し替えるので、必ず removedNodes を伴う。
 				// タイルの追加のみ（あり得ないが）を貼り替えと数えないため区別する。
+				// break しているので、1回のコールバックに複数回分の render の記録が
+				// まとまって届いた場合は1回としか数えない。つまりこの数は下限。
 				if (r.removedNodes.length > 0) { window.__repaints++; break; }
 			}
 		}).observe(win, { childList: true });
 	})()`
+
+	// 位相1の終状態。「一定時間 __repaints が増えていない」だけを静定とみなすと、
+	// 塊の到着が遅れたときに塊1つ分だけ貼られた状態で先へ進んでしまう。すると
+	// 続く1行のスクロールが塊境界を跨がず、このテスト全体が空虚になる（実測）。
+	// 写真 testPageSize*2+30 番へスクロールした後に render() が貼るのは
+	// 塊1以降のすべて（先頭の塊0だけが可視範囲から外れる）なので、
+	// 貼られるタイル数は total - chunkSize で決まる。
+	const allChunksPastedJS = `document.querySelectorAll('#window .tile').length === famifo.total - famifo.chunkSize`
 
 	// スクロールが落ち着いたか（一定時間 __repaints が増えていないか）を見る。
 	// 固定 sleep で「もう終わっただろう」と決め打ちしない。
@@ -661,6 +671,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 		chromedp.Evaluate(scrollToPhotoJS(testPageSize*2+30), nil),
 		chromedp.Poll(fmt.Sprintf(`famifo.pastedIndex() >= %d`, testPageSize), nil,
 			chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Poll(allChunksPastedJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
 		chromedp.Poll(settledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
@@ -670,8 +681,8 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("PROBE: 塊境界を跨いだ後の貼り替え回数=%d", afterScroll)
 
-	// ごく普通のスクロールを1行分行う。貼り付ける内容が変わらなければ
-	// 貼り替えは起きないはずで、変わったとしても1回で済むはず。
+	// ごく普通のスクロールを1行分行う。この位置・この列数では、この1行で
+	// 貼り付け範囲が1塊ぶん進む（下の NotEqual で前提として確認する）。
 	const scrollOneRowJS = `(() => {
 		const win = document.querySelector('#window');
 		const r = win.querySelector('.tile').getBoundingClientRect();
@@ -694,27 +705,31 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	t.Logf("PROBE: 通常スクロール後の貼り替え回数=%d（貼り付け先頭 %d→%d）", afterPlain, pastedBefore, pastedAfter)
 
 	// 塊境界の跨ぎ自体でも、必要な回数を超えて貼り替えていないこと。
+	// 正当な貼り替えは多くても3回。貼るのは塊1,2,3 で、届いた分から順に貼るため
+	// 塊1つにつき最大1回（複数の塊が揃ってから貼られれば、その分少なくなる）。
 	// 差が出る仕組み: ガードが無いと ResizeObserver → onResize → render() が
-	// #window の高さを変え、それがまた ResizeObserver を呼ぶループに入る。
-	// 実測（1600x900・7列・塊60枚）: ガードありは2回（塊1,2が揃った時点で1回、
-	// 塊3が届いて1回）。ガードを外すと同じ内容の貼り直しが毎回挟まって4回になる。
-	require.LessOrEqualf(t, afterScroll, 2,
+	// #window の高さを変え、それがまた ResizeObserver を呼ぶループに入り、
+	// 同じ内容の貼り直しが毎回挟まって回数が倍増する。
+	require.LessOrEqualf(t, afterScroll, 3,
 		"塊境界を跨ぐスクロールで%d回も貼り替えている（ResizeObserverのフィードバックループの疑い）",
 		afterScroll)
 
+	// 前提の確認。この1行で貼り付け範囲が1塊ぶん進んでいなければ、検証したい
+	// 「塊境界を跨ぐ貼り替え」に到達していない。到達しなければガードの有無で
+	// 差が出ないため、黙って合格させずにここで落とす。
+	require.NotEqualf(t, pastedBefore, pastedAfter,
+		"1行分のスクロールで貼り付け範囲が変わらなかった（貼り付け先頭=%d のまま）。"+
+			"塊境界を跨いでおらず、このテストの前提が崩れている",
+		pastedBefore)
+
 	// 貼り替えが起きてよいのは、貼り付ける内容が変わったときだけ。
-	// 1行分のスクロールで貼り付け範囲が変わらなかったなら0回、
-	// 変わったならちょうど1回。同じ内容の貼り直しは1回も起きてはならない。
-	// （この位置・この列数では1行で貼り付け範囲が1塊ぶん進む。実測）
-	want := afterScroll
-	if pastedAfter != pastedBefore {
-		want++
-	}
-	require.Equalf(t, want, afterPlain,
+	// 範囲が1塊ぶん進んだのだから、貼り替えはちょうど1回で済むはず。
+	// 同じ内容の貼り直しが挟まれば2回以上になる。
+	require.Equalf(t, afterScroll+1, afterPlain,
 		"1行分のスクロールで、貼り付ける内容が変わっていないのにDOMが貼り替えられた: "+
 			"スクロール前=%d 後=%d 期待=%d（貼り付け先頭 %d→%d）。"+
 			"onResize の「列数もタイル高も変わっていなければ何もしない」ガードが効いていない疑い",
-		afterScroll, afterPlain, want, pastedBefore, pastedAfter)
+		afterScroll, afterPlain, afterScroll+1, pastedBefore, pastedAfter)
 }
 
 // --- Task: TestLightboxCrossesChunkBoundary ---
