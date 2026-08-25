@@ -1176,3 +1176,164 @@ func TestTileTapOpensLightbox(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, scrollBefore, scrollAfter, "スクロール位置が変化した（スクラバーのシークが発生した）")
 }
+
+// --- Task: レイアウト計算 ---
+//
+// 貪欲詰めと二分探索は純粋関数だが、この repo にはJSを単体テストする手段が
+// 無い（Node を足さない方針のため）。実ブラウザ上で関数を直接呼んで検証する。
+
+// layoutEntry は famifo.layout が返す entries の1要素。
+type layoutEntry struct {
+	D     string  `json:"d"`
+	Y     float64 `json:"y"`
+	H     float64 `json:"h"`
+	Start int     `json:"start"`
+	N     int     `json:"n"`
+	Span  int     `json:"span"`
+	Col   int     `json:"col"`
+	Rows  int     `json:"rows"`
+}
+
+type layoutResult struct {
+	Entries []layoutEntry `json:"entries"`
+	Height  float64       `json:"height"`
+}
+
+// evalLayout は famifo.layout をブラウザ上で呼ぶ。
+// tileH=100, labelH=20, gap=4 に固定して、期待値を手計算できるようにする。
+func evalLayout(t *testing.T, ctx context.Context, groupsJSON string, cols int) layoutResult {
+	t.Helper()
+	var got layoutResult
+	err := chromedp.Run(ctx, chromedp.Evaluate(
+		fmt.Sprintf(`famifo.layout(%s, %d, 100, 20, 4)`, groupsJSON, cols), &got))
+	require.NoError(t, err)
+	return got
+}
+
+func TestLayoutPacksDaysThatFitOneRow(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForTiles(10*time.Second))
+	require.NoError(t, err)
+
+	// 列数6。1枚 + 4枚 = 5列で同じストライプに載り、次の3枚は入らず次へ。
+	got := evalLayout(t, ctx,
+		`[{d:"2026-02-08",n:1},{d:"2026-02-03",n:4},{d:"2026-01-20",n:3}]`, 6)
+
+	require.Len(t, got.Entries, 3)
+
+	require.Equal(t, 0, got.Entries[0].Col)
+	require.Equal(t, 1, got.Entries[0].Span)
+	require.Equal(t, float64(0), got.Entries[0].Y)
+	require.Equal(t, 0, got.Entries[0].Start)
+
+	require.Equal(t, 1, got.Entries[1].Col, "1枚の日の右隣に載ること")
+	require.Equal(t, 4, got.Entries[1].Span)
+	require.Equal(t, float64(0), got.Entries[1].Y, "同じストライプなのでyが等しいこと")
+	require.Equal(t, 1, got.Entries[1].Start)
+
+	// 3枚目は残り1列に4列は載らないので次のストライプ。
+	// ストライプ高 = labelH(20) + gap(4) + tileH(100) = 124。次のy = 124 + gap(4) = 128
+	require.Equal(t, 0, got.Entries[2].Col, "入らないので次のストライプの先頭から")
+	require.Equal(t, float64(128), got.Entries[2].Y)
+	require.Equal(t, 5, got.Entries[2].Start)
+
+	require.Equal(t, float64(128+124), got.Height)
+}
+
+func TestLayoutGivesWholeRowsToBigDays(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForTiles(10*time.Second))
+	require.NoError(t, err)
+
+	// 列数6。13枚は6列を占め、3段(6+6+1)になる。
+	got := evalLayout(t, ctx, `[{d:"2026-02-08",n:13},{d:"2026-02-03",n:2}]`, 6)
+
+	require.Len(t, got.Entries, 2)
+	require.Equal(t, 6, got.Entries[0].Span, "列数を超える日は行を占有すること")
+	require.Equal(t, 3, got.Entries[0].Rows)
+	// h = 20 + 4 + 3*100 + 2*4 = 332
+	require.Equal(t, float64(332), got.Entries[0].H)
+
+	require.Equal(t, 0, got.Entries[1].Col, "行を占有した日の後は必ず次のストライプ")
+	require.Equal(t, float64(332+4), got.Entries[1].Y)
+	require.Equal(t, 13, got.Entries[1].Start)
+}
+
+func TestLayoutHandlesEmptyLibrary(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForTiles(10*time.Second))
+	require.NoError(t, err)
+
+	got := evalLayout(t, ctx, `[]`, 6)
+
+	require.Empty(t, got.Entries)
+	require.Equal(t, float64(0), got.Height, "空でも高さは0で、NaNにならないこと")
+}
+
+func TestLayoutLookupsAgreeWithEntries(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForTiles(10*time.Second))
+	require.NoError(t, err)
+
+	// yForIndex と dayAtY が entries と食い違わないこと。
+	// 実装が二分探索なので、境界（各グループの先頭・末尾）を総当たりで確かめる。
+	var mismatches []string
+	err = chromedp.Run(ctx, chromedp.Evaluate(`(() => {
+		const groups = [{d:"2026-02-08",n:1},{d:"2026-02-03",n:4},
+		                {d:"2026-01-20",n:13},{d:"2026-01-05",n:2}];
+		const L = famifo.layout(groups, 6, 100, 20, 4);
+		const bad = [];
+		for (const e of L.entries) {
+			for (const i of [e.start, e.start + e.n - 1]) {
+				const row = Math.floor((i - e.start) / e.span);
+				const want = e.y + L.labelH + L.gap + row * (L.tileH + L.gap);
+				const got = famifo.yForIndex(L, i);
+				if (got !== want) bad.push('yForIndex(' + i + ')=' + got + ' want=' + want);
+				// 詰めた行では複数の日が同じ y を共有するので、dayAtY は
+				// その行のどれか1つしか返せない。「同じ行の日を返すこと」
+				// までが約束できる範囲。
+				const d = famifo.dayAtY(L, want);
+				const hit = L.entries.find((x) => x.d === d);
+				if (!hit || hit.y !== e.y) {
+					bad.push('dayAtY(' + want + ')=' + d + ' は y=' + e.y + ' の行に無い');
+				}
+			}
+		}
+		return bad;
+	})()`, &mismatches))
+	require.NoError(t, err)
+	require.Empty(t, mismatches, "二分探索が entries と食い違っている")
+}
+
+func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForTiles(10*time.Second))
+	require.NoError(t, err)
+
+	// 100枚の日（6列で17段）の途中だけを切り出せること。
+	// 段が始まるのはラベル(20)+gap(4)の下なので、r段目の上端は 24+r*104。
+	// 4段目(r=3)の上端は 24+312=336。
+	var got struct {
+		From   int     `json:"from"`
+		To     int     `json:"to"`
+		PasteY float64 `json:"pasteY"`
+		Pieces int     `json:"pieces"`
+	}
+	err = chromedp.Run(ctx, chromedp.Evaluate(`(() => {
+		const L = famifo.layout([{d:"2026-02-08",n:100}], 6, 100, 20, 4);
+		const w = famifo.visibleWindow(L, 336, 336 + 200);
+		return {from: w.from, to: w.to, pasteY: w.pasteY, pieces: w.pieces.length};
+	})()`, &got))
+	require.NoError(t, err)
+
+	require.Equal(t, 1, got.Pieces)
+	require.Equal(t, 18, got.From, "4段目の先頭 = 3*6")
+	require.Equal(t, float64(336), got.PasteY, "貼り付け位置は切り出した段の上端")
+	require.Greater(t, got.To, got.From)
+	require.Less(t, got.To, 100, "100枚まるごとではなく可視ぶんだけ切り出すこと")
+}
