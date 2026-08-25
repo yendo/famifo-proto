@@ -358,6 +358,7 @@ const famifo = (() => {
     dayAtY,
     visibleWindow,
     toLayoutY: (docY) => docY - spacerTop,
+    toDocY: (layoutY) => layoutY + spacerTop,
   };
 })();
 

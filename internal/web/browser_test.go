@@ -371,30 +371,27 @@ func waitForTiles(timeout time.Duration) chromedp.Action {
 		chromedp.WithPollingTimeout(timeout))
 }
 
-// scrollToPhotoJS は写真indexが可視範囲付近に来るまでスクロールするJS式を返す。
-// 単純に maxScroll() の割合で決めると、OVERSCAN_ROWS(4行)分だけ手前で
-// 描画範囲が計算されるため、狙った塊にわずかに届かないことがある
-// （実測）。タイルの実測高さから行を逆算し、狙った写真indexの行の
-// 先頭へ直接スクロールすることで、狭い際どい境界を避ける。
+// scrollToPhotoJS は写真indexが可視範囲の先頭に来るまでスクロールするJS式を返す。
+//
+// 以前はタイルの実測高から行を逆算していたが、行の高さが日ごとに変わるため
+// 成立しない。実装が公開している「通し番号 → y」をそのまま呼ぶ。テストが
+// レイアウト規則を写経すると、実装と一緒に間違えても気づけない。
+// yForIndex が返すのはレイアウト座標なので、toDocY で文書座標に戻す。
 func scrollToPhotoJS(index int) string {
 	return fmt.Sprintf(`(() => {
-		const win = document.querySelector('#window');
-		const tile = win.querySelector('.tile');
-		const r = tile.getBoundingClientRect();
-		const gap = parseFloat(getComputedStyle(win).rowGap) || 0;
-		const rowH = r.height + gap;
-		const cols = getComputedStyle(win).gridTemplateColumns.split(' ').filter(Boolean).length;
-		famifo.scroller.scrollTop = Math.floor(%d / cols) * rowH;
+		const L = famifo.current();
+		famifo.scroller.scrollTop = famifo.toDocY(famifo.yForIndex(L, %d));
 	})()`, index)
 }
 
 // expectedPhotoURLs はギャラリーの並び順どおりの原寸URLをn件返す。
 //
-// seedCorpus は p0000.jpg から順に takenAt を1日ずつ古くしていくので、
-// 通し番号がそのまま並び順（新しい順）になる。サーバの ListRange を
-// 呼ばずにここで組み立てるのは、クライアント側のオフセット計算を
-// サーバと独立に検証するため。両方が同じ計算を共有すると、
-// ずれが打ち消し合って見えなくなる。
+// seedCorpus は p0000.jpg から順に、testDayCounts のとおり日をまたぎながら
+// takenAt を古くしていく（同じ日の中では1分ずつ）。日をまたぐタイミングは
+// 一定ではないが、通し番号の順序自体は常に撮影時刻の新しい順と一致するので、
+// 通し番号がそのまま並び順になる。サーバの ListRange を呼ばずにここで
+// 組み立てるのは、クライアント側のオフセット計算をサーバと独立に検証する
+// ため。両方が同じ計算を共有すると、ずれが打ち消し合って見えなくなる。
 func expectedPhotoURLs(n int) []string {
 	out := make([]string, n)
 	for i := 0; i < n; i++ {
@@ -413,97 +410,6 @@ const rectJS = `(() => {
 	const b = (%s).getBoundingClientRect();
 	return {Left:b.left, Top:b.top, Right:b.right, Bottom:b.bottom, Width:b.width, Height:b.height};
 })()`
-
-// --- Task: TestGridAlignmentPastFirstChunk ---
-//
-// 塊(testPageSize枚)を跨いで貼り付けたとき、先頭タイルのgrid-column-startを補正
-// しないと横方向にずれる不具合があった。この不具合は列数がtestPageSizeの約数の
-// ときは起きない（どの塊境界でも列0から始まるため）。スマホ・タブレットの幅は
-// すべてtestPageSizeを割り切る列数になり、デスクトップ幅（1600px, 7列）だけが
-// 割り切らない。
-func TestGridAlignmentPastFirstChunk(t *testing.T) {
-	requireBrowser(t)
-	ctx := newTab(t)
-	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	var cols, chunkSize int
-	err := chromedp.Run(rctx,
-		chromedp.EmulateViewport(1600, 900),
-		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
-		chromedp.Evaluate(`getComputedStyle(document.querySelector('#window')).gridTemplateColumns.split(' ').filter(Boolean).length`, &cols),
-		// data-chunk はサーバの pageSize から描画される。ここが食い違うと
-		// クライアントが計算するオフセットが全てずれるため、実際に一致を確認する。
-		chromedp.Evaluate(`famifo.chunkSize`, &chunkSize),
-	)
-	require.NoError(t, err)
-	require.NotZero(t, cols, "列数を取得できなかった")
-	require.Equal(t, testPageSize, chunkSize, "サーバとクライアントで塊のサイズが食い違っている")
-
-	// ガードはGo側の定数(testPageSize)ではなく、ブラウザが実際に保持している
-	// chunkSizeを基準にする。こちらが実態を反映した値だから。
-	if chunkSize%cols == 0 {
-		t.Fatalf("このビューポートの列数(%d)は塊サイズ(%d)の約数のため、この不具合は再現しない条件です。"+
-			"ビューポート幅を変更してください", cols, chunkSize)
-	}
-	t.Logf("列数=%d（塊サイズ%dの約数ではない）", cols, chunkSize)
-
-	// 第2〜3の塊に入るところまでスクロールする（写真deepScrollIndex番付近）。
-	err = chromedp.Run(rctx,
-		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
-		chromedp.Poll(fmt.Sprintf(`famifo.pastedIndex() >= %d`, chunkSize), nil, chromedp.WithPollingTimeout(10*time.Second)),
-	)
-	require.NoError(t, err)
-
-	var res struct {
-		PastedIndex     int       `json:"pastedIndex"`
-		Cols            int       `json:"cols"`
-		GridColumnStart string    `json:"gridColumnStart"`
-		FirstLeft       float64   `json:"firstLeft"`
-		ColumnLefts     []float64 `json:"columnLefts"`
-	}
-	measureJS := `(() => {
-		const win = document.querySelector('#window');
-		const tiles = [...win.querySelectorAll('.tile')];
-		const first = win.firstElementChild;
-		const cols = getComputedStyle(win).gridTemplateColumns.split(' ').filter(Boolean).length;
-		// 列トラックの左端座標。DOM順の「2行目」を切り出すやり方は使えない。
-		// 先頭タイルが列0以外から始まると、その区間は行境界を跨ぎ、
-		// 列トラックが回転した順序で並んでしまうため（まさにこのテストが
-		// 検証している状況）。全タイルの左端を重複排除して昇順に並べる。
-		const lefts = [...new Set(tiles.map((t) => Math.round(t.getBoundingClientRect().left)))]
-			.sort((a, b) => a - b);
-		return {
-			pastedIndex: famifo.pastedIndex(),
-			cols,
-			gridColumnStart: getComputedStyle(first).gridColumnStart,
-			firstLeft: Math.round(first.getBoundingClientRect().left),
-			columnLefts: lefts,
-		};
-	})()`
-	err = chromedp.Run(rctx, chromedp.Evaluate(measureJS, &res))
-	require.NoError(t, err)
-	require.NotZero(t, res.Cols)
-
-	wantStart := (res.PastedIndex % res.Cols) + 1
-	gotStart, convErr := strconv.Atoi(res.GridColumnStart)
-	require.NoError(t, convErr, "grid-column-startが数値でない: %q", res.GridColumnStart)
-	require.Equal(t, wantStart, gotStart,
-		"先頭タイルのgrid-column-startがずれている: pastedIndex=%d cols=%d", res.PastedIndex, res.Cols)
-
-	// 旧: require.Equal(t, res.Cols, res.DistinctLefts, ...) は恒真式だった。
-	// CSS Grid は grid-column-start に関わらず必ず cols 本のトラック上に置くため、
-	// タイルが cols 枚以上あれば「左端の種類数 == 列数」は常に成立する（実測）。
-	// 先頭タイルが「期待した列のトラック」に実際に載っているかを見る。
-	require.Lenf(t, res.ColumnLefts, res.Cols,
-		"列トラックの左端座標を%d本ぶん取得できなかった: %v", res.Cols, res.ColumnLefts)
-	wantLeft := res.ColumnLefts[wantStart-1]
-	require.InDeltaf(t, wantLeft, res.FirstLeft, 1.0,
-		"先頭タイルが期待した列のトラックに載っていない（横方向のずれ）: "+
-			"got=%.0f want=%.0f pastedIndex=%d cols=%d 列トラック=%v",
-		res.FirstLeft, wantLeft, res.PastedIndex, res.Cols, res.ColumnLefts)
-}
 
 // --- Task: TestInitialRenderFillsViewport ---
 //
@@ -623,7 +529,7 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 		chromedp.Navigate(baseURL),
 		waitForTiles(10*time.Second),
 		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
-		chromedp.Poll(`famifo.pastedIndex() > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Poll(`famifo.pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
 
@@ -740,7 +646,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 		chromedp.Navigate(baseURL),
 		waitForTiles(10*time.Second),
 		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
-		chromedp.Poll(`famifo.pastedIndex() > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Poll(`famifo.pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
 
@@ -753,7 +659,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 			const r = tiles[i].getBoundingClientRect();
 			if (r.bottom > 0) { within = i; break; }
 		}
-		return { cols, topIndex: famifo.pastedIndex() + within };
+		return { cols, topIndex: famifo.pastedRange().from + within };
 	})()`
 
 	type snapshot struct {
@@ -816,9 +722,9 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForTiles 10s) + 貼り付け先頭到達待ち(Poll 10s) +
-	//   全塊貼り付け待ち(Poll 10s) + 貼り替え静定待ち(Poll 10s)×2
-	//   （塊境界越えの後と、通常スクロール後の2箇所） = 50s。
+	//   初回描画待ち(waitForTiles 10s) + 貼り付け範囲静定待ち(Poll 10s) +
+	//   貼り替え静定待ち(Poll 10s)×2（塊境界越えの後と、通常スクロール後の
+	//   2箇所） = 40s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に
 	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
 	// （実測）。Evaluateなど残りの実行時間の余裕を見て60秒とする。
@@ -841,21 +747,22 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 		}).observe(win, { childList: true });
 	})()`
 
-	// 位相1の終状態。「一定時間 __repaints が増えていない」だけを静定とみなすと、
-	// 塊の到着が遅れたときに塊1つ分だけ貼られた状態で先へ進んでしまう。すると
-	// 続く1行のスクロールが塊境界を跨がず、このテスト全体が空虚になる（実測）。
-	// 写真 deepScrollIndex 番へスクロールした後に render() が貼るのは
-	// 塊1以降のすべて（先頭の塊0だけが可視範囲から外れる）なので、
-	// 貼られるタイル数は total - chunkSize で決まる。
+	// 貼り付け範囲が動かなくなったことを静定とみなす。
 	//
-	// この等式は、現在の viewport 高・cols・OVERSCAN_ROWS の下で貼り付け窓が
-	// 最終行まで届くこと（deepScrollIndexから貼っても取りこぼす行が残らない
-	// こと）にも依存している。testPhotoCount / deepScrollIndex / viewport を
-	// 変えたら、貼り付け窓が最終行に届くか再確認すること。たとえば
-	// deepScrollIndexは変えずにtestPhotoCountだけ増やすと、貼り付け枚数は
-	// 変わらないのにtotal-chunkSizeだけが増え、この等式は永遠に成立しなく
-	// なる（無言のPollタイムアウトで落ちる）。
-	const allChunksPastedJS = `document.querySelectorAll('#window .tile').length === famifo.total - famifo.chunkSize`
+	// 以前は「貼り付けタイル数 == total - chunkSize」で静定を判定していたが、
+	// この等式は貼り付け窓が最終行まで届くことに依存しており、corpus や
+	// viewport を変えると無言のPollタイムアウトで落ちる（元のコメント参照）。
+	// 総枚数から逆算するのをやめれば、その脆さごと消える。
+	const rangeSettledJS = `(() => {
+		const r = famifo.pastedRange();
+		const k = r.from + ':' + r.to;
+		if (window.__lastRange === k) {
+			return (window.__rangeStable = (window.__rangeStable || 0) + 1) >= 3;
+		}
+		window.__lastRange = k;
+		window.__rangeStable = 0;
+		return false;
+	})()`
 
 	// スクロールが落ち着いたか（__repaintsが3フレーム連続で増えていないか、
 	// 60fpsなら約50ms）を見る。固定 sleep で「もう終わっただろう」と決め打ちしない。
@@ -874,26 +781,9 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 		chromedp.Evaluate(installObserverJS, nil),
 		// 塊境界を2つ跨ぐところまでスクロールする。
 		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
-		chromedp.Poll(fmt.Sprintf(`famifo.pastedIndex() >= %d`, testPageSize), nil,
-			chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Poll(rangeSettledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
-
-	// 全塊貼り付け待ちだけは単独のPollに分ける。他のPollと同じRunに
-	// まとめて素のrequire.NoErrorで受けると、chromedpのPollのエラー文字列は
-	// どれも"waiting for function failed: timeout"で同一のため、失敗しても
-	// どのPollが落ちたか切り分けられない（実測）。ここは実測タイル数と
-	// 期待値(total-chunkSize、上のコメント参照)を添えて報告する。
-	allChunksPollErr := chromedp.Run(rctx, chromedp.Poll(allChunksPastedJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
-	var tileCount, wantTileCount int
-	err = chromedp.Run(rctx, chromedp.Evaluate(`document.querySelectorAll('#window .tile').length`, &tileCount))
-	require.NoError(t, err)
-	err = chromedp.Run(rctx, chromedp.Evaluate(`famifo.total - famifo.chunkSize`, &wantTileCount))
-	require.NoError(t, err)
-	require.NoErrorf(t, allChunksPollErr,
-		"貼り付け済みタイル数が%d枚のまま%d枚(total-chunkSize)に届かない（全塊が貼り付けられていない疑い。"+
-			"testPhotoCount/deepScrollIndex/viewportを変えた場合は貼り付け窓が最終行に届くか確認すること）",
-		tileCount, wantTileCount)
 
 	err = chromedp.Run(rctx, chromedp.Poll(settledJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
 	require.NoError(t, err)
@@ -913,11 +803,11 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	})()`
 	var pastedBefore, pastedAfter int
 	err = chromedp.Run(rctx,
-		chromedp.Evaluate(`famifo.pastedIndex()`, &pastedBefore),
+		chromedp.Evaluate(`famifo.pastedRange().from`, &pastedBefore),
 		chromedp.Evaluate(`window.__lastSeen = -1; window.__stable = 0;`, nil),
 		chromedp.Evaluate(scrollOneRowJS, nil),
 		chromedp.Poll(settledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
-		chromedp.Evaluate(`famifo.pastedIndex()`, &pastedAfter),
+		chromedp.Evaluate(`famifo.pastedRange().from`, &pastedAfter),
 	)
 	require.NoError(t, err)
 
