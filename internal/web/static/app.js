@@ -298,13 +298,34 @@ const famifo = (() => {
   }
 
   function onResize() {
+    // 回転やリサイズで列数が変わるとレイアウト全体の高さが変わるため、
+    // scrollTop をそのまま残すと別の写真の位置に飛ぶ。いま先頭に見えていた
+    // 写真の通し番号を保持して復元する。
+    //
+    // アンカーに pasted.from は使わない。あれは OVERSCAN のぶん画面外まで
+    // 含んだ範囲の先頭なので、復元すると毎回4行ぶん手前に着地する。
+    // オーバースキャン抜きの、いま実際に画面上端にある写真を取る。
     const prev = L;
+    const prevTop = spacerTop; // measure() で測り直される前の値
+    const at = prev
+      ? visibleWindow(prev, scroller.scrollTop - prevTop, scroller.scrollTop - prevTop)
+      : null;
+    const topIndex = at ? at.from : 0;
+
     measure();
+
     // ResizeObserver は #window 自身の高さの変化でも発火する。貼り付ける量は
     // スクロール中に増減するため、通常のスクロールでも呼ばれる。実際に列数も
-    // タイル高も変わっていないなら、貼り直しは不要。
-    if (prev && L && prev.cols === L.cols && prev.tileH === L.tileH) return;
+    // タイル高も変わっていないなら、貼り直しも位置の復元も不要。
+    if (prev && L && prev.cols === L.cols && prev.tileH === L.tileH) {
+      return;
+    }
+
     renderedKey = ''; // 列数が変われば貼り直しが必要
+    if (L && L.height > 0) {
+      // yForIndex が返すのはレイアウト座標。scrollTop は文書座標なので戻す。
+      scroller.scrollTop = yForIndex(L, topIndex) + spacerTop;
+    }
     render();
   }
 

@@ -95,3 +95,16 @@ func TestAppCSSIsResponsive(t *testing.T) {
 	require.Contains(t, body, ".scrub-thumb")
 	require.Contains(t, body, ".scrub-label")
 }
+
+func TestAppJSRestoresPositionByPhotoIndex(t *testing.T) {
+	f := newWebFixture(t, 10)
+
+	body := do(t, f.h, "/static/app.js").Body.String()
+
+	require.Contains(t, body, "yForIndex",
+		"復元先は通し番号から引く。行の高さが不均一なので掛け算では出ない")
+	require.NotContains(t, body, "Math.floor(topIndex / cols) * rowH",
+		"均一な行を前提にした復元は残さない")
+	require.NotContains(t, body, "pasted.from :",
+		"アンカーに貼り付け範囲の先頭を使わない。OVERSCAN のぶん手前に着地する")
+}
