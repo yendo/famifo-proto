@@ -431,37 +431,7 @@ const famifo = (() => {
   let dragging = false;
   let hideTimer = 0;
 
-  // 日ごとの表は初回HTMLに埋め込まれている。これが無いと1枚も描けないため、
-  // 非同期で取りに行く形にはしない。
-  const daysEl = document.querySelector('#daygroups');
-  const days = daysEl ? JSON.parse(daysEl.textContent) : [];
-
-  // 月の境目を日ごとの表から導出する。月専用の口は持たない。
-  const months = [];
-  let offset = 0;
-  for (const g of days) {
-    const m = g.d.slice(0, 7);
-    if (months.length === 0 || months[months.length - 1].m !== m) {
-      months.push({ m, o: offset });
-    }
-    offset += g.n;
-  }
-
   bar.hidden = false;
-
-  // オフセットが属する月を二分探索で求める
-  function monthAt(offset) {
-    if (months.length === 0) return '';
-    let lo = 0;
-    let hi = months.length - 1;
-    let found = months[0];
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (months[mid].o <= offset) { found = months[mid]; lo = mid + 1; } else { hi = mid - 1; }
-    }
-    const [y, m] = found.m.split('-');
-    return `${y}年${Number(m)}月`;
-  }
 
   function show() {
     bar.classList.add('visible');
@@ -482,12 +452,20 @@ const famifo = (() => {
   function seek(clientY) {
     const rect = bar.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
-    famifo.scroller.scrollTop = frac * famifo.maxScroll();
+    const y = frac * famifo.maxScroll();
+    famifo.scroller.scrollTop = y;
 
-    const offset = Math.floor(frac * famifo.total);
-    const text = monthAt(offset);
-    if (text) {
-      label.textContent = text;
+    // 行の高さが日ごとに違うため、割合×総枚数では位置を求められない。
+    // スクロール位置そのものからレイアウトを引く。
+    // 横に並んだ日は同じyを共有するため、dayAtY はその行の最後の
+    // エントリ（並びが新しい順なので一番古い日）を返す。表示は月なので、
+    // 1つの行が月をまたぐときにしか差は出ない。承知のうえで許容する。
+    const L = famifo.current();
+    const d = L ? famifo.dayAtY(L, y) : '';
+    if (d) {
+      // ドラッグは17年ぶんを一気に動かすので、日まで出すとちらつく。月で止める。
+      const [yy, mm] = d.split('-');
+      label.textContent = `${yy}年${Number(mm)}月`;
       label.hidden = false;
       label.style.top = `${Math.min(rect.height - 24, Math.max(0, clientY - rect.top - 12))}px`;
     }

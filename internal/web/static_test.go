@@ -78,6 +78,9 @@ func TestAppJSImplementsScrubber(t *testing.T) {
 	require.Contains(t, body, "daygroups", "日ごとの表は埋め込みから読む")
 	require.NotContains(t, body, "/dates", "エンドポイントは廃止した")
 	require.Contains(t, body, "scrub-label", "ドラッグ中に年月を表示する")
+	require.Contains(t, body, "dayAtY", "位置から日を引く。枚数の比例では求まらない")
+	require.NotContains(t, body, "frac * famifo.total",
+		"行の高さが日ごとに変わった時点でこの比例関係は成立しない")
 }
 
 func TestAppCSSIsResponsive(t *testing.T) {
