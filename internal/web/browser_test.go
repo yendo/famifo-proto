@@ -54,6 +54,10 @@ const (
 	// testPhotoCount / testPageSize: 60枚の塊を複数跨ぐのに十分な枚数。
 	testPhotoCount = 200
 	testPageSize   = 60
+
+	// deepScrollIndex は「複数の塊を跨いだ、十分に奥」の位置。
+	// 塊を2つ跨いだうえで、境界のちょうど上に止まらないよう半端に足す。
+	deepScrollIndex = testPageSize*2 + 30
 )
 
 // allocCtx はコンテナ内Chromeに接続したchromedpのアロケータcontext。
@@ -376,29 +380,37 @@ func TestGridAlignmentPastFirstChunk(t *testing.T) {
 	}
 	t.Logf("列数=%d（塊サイズ%dの約数ではない）", cols, chunkSize)
 
-	// 第2〜3の塊に入るところまでスクロールする（写真150番付近）。
+	// 第2〜3の塊に入るところまでスクロールする（写真deepScrollIndex番付近）。
 	err = chromedp.Run(rctx,
-		chromedp.Evaluate(scrollToPhotoJS(150), nil),
+		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
 		chromedp.Poll(fmt.Sprintf(`famifo.pastedIndex() >= %d`, chunkSize), nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
 
 	var res struct {
-		PastedIndex     int    `json:"pastedIndex"`
-		Cols            int    `json:"cols"`
-		GridColumnStart string `json:"gridColumnStart"`
-		DistinctLefts   int    `json:"distinctLefts"`
+		PastedIndex     int       `json:"pastedIndex"`
+		Cols            int       `json:"cols"`
+		GridColumnStart string    `json:"gridColumnStart"`
+		FirstLeft       float64   `json:"firstLeft"`
+		ColumnLefts     []float64 `json:"columnLefts"`
 	}
 	measureJS := `(() => {
 		const win = document.querySelector('#window');
 		const tiles = [...win.querySelectorAll('.tile')];
 		const first = win.firstElementChild;
-		const lefts = new Set(tiles.map((t) => Math.round(t.getBoundingClientRect().left)));
+		const cols = getComputedStyle(win).gridTemplateColumns.split(' ').filter(Boolean).length;
+		// 列トラックの左端座標。DOM順の「2行目」を切り出すやり方は使えない。
+		// 先頭タイルが列0以外から始まると、その区間は行境界を跨ぎ、
+		// 列トラックが回転した順序で並んでしまうため（まさにこのテストが
+		// 検証している状況）。全タイルの左端を重複排除して昇順に並べる。
+		const lefts = [...new Set(tiles.map((t) => Math.round(t.getBoundingClientRect().left)))]
+			.sort((a, b) => a - b);
 		return {
 			pastedIndex: famifo.pastedIndex(),
-			cols: getComputedStyle(win).gridTemplateColumns.split(' ').filter(Boolean).length,
+			cols,
 			gridColumnStart: getComputedStyle(first).gridColumnStart,
-			distinctLefts: lefts.size,
+			firstLeft: Math.round(first.getBoundingClientRect().left),
+			columnLefts: lefts,
 		};
 	})()`
 	err = chromedp.Run(rctx, chromedp.Evaluate(measureJS, &res))
@@ -410,9 +422,18 @@ func TestGridAlignmentPastFirstChunk(t *testing.T) {
 	require.NoError(t, convErr, "grid-column-startが数値でない: %q", res.GridColumnStart)
 	require.Equal(t, wantStart, gotStart,
 		"先頭タイルのgrid-column-startがずれている: pastedIndex=%d cols=%d", res.PastedIndex, res.Cols)
-	require.Equal(t, res.Cols, res.DistinctLefts,
-		"タイルの左端の座標が列数どおりに揃っていない（横方向のずれ）: cols=%d distinctLefts=%d",
-		res.Cols, res.DistinctLefts)
+
+	// 旧: require.Equal(t, res.Cols, res.DistinctLefts, ...) は恒真式だった。
+	// CSS Grid は grid-column-start に関わらず必ず cols 本のトラック上に置くため、
+	// タイルが cols 枚以上あれば「左端の種類数 == 列数」は常に成立する（実測）。
+	// 先頭タイルが「期待した列のトラック」に実際に載っているかを見る。
+	require.Lenf(t, res.ColumnLefts, res.Cols,
+		"列トラックの左端座標を%d本ぶん取得できなかった: %v", res.Cols, res.ColumnLefts)
+	wantLeft := res.ColumnLefts[wantStart-1]
+	require.InDeltaf(t, wantLeft, res.FirstLeft, 1.0,
+		"先頭タイルが期待した列のトラックに載っていない（横方向のずれ）: "+
+			"got=%.0f want=%.0f pastedIndex=%d cols=%d 列トラック=%v",
+		res.FirstLeft, wantLeft, res.PastedIndex, res.Cols, res.ColumnLefts)
 }
 
 // --- Task: TestInitialRenderFillsViewport ---
@@ -522,7 +543,7 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
 		waitForTiles(10*time.Second),
-		chromedp.Evaluate(scrollToPhotoJS(150), nil),
+		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
 		chromedp.Poll(`famifo.pastedIndex() > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
@@ -633,7 +654,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
 		waitForTiles(10*time.Second),
-		chromedp.Evaluate(scrollToPhotoJS(150), nil),
+		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
 		chromedp.Poll(`famifo.pastedIndex() > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
@@ -724,7 +745,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	// 位相1の終状態。「一定時間 __repaints が増えていない」だけを静定とみなすと、
 	// 塊の到着が遅れたときに塊1つ分だけ貼られた状態で先へ進んでしまう。すると
 	// 続く1行のスクロールが塊境界を跨がず、このテスト全体が空虚になる（実測）。
-	// 写真 testPageSize*2+30 番へスクロールした後に render() が貼るのは
+	// 写真 deepScrollIndex 番へスクロールした後に render() が貼るのは
 	// 塊1以降のすべて（先頭の塊0だけが可視範囲から外れる）なので、
 	// 貼られるタイル数は total - chunkSize で決まる。
 	const allChunksPastedJS = `document.querySelectorAll('#window .tile').length === famifo.total - famifo.chunkSize`
@@ -745,7 +766,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 		waitForTiles(10*time.Second),
 		chromedp.Evaluate(installObserverJS, nil),
 		// 塊境界を2つ跨ぐところまでスクロールする。
-		chromedp.Evaluate(scrollToPhotoJS(testPageSize*2+30), nil),
+		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
 		chromedp.Poll(fmt.Sprintf(`famifo.pastedIndex() >= %d`, testPageSize), nil,
 			chromedp.WithPollingTimeout(10*time.Second)),
 		chromedp.Poll(allChunksPastedJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
@@ -896,7 +917,14 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 func TestScrubberReachesBothEnds(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// このRun群の中でタイムアウト付きに待つ箇所の合計:
+	//   初回描画待ち(waitForTiles 10s) + スクラバー表示待ち(Poll 5s)×2 +
+	//   ドラッグ後の静定待ち(Poll 5s)×2 = 30s。
+	// これらは同じrctxを共有しているため、外側が短いと合計より先に
+	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
+	// （Task 7 の教訓）。Evaluate・マウスイベントなど残りの実行時間の
+	// 余裕を見て45秒とする。
+	rctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 
 	err := chromedp.Run(rctx,
@@ -933,6 +961,19 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 		release := input.DispatchMouseEvent(input.MouseReleased, x, y1).WithButton(input.Left).WithClickCount(1)
 		err := chromedp.Run(rctx, press, move, release)
 		require.NoError(t, err)
+
+		// seek が requestAnimationFrame でスロットルされるようになっても
+		// 壊れないよう、scrollTop が2フレーム連続で同じ値になるまで待つ。
+		settleJS := `(() => {
+			const now = famifo.scroller.scrollTop;
+			if (window.__lastScroll === now) { return true; }
+			window.__lastScroll = now;
+			return false;
+		})()`
+		err = chromedp.Run(rctx,
+			chromedp.Evaluate(`window.__lastScroll = -1;`, nil),
+			chromedp.Poll(settleJS, nil, chromedp.WithPollingTimeout(5*time.Second)))
+		require.NoError(t, err, "ドラッグ後にスクロール位置が落ち着かなかった")
 	}
 
 	var maxScroll float64
