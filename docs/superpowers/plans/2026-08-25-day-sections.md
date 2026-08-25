@@ -854,8 +854,14 @@ func TestLayoutLookupsAgreeWithEntries(t *testing.T) {
 				const want = e.y + L.labelH + L.gap + row * (L.tileH + L.gap);
 				const got = famifo.yForIndex(L, i);
 				if (got !== want) bad.push('yForIndex(' + i + ')=' + got + ' want=' + want);
+				// 詰めた行では複数の日が同じ y を共有するので、dayAtY は
+				// その行のどれか1つしか返せない。「同じ行の日を返すこと」
+				// までが約束できる範囲。
 				const d = famifo.dayAtY(L, want);
-				if (d !== e.d) bad.push('dayAtY(' + want + ')=' + d + ' want=' + e.d);
+				const hit = L.entries.find((x) => x.d === d);
+				if (!hit || hit.y !== e.y) {
+					bad.push('dayAtY(' + want + ')=' + d + ' は y=' + e.y + ' の行に無い');
+				}
 			}
 		}
 		return bad;
@@ -871,7 +877,8 @@ func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
 	require.NoError(t, err)
 
 	// 100枚の日（6列で17段）の途中だけを切り出せること。
-	// ラベル(20)+gap(4)の下に段が並ぶので、y=124+3*104=436 は4段目の先頭。
+	// 段が始まるのはラベル(20)+gap(4)の下なので、r段目の上端は 24+r*104。
+	// 4段目(r=3)の上端は 24+312=336。
 	var got struct {
 		From   int     `json:"from"`
 		To     int     `json:"to"`
@@ -880,14 +887,14 @@ func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
 	}
 	err = chromedp.Run(ctx, chromedp.Evaluate(`(() => {
 		const L = famifo.layout([{d:"2026-02-08",n:100}], 6, 100, 20, 4);
-		const w = famifo.visibleWindow(L, 436, 436 + 200);
+		const w = famifo.visibleWindow(L, 336, 336 + 200);
 		return {from: w.from, to: w.to, pasteY: w.pasteY, pieces: w.pieces.length};
 	})()`, &got))
 	require.NoError(t, err)
 
 	require.Equal(t, 1, got.Pieces)
 	require.Equal(t, 18, got.From, "4段目の先頭 = 3*6")
-	require.Equal(t, float64(436), got.PasteY, "貼り付け位置は切り出した段の上端")
+	require.Equal(t, float64(336), got.PasteY, "貼り付け位置は切り出した段の上端")
 	require.Greater(t, got.To, got.From)
 	require.Less(t, got.To, 100, "100枚まるごとではなく可視ぶんだけ切り出すこと")
 }
