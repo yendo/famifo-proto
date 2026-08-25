@@ -1318,6 +1318,11 @@ func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
 	// 100枚の日（6列で17段）の途中だけを切り出せること。
 	// 段が始まるのはラベル(20)+gap(4)の下なので、r段目の上端は 24+r*104。
 	// 4段目(r=3)の上端は 24+312=336。
+	//
+	// 探索の起点を段の境界ちょうど(336)にしないのは、そこだと
+	// (336-24)/104 が割り切れてしまい、floor を ceil に変えても
+	// r0 が動かず、切り捨ての誤りを検出できなくなるため。
+	// 436 なら 412/104=3.96 で、ceil にすると r0 が 4 になって落ちる。
 	var got struct {
 		From   int     `json:"from"`
 		To     int     `json:"to"`
@@ -1326,7 +1331,7 @@ func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
 	}
 	err = chromedp.Run(ctx, chromedp.Evaluate(`(() => {
 		const L = famifo.layout([{d:"2026-02-08",n:100}], 6, 100, 20, 4);
-		const w = famifo.visibleWindow(L, 336, 336 + 200);
+		const w = famifo.visibleWindow(L, 436, 436 + 200);
 		return {from: w.from, to: w.to, pasteY: w.pasteY, pieces: w.pieces.length};
 	})()`, &got))
 	require.NoError(t, err)
