@@ -216,9 +216,17 @@ const famifo = (() => {
       scroller.scrollTop + window.innerHeight + over);
     if (!w) return;
 
+    // 日ごとの表と総枚数はサーバが別々に読むため、開いたまま新着が入ると
+    // 表のほうが多くなりうる。総枚数で抑えないと、存在しない塊を待ち続けて
+    // 末尾が永久に更新されなくなる。
+    const from = w.from;
+    const to = Math.min(total, w.to);
+    if (from >= to) return;
+
+    const firstChunk = Math.floor(from / chunkSize);
+    const lastChunk = Math.floor((to - 1) / chunkSize);
+
     // 可視範囲の前後1塊も先読みしておく。切り出す範囲は広げない。
-    const firstChunk = Math.floor(w.from / chunkSize);
-    const lastChunk = Math.floor((w.to - 1) / chunkSize);
     const fetchFrom = Math.max(0, firstChunk - 1);
     const fetchTo = Math.min(Math.floor((total - 1) / chunkSize), lastChunk + 1);
     for (let ci = fetchFrom; ci <= fetchTo; ci++) {
@@ -232,23 +240,30 @@ const famifo = (() => {
 
     // 貼る内容が前回と同じなら触らない。スクロールのたびに innerHTML を
     // 書き換えると画像の再読み込みが起きる。
-    const key = `${w.from}:${w.to}:${L.cols}`;
+    const key = `${from}:${to}:${L.cols}`;
     if (key === renderedKey) return;
-    renderedKey = key;
-    pasted = { from: w.from, to: w.to };
 
+    // 先に組み立て、1枚でも欠けていたら renderedKey を据え置いたまま抜ける。
+    // 確定を先にすると、欠けたまま貼った状態がキャッシュされて直らない。
     const parts = [];
     for (const p of w.pieces) {
-      const from = p.e.start + p.r0 * p.e.span;
-      const to = Math.min(p.e.start + p.e.n, p.e.start + (p.r1 + 1) * p.e.span);
-      parts.push(cardHTML(p, from, to));
+      const pFrom = p.e.start + p.r0 * p.e.span;
+      const pTo = Math.min(to, p.e.start + p.e.n, p.e.start + (p.r1 + 1) * p.e.span);
+      if (pFrom >= pTo) continue;
+      const html = cardHTML(p, pFrom, pTo);
+      if (!html) return;
+      parts.push(html);
     }
+    if (parts.length === 0) return;
+
+    renderedKey = key;
+    pasted = { from, to };
     win.innerHTML = parts.join('');
     win.style.transform = `translateY(${w.pasteY}px)`;
 
     // 各タイルに通し番号を書く。切り出す範囲は連続しているのでDOM順と一致する。
     const tiles = win.querySelectorAll('.tile');
-    for (let k = 0; k < tiles.length; k++) tiles[k].dataset.i = w.from + k;
+    for (let k = 0; k < tiles.length; k++) tiles[k].dataset.i = from + k;
   }
 
   // 1枚のカード。占める列数はレイアウトが決め、ラベルの文言はタイル自身の
