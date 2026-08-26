@@ -19,7 +19,6 @@ type Config struct {
 	PhotoDirs []string // 写真を収集するルートディレクトリ（複数可）
 	DataDir   string   // DBとサムネイルキャッシュの置き場
 	Addr      string   // HTTPの待ち受けアドレス
-	ThumbSize int      // サムネイルの長辺ピクセル数
 }
 
 // Parse は引数を解析して検証済みのConfigを返す。argsにはプログラム名を含めない。
@@ -34,7 +33,6 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 			string(filepath.ListSeparator)))
 	fs.StringVar(&c.DataDir, "data", "./famifo-data", "DBとサムネイルキャッシュの保存先")
 	fs.StringVar(&c.Addr, "addr", ":8080", "HTTPの待ち受けアドレス")
-	fs.IntVar(&c.ThumbSize, "thumb", 480, "サムネイルの長辺ピクセル数")
 	showVersion := fs.Bool("version", false, "バージョンを表示して終了する")
 
 	if err := fs.Parse(args); err != nil {
@@ -82,9 +80,6 @@ func (c Config) Validate() error {
 				return fmt.Errorf("-dir が重複または入れ子になっています: %s と %s", dir, other)
 			}
 		}
-	}
-	if c.ThumbSize < 1 || c.ThumbSize > 4096 {
-		return fmt.Errorf("-thumb は 1..4096 で指定してください: %d", c.ThumbSize)
 	}
 	if c.Addr == "" {
 		return errors.New("-addr は必須です")

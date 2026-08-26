@@ -44,7 +44,6 @@ every one of them.
 | `-dir` | (required) | Directories to collect photos from, `:`-separated |
 | `-data` | `./famifo-data` | Where the database and thumbnail cache are stored |
 | `-addr` | `:8080` | HTTP listen address |
-| `-thumb` | `480` | Thumbnail size, longest edge in pixels |
 | `-version` | | Print the build version and exit |
 
 ### Timezone

@@ -89,6 +89,15 @@ func startupTimezone(t time.Time) string {
 // pageSize は一覧1ページあたりの枚数。
 const pageSize = 60
 
+// thumbSize はサムネイルの長辺ピクセル数。
+//
+// 一覧のタイルは正方形で object-fit: cover のため、実際に効くのは短辺
+// （3:2の写真なら320px）である。設定可能にしていたが、利用者が変える場面が
+// 無いうえ、変えても既存のサムネイルは作り直されず「設定できるのに効かない」
+// フラグになっていたため定数にした。値を変えたときはデータディレクトリごと
+// 削除して作り直すこと。
+const thumbSize = 480
+
 // watchDebounce はファイル書き込みが落ち着いたと判断するまでの待ち時間。
 // コピー途中のファイルをデコードしに行かないための猶予。
 const watchDebounce = 2 * time.Second
@@ -127,7 +136,7 @@ func run() error {
 	}
 	defer st.Close()
 
-	gen, err := thumb.NewGenerator(cfg.ThumbDir(), cfg.ThumbSize)
+	gen, err := thumb.NewGenerator(cfg.ThumbDir(), thumbSize)
 	if err != nil {
 		return err
 	}

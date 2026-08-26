@@ -18,20 +18,18 @@ func TestParseUsesDefaults(t *testing.T) {
 	require.Equal(t, []string{dir}, got.PhotoDirs)
 	require.Equal(t, "./famifo-data", got.DataDir)
 	require.Equal(t, ":8080", got.Addr)
-	require.Equal(t, 480, got.ThumbSize)
 }
 
 func TestParseOverridesEveryFlag(t *testing.T) {
 	dir := t.TempDir()
 
 	got, err := Parse([]string{
-		"-dir", dir, "-data", "/var/famifo", "-addr", "192.168.1.10:9000", "-thumb", "320",
+		"-dir", dir, "-data", "/var/famifo", "-addr", "192.168.1.10:9000",
 	}, io.Discard)
 
 	require.NoError(t, err)
 	require.Equal(t, "/var/famifo", got.DataDir)
 	require.Equal(t, "192.168.1.10:9000", got.Addr)
-	require.Equal(t, 320, got.ThumbSize)
 }
 
 func TestParseRejectsBadInput(t *testing.T) {
@@ -43,8 +41,6 @@ func TestParseRejectsBadInput(t *testing.T) {
 		"dirが未指定":        {},
 		"dirが存在しない":      {"-dir", filepath.Join(dir, "nope")},
 		"dirがディレクトリではない": {"-dir", file},
-		"thumbが小さすぎる":    {"-dir", dir, "-thumb", "0"},
-		"thumbが大きすぎる":    {"-dir", dir, "-thumb", "4097"},
 		"addrが空":         {"-dir", dir, "-addr", ""},
 		"dataがdirの中":     {"-dir", dir, "-data", filepath.Join(dir, "famifo-data")},
 		"dataがdirと同じ":    {"-dir", dir, "-data", dir},
