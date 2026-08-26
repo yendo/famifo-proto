@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -24,6 +25,66 @@ import (
 	"github.com/yendo/famifo-proto/internal/thumb"
 	"github.com/yendo/famifo-proto/internal/web"
 )
+
+// version はリリースビルドで -ldflags で埋める。
+var version string
+
+// formatVersion は表示用のバージョン文字列を組み立てる。
+//
+// override が空でなければそれを使う（リリースビルドで -ldflags で埋める）。
+// 空なら go build が自動で埋めるVCS情報から組み立てるので、フラグを付け
+// 忘れても版が消えない。ただし .git の無い場所でビルドするとVCS情報自体が
+// 付かないため（Dockerのマルチステージ等）、その場合は override が要る。
+func formatVersion(override string, settings []debug.BuildSetting) string {
+	if override != "" {
+		return override
+	}
+
+	var rev, when string
+	var dirty bool
+	for _, s := range settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.time":
+			when = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+
+	if rev == "" {
+		return "unknown"
+	}
+	if len(rev) > 8 {
+		rev = rev[:8]
+	}
+	// 未コミットの変更が混ざったビルドは、手元のどのコミットとも一致しない。
+	if dirty {
+		rev += "-dirty"
+	}
+	if when == "" {
+		return rev
+	}
+	return rev + " (" + when + ")"
+}
+
+// versionString は実行中のバイナリのバージョンを返す。
+func versionString() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return formatVersion(version, nil)
+	}
+	return formatVersion(version, bi.Settings)
+}
+
+// startupTimezone は起動ログに載せるタイムゾーンの表記を返す。
+//
+// Location の名前だけでは足りない。/etc/localtime を読んだだけの環境では
+// 名前が "Local" になり、JSTなのかUTCなのか読み取れないため、時差も出す。
+func startupTimezone(t time.Time) string {
+	return t.Format("MST-07:00")
+}
 
 // pageSize は一覧1ページあたりの枚数。
 const pageSize = 60
@@ -43,9 +104,19 @@ func run() error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	cfg, err := config.Parse(os.Args[1:], os.Stderr)
+	if errors.Is(err, config.ErrVersionRequested) {
+		fmt.Println("famifo-proto", versionString())
+		return nil
+	}
 	if err != nil {
 		return err
 	}
+	// 常駐プロセスなので、どのビルドが動いているかはログでしか確認できない。
+	// timezone を出すのは、TZ の渡し忘れが静かに UTC になるため。
+	// 誤ったまま本番のインデックスを作ると、全件やり直しになる。
+	log.Info("起動", "version", versionString(),
+		"timezone", startupTimezone(time.Now()),
+		"dir", cfg.PhotoDir, "data", cfg.DataDir, "addr", cfg.Addr)
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return fmt.Errorf("データディレクトリを作れません: %w", err)
 	}

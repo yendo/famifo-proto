@@ -11,6 +11,9 @@ import (
 	"strings"
 )
 
+// ErrVersionRequested は -version が指定されたことを表す。
+var ErrVersionRequested = errors.New("version requested")
+
 // Config はアプリの実行時設定。すべてコマンドライン引数から与えられる。
 type Config struct {
 	PhotoDir  string // 写真を収集するルートディレクトリ
@@ -29,9 +32,14 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	fs.StringVar(&c.DataDir, "data", "./famifo-data", "DBとサムネイルキャッシュの保存先")
 	fs.StringVar(&c.Addr, "addr", ":8080", "HTTPの待ち受けアドレス")
 	fs.IntVar(&c.ThumbSize, "thumb", 480, "サムネイルの長辺ピクセル数")
+	showVersion := fs.Bool("version", false, "バージョンを表示して終了する")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
+	}
+	// バージョンを表示するだけなので -dir は要らない。検証まで進めない。
+	if *showVersion {
+		return Config{}, ErrVersionRequested
 	}
 	return c, c.Validate()
 }

@@ -76,3 +76,11 @@ func TestDerivedPaths(t *testing.T) {
 	require.Equal(t, "/var/famifo/famifo.db", c.DBPath())
 	require.Equal(t, "/var/famifo/thumbs", c.ThumbDir())
 }
+
+// -version はバージョンを表示して終わるだけなので、-dir を要求しない。
+// 設定の検証まで進むと「-dir は必須です」で落ちてしまう。
+func TestParseVersionShortCircuitsValidation(t *testing.T) {
+	_, err := Parse([]string{"-version"}, io.Discard)
+
+	require.ErrorIs(t, err, ErrVersionRequested)
+}
