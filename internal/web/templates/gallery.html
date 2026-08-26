@@ -1,0 +1,38 @@
+{{define "gallery"}}<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>famifo</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <h1>famifo</h1>
+  <span class="count">{{.Total}} 枚</span>
+</header>
+
+<main id="gallery" class="gallery" data-total="{{.Total}}" data-chunk="{{.ChunkSize}}">
+  <div id="spacer">
+    <div id="colprobe" aria-hidden="true"></div>
+    <div id="window" class="grid">
+{{template "items" .}}
+    </div>
+  </div>
+</main>
+<script type="application/json" id="daygroups">{{.DayGroups}}</script>
+
+<div id="scrubber" class="scrubber" hidden>
+  <div class="scrub-thumb"></div>
+  <div class="scrub-label" hidden></div>
+</div>
+
+<div id="lightbox" class="lightbox" hidden>
+  <img alt="">
+  <button class="lb-nav lb-prev" type="button" aria-label="前の写真">‹</button>
+  <button class="lb-nav lb-next" type="button" aria-label="次の写真">›</button>
+</div>
+</body>
+</html>
+{{end}}

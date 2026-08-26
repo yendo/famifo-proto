@@ -1,0 +1,7 @@
+{{define "items"}}
+{{range .Photos}}
+<a class="tile" href="{{.FullURL}}" data-full="{{.FullURL}}" data-date="{{.Date}}">
+  <img src="{{.ThumbURL}}" alt="" loading="lazy" decoding="async">
+</a>
+{{end}}
+{{end}}
