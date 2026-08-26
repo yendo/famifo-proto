@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "image/gif" // image.Decode にGIFを登録する
 	_ "image/png" // image.Decode にPNGを登録する
@@ -46,12 +47,20 @@ func (g *Generator) Path(id string) string { return filepath.Join(g.dir, RelPath
 
 // Generate は srcPath の画像からサムネイルを作る。
 // デコードできないファイルはエラーを返し、キャッシュには何も残さない。
+//
+// 既にサムネイルがあり、元の写真より新しければ何もしない。DBを作り直すたびに
+// 全件を作り直すと4,495枚で37分（NASなら数時間）かかるが、その大半は中身の
+// 変わらないサムネイルの再生成である。
 func (g *Generator) Generate(srcPath, id string) error {
 	f, err := os.Open(srcPath)
 	if err != nil {
 		return fmt.Errorf("画像を開けません: %w", err)
 	}
 	defer f.Close()
+
+	if fi, err := f.Stat(); err == nil && g.isFresh(id, fi.ModTime()) {
+		return nil
+	}
 
 	// 画素より先にEXIFを読む。image.Decode はEXIFを見ずに生の画素を返し、
 	// jpeg.Encode はEXIFを書き出さないため、ここで回転を適用しないと向きの
@@ -93,6 +102,18 @@ func (g *Generator) Generate(srcPath, id string) error {
 		return fmt.Errorf("サムネイルを配置できません: %w", err)
 	}
 	return nil
+}
+
+// isFresh は既存のサムネイルが元の写真より新しいかを返す。
+//
+// 出力は一時ファイルへ書いてからrenameしているので、中途半端な内容が
+// 残っていることはない。存在して新しければ、そのまま使ってよい。
+func (g *Generator) isFresh(id string, srcModTime time.Time) bool {
+	fi, err := os.Stat(g.Path(id))
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	return fi.ModTime().After(srcModTime)
 }
 
 // Remove はサムネイルを削除する。存在しない場合はエラーにしない。
