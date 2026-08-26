@@ -35,7 +35,30 @@ func newFixture(t *testing.T) *fixture {
 	require.NoError(t, err)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return &fixture{ix: New(root, st, gen, log), st: st, gen: gen, root: root}
+	return &fixture{ix: New([]string{root}, st, gen, log), st: st, gen: gen, root: root}
+}
+
+// newFixtureRoots は複数のルートを持つ fixture を作る。roots[0] が f.root。
+func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
+	t.Helper()
+	base := t.TempDir()
+
+	roots := make([]string, 0, len(names))
+	for _, n := range names {
+		r := filepath.Join(base, n)
+		require.NoError(t, os.MkdirAll(r, 0o755))
+		roots = append(roots, r)
+	}
+
+	st, err := store.Open(filepath.Join(base, "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { st.Close() })
+
+	gen, err := thumb.NewGenerator(filepath.Join(base, "thumbs"), 100)
+	require.NoError(t, err)
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return &fixture{ix: New(roots, st, gen, log), st: st, gen: gen, root: roots[0]}, roots
 }
 
 func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {

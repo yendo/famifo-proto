@@ -18,15 +18,15 @@ import (
 
 // Indexer は1ファイル単位でインデックスを更新する。
 type Indexer struct {
-	root string
-	st   *store.Store
-	gen  *thumb.Generator
-	log  *slog.Logger
+	roots []string
+	st    *store.Store
+	gen   *thumb.Generator
+	log   *slog.Logger
 }
 
-// New はIndexerを作る。rootは写真を収集するルートディレクトリ。
-func New(root string, st *store.Store, gen *thumb.Generator, log *slog.Logger) *Indexer {
-	return &Indexer{root: root, st: st, gen: gen, log: log}
+// New はIndexerを作る。rootsは写真を収集するルートディレクトリ。
+func New(roots []string, st *store.Store, gen *thumb.Generator, log *slog.Logger) *Indexer {
+	return &Indexer{roots: roots, st: st, gen: gen, log: log}
 }
 
 // IndexFile は1ファイルをインデックスに反映する。

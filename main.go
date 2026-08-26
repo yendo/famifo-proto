@@ -116,7 +116,7 @@ func run() error {
 	// 誤ったまま本番のインデックスを作ると、全件やり直しになる。
 	log.Info("起動", "version", versionString(),
 		"timezone", startupTimezone(time.Now()),
-		"dir", cfg.PhotoDir, "data", cfg.DataDir, "addr", cfg.Addr)
+		"dirs", cfg.PhotoDirs, "data", cfg.DataDir, "addr", cfg.Addr)
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return fmt.Errorf("データディレクトリを作れません: %w", err)
 	}
@@ -155,10 +155,10 @@ func run() error {
 		}
 	}()
 
-	ix := index.New(cfg.PhotoDir, st, gen, log)
+	ix := index.New(cfg.PhotoDirs, st, gen, log)
 
 	// fsnotifyは停止中の変更を検知できないので、起動のたびに実態と突き合わせる。
-	log.Info("フルスキャンを開始", "dir", cfg.PhotoDir)
+	log.Info("フルスキャンを開始", "dirs", cfg.PhotoDirs)
 	stats, err := ix.FullScan(ctx)
 	if err != nil && ctx.Err() == nil {
 		return err
@@ -178,7 +178,7 @@ func run() error {
 				log.Error("監視が停止しました", "err", err)
 			}
 		}()
-		log.Info("変更の監視を開始", "dir", cfg.PhotoDir)
+		log.Info("変更の監視を開始", "dirs", cfg.PhotoDirs)
 	}
 
 	// ListenAndServeの失敗はstop()経由でctx.Done()も閉じるため、どちらが

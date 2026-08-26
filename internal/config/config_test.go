@@ -15,7 +15,7 @@ func TestParseUsesDefaults(t *testing.T) {
 	got, err := Parse([]string{"-dir", dir}, io.Discard)
 
 	require.NoError(t, err)
-	require.Equal(t, dir, got.PhotoDir)
+	require.Equal(t, []string{dir}, got.PhotoDirs)
 	require.Equal(t, "./famifo-data", got.DataDir)
 	require.Equal(t, ":8080", got.Addr)
 	require.Equal(t, 480, got.ThumbSize)
@@ -83,4 +83,54 @@ func TestParseVersionShortCircuitsValidation(t *testing.T) {
 	_, err := Parse([]string{"-version"}, io.Discard)
 
 	require.ErrorIs(t, err, ErrVersionRequested)
+}
+
+func TestParseSplitsDirOnTheListSeparator(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+
+	got, err := Parse([]string{"-dir", a + string(filepath.ListSeparator) + b}, io.Discard)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{a, b}, got.PhotoDirs)
+}
+
+func TestParseRejectsDuplicateRoots(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := Parse([]string{"-dir", dir + string(filepath.ListSeparator) + dir}, io.Discard)
+
+	require.Error(t, err, "同じルートを2回走査しても無駄なだけ")
+}
+
+// 入れ子のルートは同じファイルを2回走査し、サムネイルを2回作る。
+func TestParseRejectsNestedRoots(t *testing.T) {
+	outer := t.TempDir()
+	inner := filepath.Join(outer, "sub")
+	require.NoError(t, os.MkdirAll(inner, 0o755))
+
+	_, err := Parse([]string{"-dir", outer + string(filepath.ListSeparator) + inner}, io.Discard)
+
+	require.Error(t, err)
+}
+
+// -data はどのルートの中にあってもいけない。中にあるとサムネイルを
+// 走査対象として拾い、それのサムネイルを作る、という自己増殖が起きる。
+func TestParseRejectsDataInsideAnyRoot(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+
+	_, err := Parse([]string{
+		"-dir", a + string(filepath.ListSeparator) + b,
+		"-data", filepath.Join(b, "famifo-data"),
+	}, io.Discard)
+
+	require.Error(t, err, "2つ目のルートの中でも弾くこと")
+}
+
+// ':' を含むパスを渡すと分割で壊れる。なぜそうなったか読めるエラーにする。
+func TestParseExplainsHowDirWasSplit(t *testing.T) {
+	_, err := Parse([]string{"-dir", "/no/such/2024:05:24"}, io.Discard)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "2024",
+		"分割結果を示して、区切り文字で切れたことが分かるようにする")
 }
