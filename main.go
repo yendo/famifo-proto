@@ -13,6 +13,11 @@ import (
 	"syscall"
 	"time"
 
+	// 日付の切り出しは time.Local に依存する。zoneinfo を持たない環境
+	// （scratchコンテナなど）では TZ を設定しても UTC に落ちてしまうため、
+	// タイムゾーンデータベースをバイナリに埋め込む。約400KB増える。
+	_ "time/tzdata"
+
 	"github.com/yendo/famifo-proto/internal/config"
 	"github.com/yendo/famifo-proto/internal/index"
 	"github.com/yendo/famifo-proto/internal/store"
