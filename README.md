@@ -30,12 +30,35 @@ CGO_ENABLED=0 go build -o famifo-proto .
 ./famifo-proto -dir /path/to/photos
 ```
 
+Several roots can be given at once, separated by the OS list separator (`:` on Unix):
+
+```bash
+./famifo-proto -dir /home/alice/Photos:/home/bob/Photos
+```
+
+Roots may not be duplicated or nested inside one another, and `-data` has to sit outside
+every one of them.
+
 | Flag | Default | Description |
 |---|---|---|
-| `-dir` | (required) | Directory to collect photos from |
+| `-dir` | (required) | Directories to collect photos from, `:`-separated |
 | `-data` | `./famifo-data` | Where the database and thumbnail cache are stored |
 | `-addr` | `:8080` | HTTP listen address |
 | `-thumb` | `480` | Thumbnail size, longest edge in pixels |
+| `-version` | | Print the build version and exit |
+
+### Timezone
+
+Photos are grouped by the day they were taken, which depends on the machine's local timezone.
+The binary embeds the IANA database, so setting `TZ` is enough even where the filesystem has no
+zoneinfo — a bare container, for instance. Without it the process falls back to UTC and files
+those photos under the wrong day. The startup log prints the zone it resolved:
+
+```
+msg=起動 version="a4272a5b (2026-08-26T14:27:20Z)" timezone=JST+09:00 dirs=[/photos] ...
+```
+
+Check that line before letting a first index run to completion; rebuilding one costs hours.
 
 ## Using the gallery
 
@@ -81,13 +104,20 @@ skipping.
 - **Meant for use inside a LAN.** Neither authentication nor HTTPS is implemented. To reach it
   from outside, connect to your home LAN over a VPN (Tailscale or similar) rather than opening a
   port.
-- **A scan that finds zero photos does not delete anything.** Starting up while an external drive
-  is unmounted produces an empty scan, which looks exactly like "everything was deleted". To keep
-  that from wiping the index, `FullScan` skips deletions when the scan is empty *and* the existing
-  index is not, and logs a `走査結果が空のため削除をスキップした` warning. The side effect is that
-  if you really did delete every photo, the database rows and thumbnails stay behind and the same
-  warning appears on every startup. To recover, delete the data directory (`-data`, default
-  `./famifo-data`) and start again — the database and thumbnail cache are rebuilt.
+- **A root that scans empty loses nothing.** Starting up while an external drive is unmounted
+  produces an empty scan of that root, which looks exactly like "everything under it was
+  deleted". `FullScan` therefore judges each root separately: a root that turns up no photos
+  keeps its existing entries, even when the other roots are healthy, and logs a
+  `走査結果が空のルートがあるため削除をスキップした` warning. A root it cannot read at all is
+  skipped the same way, with `ルートを読めないため飛ばした`, rather than aborting the scan and
+  stalling the healthy roots. The side effect is that if you really did empty a root, its rows
+  and thumbnails stay behind and the warning repeats on every startup. To recover, delete the
+  data directory (`-data`, default `./famifo-data`) and start again — the database and thumbnail
+  cache are rebuilt.
+- **Dropping a root from `-dir` deletes its photos from the index.** The index follows what you
+  currently point it at. Photos under a path that is no longer a root are removed, thumbnails
+  included, and getting them back means reindexing. This is the one case the guard above does
+  not cover, because the root is absent rather than empty.
 
 ## Design
 
