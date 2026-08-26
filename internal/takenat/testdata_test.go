@@ -71,3 +71,65 @@ func writeJPEGWithoutEXIF(t *testing.T, dir, name string) string {
 	require.NoError(t, os.WriteFile(path, buf.Bytes(), 0o644))
 	return path
 }
+
+// writeJPEGWithEXIFOffset は DateTimeOriginal に加えて OffsetTimeOriginal を
+// 持つJPEGを書き出す。時差を明示している写真（新しめのiPhone等）を再現する。
+//
+// バイト配置:
+//
+//	 0 ヘッダ "II" + マジック42 + IFD0オフセット8
+//	 8 IFD0    : エントリ1件(ExifIFDPointer) + 次IFDなし → 26で終わる
+//	26 ExifIFD : エントリ2件 + 次IFDなし → 56で終わる
+//	56 DateTimeOriginal の値 (20バイト)
+//	76 OffsetTimeOriginal の値 (7バイト)
+func writeJPEGWithEXIFOffset(t *testing.T, dir, name string, when time.Time, offset string) string {
+	t.Helper()
+	require.Len(t, offset, 6, `オフセットは "+09:00" の形式で指定すること`)
+
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	img.Set(0, 0, color.RGBA{R: 200, G: 100, B: 50, A: 255})
+	var body bytes.Buffer
+	require.NoError(t, jpeg.Encode(&body, img, nil))
+
+	le := binary.LittleEndian
+	var tiff bytes.Buffer
+	tiff.WriteString("II")
+	binary.Write(&tiff, le, uint16(42))
+	binary.Write(&tiff, le, uint32(8))
+
+	binary.Write(&tiff, le, uint16(1))      // IFD0: エントリ1件
+	binary.Write(&tiff, le, uint16(0x8769)) // ExifIFDPointer
+	binary.Write(&tiff, le, uint16(4))      // LONG
+	binary.Write(&tiff, le, uint32(1))
+	binary.Write(&tiff, le, uint32(26))
+	binary.Write(&tiff, le, uint32(0))
+
+	binary.Write(&tiff, le, uint16(2))      // ExifIFD: エントリ2件
+	binary.Write(&tiff, le, uint16(0x9003)) // DateTimeOriginal
+	binary.Write(&tiff, le, uint16(2))      // ASCII
+	binary.Write(&tiff, le, uint32(20))
+	binary.Write(&tiff, le, uint32(56))
+	binary.Write(&tiff, le, uint16(0x9011)) // OffsetTimeOriginal
+	binary.Write(&tiff, le, uint16(2))      // ASCII
+	binary.Write(&tiff, le, uint32(7))
+	binary.Write(&tiff, le, uint32(76))
+	binary.Write(&tiff, le, uint32(0)) // 次のIFDなし
+
+	tiff.WriteString(when.Format("2006:01:02 15:04:05"))
+	tiff.WriteByte(0)
+	tiff.WriteString(offset)
+	tiff.WriteByte(0)
+
+	var app1 bytes.Buffer
+	app1.Write([]byte{0xFF, 0xE1})
+	binary.Write(&app1, binary.BigEndian, uint16(2+6+tiff.Len()))
+	app1.WriteString("Exif\x00\x00")
+	app1.Write(tiff.Bytes())
+
+	out := append([]byte{0xFF, 0xD8}, app1.Bytes()...)
+	out = append(out, body.Bytes()[2:]...)
+
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, out, 0o644))
+	return path
+}
