@@ -38,25 +38,24 @@ func Resolve(path string, modTime time.Time) (takenAt time.Time) {
 	// SelectedDate は DateTimeOriginal → CreateDate → ModifyDate の順に探し、
 	// どれも無ければゼロ値を返す。
 	if d := ex.SelectedDate(); !d.IsZero() {
-		return asWallClock(d)
+		return assumeLocal(d)
 	}
 	return modTime
 }
 
-// asWallClock はEXIFの日時を、時差が分からない場合にかぎりローカル時刻として
-// 解釈し直す。
+// assumeLocal は時差の分からないEXIF日時を、撮影地の時刻とみなして解釈し直す。
 //
-// EXIFのDateTimeOriginalは時差情報を持たない「カメラの壁時計」で、imagemeta は
-// これをUTCとして返す。そのまま使うと時差のぶんずれる（JSTなら9時間後ろに
-// なり、15時以降に撮った写真が翌日に回る）。撮影地のローカル時刻として読み直す。
+// EXIFのDateTimeOriginalは時差を持たない。imagemeta はこれをUTCとして返すが、
+// 実際にはカメラが表示していた時刻なので、そのまま使うと時差のぶんずれる
+// （JSTなら9時間後ろになり、15時以降に撮った写真が翌日に回る）。
 //
 // ただし OffsetTimeOriginal を持つ写真では imagemeta が時差を適用した固定
-// ゾーンを返す。そちらは本当の瞬間が分かっているので触らない。旅行先で撮った
+// ゾーンを返す。そちらは撮影した瞬間が確定しているので触らない。旅行先で撮った
 // 写真の時刻を自宅の時差で上書きしてしまう。
 //
 // 判別は Location が time.UTC そのものかどうかで行う。時差が +00:00 と明示
 // された写真は固定ゾーンになるため、UTCと取り違えることはない。
-func asWallClock(d time.Time) time.Time {
+func assumeLocal(d time.Time) time.Time {
 	if d.Location() != time.UTC {
 		return d
 	}
