@@ -1,92 +1,94 @@
 # famifo-proto
 
-ローカルディスク上の写真を収集し、LAN内のブラウザから一覧できるツール。
+Indexes photos on a local disk and serves them as a browsable gallery to any browser on your LAN.
 
-## 特徴
+## Features
 
-- 写真をインデックス化して、フォルダ階層を無視した1つのギャラリーとして表示する
-- 並び順はEXIFの撮影日時（無ければファイルの更新日時）
-- 起動時にフルスキャン、その後は fsnotify で変更を自動追従する
-- 単一バイナリ。cgo不要、外部のDBサーバーも不要
+- Indexes photos and presents them as a single gallery, ignoring the folder hierarchy
+- Ordered by EXIF capture time, falling back to the file's modification time
+- Full scan at startup, then follows changes automatically via fsnotify
+- A single binary. No cgo, no external database server
 
-## 対応フォーマット
+## Supported formats
 
-| 拡張子 | サムネイル | 備考 |
+| Extension | Thumbnail | Notes |
 |---|---|---|
-| `.jpg` `.jpeg` `.png` `.gif` `.webp` | 生成する | |
-| `.heic` `.heif` | 生成しない | 原本をそのまま配信する。Safari以外のブラウザでは表示できない |
+| `.jpg` `.jpeg` `.png` `.gif` `.webp` | generated | |
+| `.heic` `.heif` | not generated | The original is served as-is, so it will not display outside Safari |
 
-動画は対象外。
+Video is out of scope.
 
-## ビルド
+## Build
 
 ```bash
 CGO_ENABLED=0 go build -o famifo-proto .
 ```
 
-## 使い方
+## Usage
 
 ```bash
 ./famifo-proto -dir /path/to/photos
 ```
 
-| フラグ | 既定値 | 説明 |
+| Flag | Default | Description |
 |---|---|---|
-| `-dir` | (必須) | 写真を収集するディレクトリ |
-| `-data` | `./famifo-data` | DBとサムネイルキャッシュの保存先 |
-| `-addr` | `:8080` | HTTPの待ち受けアドレス |
-| `-thumb` | `480` | サムネイルの長辺ピクセル数 |
+| `-dir` | (required) | Directory to collect photos from |
+| `-data` | `./famifo-data` | Where the database and thumbnail cache are stored |
+| `-addr` | `:8080` | HTTP listen address |
+| `-thumb` | `480` | Thumbnail size, longest edge in pixels |
 
-## 一覧の操作
+## Using the gallery
 
-- 写真は撮影日ごとに区切って並ぶ。1行に収まる日は横に並ぶ
-- スクロールバーは全期間を表す。任意の位置へ直接移動できる
-- 画面右端のスクラバーをドラッグすると、年月を見ながら一気に移動できる
-- タイルをタップすると拡大表示。左右スワイプで送り、下スワイプで閉じる
+- Photos are grouped by capture date. A day that fits on one row sits alongside its neighbours
+- The scrollbar spans the whole date range, so any position is one drag away
+- Dragging the scrubber at the right edge moves through the library with the year and month shown
+- Tap a tile to enlarge it. Swipe left/right to move between photos, swipe down to close
 
-## ブラウザテスト
+## Browser tests
 
-`internal/web/static/app.js`（仮想スクロール・日ごとのレイアウト計算・
-ライトボックス・日付スクラバー）を、
-Dockerコンテナ上のヘッドレスChromeで実際に動かして検証するテストがある。
-`//go:build browser` を付けているため、通常の `go test ./...` には含まれない。
+There are tests that exercise `internal/web/static/app.js` (virtual scrolling, the per-day
+layout calculation, the lightbox and the date scrubber) by actually running it in headless
+Chrome inside a Docker container. They carry `//go:build browser`, so a plain `go test ./...`
+does not include them.
 
-事前にイメージを取得しておく（ホストのChromeは使わない。コンテナ内のChromeに
-`chromedp.NewRemoteAllocator` で接続する）。
+Pull the image first. The host's Chrome is never used — the tests connect to the container's
+Chrome with `chromedp.NewRemoteAllocator`.
 
 ```bash
 docker pull chromedp/headless-shell:latest
 ```
 
-実行:
+Run them with:
 
 ```bash
 CGO_ENABLED=0 go test -tags browser ./internal/web/ -v
 ```
 
-`TestMain` がコンテナの起動・待ち受け・後始末を行う。Dockerが無い、または
-イメージが無い環境では、各テストが `requireBrowser` によって個別にスキップされる
-（同じパッケージの非ブラウザテストは通常どおり実行される）。
+`TestMain` starts the container, waits for it, and cleans it up. Where Docker or the image is
+unavailable, each test skips itself individually through `requireBrowser` — the non-browser
+tests in the same package still run as usual.
 
-CI など、環境が無いことを黙認したくない場面では `FAMIFO_BROWSER_TESTS=required`
-を立てる。Docker やイメージが用意できていない場合、スキップではなく失敗になる。
+In CI, or anywhere else you would rather not let a missing environment pass unnoticed, set
+`FAMIFO_BROWSER_TESTS=required`. Missing Docker or a missing image then fails instead of
+skipping.
 
-## 制約
+## Limitations
 
-- **ローカルディスク専用。** fsnotify はネットワークファイルシステム（NFS/SMB）の
-  変更通知を受け取れないため、対象ディレクトリはローカルにマウントされている必要がある。
-  NASの共有フォルダを直接指す使い方はできない（LAN上のPCで動かし、そのPCのローカル
-  ディスクを見せる構成を想定している）。
-- **LAN内での利用を前提とする。** 認証もHTTPSも実装していない。外出先から使う場合は
-  ポート開放ではなくVPN（Tailscale等）で自宅LANに接続すること。
-- **写真が0枚に見えるスキャンでは削除を行わない。** 外付けドライブが未マウントの状態で
-  起動すると、走査結果が空になり「全部削除された」ように見えてしまう。これを誤って
-  インデックスの一括削除に反映しないよう、`FullScan` は「走査結果が空 かつ 既存インデックス
-  が空でない」場合に削除をスキップし、`走査結果が空のため削除をスキップした` という警告を
-  ログに出す。副作用として、本当に写真を全部消した場合はDBの行とサムネイルが残り続け、
-  起動のたびに同じ警告が出る。復旧するには、データディレクトリ（`-data` 、既定は
-  `./famifo-data`）を削除してから起動し直す。DBとサムネイルキャッシュが再構築される。
+- **Local disks only.** fsnotify cannot receive change notifications from network file systems
+  (NFS/SMB), so the target directory has to be mounted locally. Pointing it straight at a NAS
+  share will not work — the intended setup is to run it on a machine on the LAN and let it serve
+  that machine's local disk.
+- **Meant for use inside a LAN.** Neither authentication nor HTTPS is implemented. To reach it
+  from outside, connect to your home LAN over a VPN (Tailscale or similar) rather than opening a
+  port.
+- **A scan that finds zero photos does not delete anything.** Starting up while an external drive
+  is unmounted produces an empty scan, which looks exactly like "everything was deleted". To keep
+  that from wiping the index, `FullScan` skips deletions when the scan is empty *and* the existing
+  index is not, and logs a `走査結果が空のため削除をスキップした` warning. The side effect is that
+  if you really did delete every photo, the database rows and thumbnails stay behind and the same
+  warning appears on every startup. To recover, delete the data directory (`-data`, default
+  `./famifo-data`) and start again — the database and thumbnail cache are rebuilt.
 
-## 設計
+## Design
 
-設計判断とその理由は [docs/design.md](docs/design.md) を参照。
+See [docs/design.md](docs/design.md) for the design decisions and the reasoning behind them.
