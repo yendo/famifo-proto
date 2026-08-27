@@ -33,12 +33,24 @@ EXPOSE 8080
 
 # 既定はマウントだけで動く形。写真は /photos の下に、データは /data に置く。
 #
-#   docker run -v /volume1/photo:/photos:ro -v /volume1/famifo:/data ...
+#   docker run -d --restart unless-stopped -p 8080:8080 \
+#     -v /volume1/photo:/photos:ro \
+#     -v /volume1/famifo/data:/data \
+#     ghcr.io/yendo/famifo-proto
+
 #
 # 写真の置き場所が複数あるなら、-v 1つにつき -dir 1つを明示する。
 #
-#   docker run -v /volume1/photo:/photos/main:ro -v /mnt/usb:/photos/usb:ro ... \
+#   docker run -d --restart unless-stopped -p 8080:8080 \
+#     -v /volume1/photo:/photos/main:ro \
+#     -v /mnt/usb:/photos/usb:ro \
+#     -v /volume1/famifo/data:/data \
 #     ghcr.io/yendo/famifo-proto -dir /photos/main:/photos/usb -data /data
+#
+# /data のマウントは省略できない。省くとDBとサムネイルがコンテナの書き込み層に
+# 置かれ、イメージ更新でコンテナを作り直した時点で消える。DSMのGUIでの更新手順は
+# コンテナの作り直しそのものなので、更新のたびに数時間の再インデックスになる。
+# しかも初回の動作確認では気づけない。
 #
 # 分ける基準は「別々にマウントが外れうるか」。削除ガードはルート単位で働き、
 # 空に見えるルートの写真を消さずに残す。既定の -dir /photos ひとつでは、その下の
