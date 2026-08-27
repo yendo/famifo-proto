@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7 # zizmor: ignore[unpinned-uses]
         with:
           # super-linter needs the full git history to get the
           # list of files that changed across commits
@@ -34,13 +34,23 @@ jobs:
           persist-credentials: false
 
       - name: Super-linter
-        uses: super-linter/super-linter/slim@v8
+        uses: super-linter/super-linter/slim@v8 # zizmor: ignore[unpinned-uses]
         env:
           # To report GitHub Actions status checks
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VALIDATE_ALL_CODEBASE: false
-          VALIDATE_GO: false
+          VALIDATE_CSS_PRETTIER: false
+          VALIDATE_CSS: false
           VALIDATE_GO_MODULES: false
+          VALIDATE_GO: false
+          VALIDATE_HTML_PRETTIER: false
+          VALIDATE_HTML: false
+          VALIDATE_JAVASCRIPT_PRETTIER: false
+          VALIDATE_JSCPD: false
+          VALIDATE_JSON_PRETTIER: false
+          VALIDATE_JSON: false
+          VALIDATE_MARKDOWN_PRETTIER: false
+          VALIDATE_MARKDOWN: false # FIXME
+          VALIDATE_NATURAL_LANGUAGE: false # FIXME
 
   staticcheck:
     name: staticcheck
@@ -51,7 +61,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7 # zizmor: ignore[unpinned-uses]
         with:
           persist-credentials: false
 

@@ -10,13 +10,19 @@
   --label-h: 20px;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 /* ブラウザ純正のスクロールバーは出さない。スクロール位置の表示も操作も
    .scrubber が引き受ける。2本並ぶとトラックの起点が違って上下にずれる。
    スクロール自体（ホイール・キー・タッチ）は効いたまま。 */
-html { scrollbar-width: none; }            /* Firefox 64+, Chrome 121+ */
-html::-webkit-scrollbar { display: none; } /* 旧 Chrome / Safari */
+html {
+  scrollbar-width: none;
+} /* Firefox 64+, Chrome 121+ */
+html::-webkit-scrollbar {
+  display: none;
+} /* 旧 Chrome / Safari */
 
 body {
   margin: 0;
@@ -27,7 +33,9 @@ body {
 }
 
 /* ライトボックス表示中に背後の一覧がスクロールしないようにする */
-body.locked { overflow: hidden; }
+body.locked {
+  overflow: hidden;
+}
 
 .topbar {
   position: sticky;
@@ -43,8 +51,15 @@ body.locked { overflow: hidden; }
   min-height: var(--topbar-h);
   box-sizing: border-box;
 }
-.topbar h1 { margin: 0; font-size: 1rem; letter-spacing: 0.08em; }
-.count { font-size: 0.8rem; opacity: 0.6; }
+.topbar h1 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+}
+.count {
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
 
 /* スクロール領域。高さは #spacer が決める */
 .gallery {
@@ -74,16 +89,23 @@ body.locked { overflow: hidden; }
   height: 0;
   visibility: hidden;
 }
-#window, #colprobe {
+#window,
+#colprobe {
   display: grid;
   gap: var(--gap);
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
 }
 @media (min-width: 700px) {
-  #window, #colprobe { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  #window,
+  #colprobe {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  }
 }
 @media (min-width: 1100px) {
-  #window, #colprobe { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  #window,
+  #colprobe {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
 }
 
 /* 日ごとのカード。占める列数はJSがインラインで書く（min(枚数, 列数)）。
@@ -127,7 +149,9 @@ body.locked { overflow: hidden; }
   /* ピンチズームはブラウザに任せ、左右スワイプは自前で拾う */
   touch-action: pinch-zoom;
 }
-.lightbox[hidden] { display: none; }
+.lightbox[hidden] {
+  display: none;
+}
 .lightbox img {
   max-width: 100%;
   max-height: 100%;
@@ -145,11 +169,17 @@ body.locked { overflow: hidden; }
   font-size: 2rem;
   cursor: pointer;
 }
-.lb-prev { left: 0; }
-.lb-next { right: 0; }
+.lb-prev {
+  left: 0;
+}
+.lb-next {
+  right: 0;
+}
 /* タッチ端末では矢印を出さない（スワイプで操作するため） */
 @media (hover: hover) {
-  .lb-nav:hover { color: rgba(255, 255, 255, 0.7); }
+  .lb-nav:hover {
+    color: rgba(255, 255, 255, 0.7);
+  }
 }
 
 /* 日付スクラバー。スクロール中だけ現れる */
@@ -165,8 +195,13 @@ body.locked { overflow: hidden; }
   pointer-events: none;
   transition: opacity 0.2s;
 }
-.scrubber[hidden] { display: none; }
-.scrubber.visible { opacity: 1; pointer-events: auto; }
+.scrubber[hidden] {
+  display: none;
+}
+.scrubber.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
 
 .scrub-thumb {
   position: absolute;
@@ -187,4 +222,6 @@ body.locked { overflow: hidden; }
   font-size: 0.85rem;
   white-space: nowrap;
 }
-.scrub-label[hidden] { display: none; }
+.scrub-label[hidden] {
+  display: none;
+}

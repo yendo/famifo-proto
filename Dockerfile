@@ -44,6 +44,13 @@ LABEL org.opencontainers.image.description="Photo gallery for a home LAN"
 
 USER ${UID}:${GID}
 
+# HEALTHCHECK は付けない。scratch にはシェルも curl も無いので、exec 形式で
+# 動かすには famifo 自身にヘルスチェック用のフラグを実装することになる。
+# しかも Docker は unhealthy なコンテナを再起動しない（それは Swarm の機能）。
+# 得られるのは docker ps や DSM の画面での表示だけなので、割に合わない。
+#checkov:skip=CKV_DOCKER_2:scratch has no shell; needs an app-side flag
+# Trivy の DS-0026 は .trivyignore で抑止している。ここに書いても効かない。
+
 EXPOSE 8080
 
 # 既定はマウントだけで動く形。写真は /photos の下に、データは /data に置く。
