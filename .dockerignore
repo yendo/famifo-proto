@@ -1,0 +1,10 @@
+# ビルドに要らないものは送らない。famifo-data は写真1万枚規模で数百MBになる。
+.git
+.claude
+.superpowers
+docs
+famifo-data
+famifo-proto
+*.md
+.dockerignore
+Dockerfile

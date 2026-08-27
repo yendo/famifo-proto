@@ -150,3 +150,97 @@ func TestFullScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 	require.FileExists(t, thumbA, "サムネイルも残る")
 	require.FileExists(t, thumbB)
 }
+
+func TestFullScanIndexesEveryRoot(t *testing.T) {
+	f, roots := newFixtureRoots(t, "alice", "bob")
+	ctx := context.Background()
+	writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
+	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
+
+	stats, err := f.ix.FullScan(ctx)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, stats.Indexed, "すべてのルートを走査すること")
+	n, err := f.st.Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+}
+
+// 片方のドライブが未マウントで空に見えるとき、そのルートの写真だけを守る。
+//
+// 削除の判定が全ルート合計だと、生きているルートに写真がある限りガードが
+// 発動せず、空に見えたルートの写真が消える。復旧には数時間の再インデックスが
+// 要るので、ルート単位で判定する。
+func TestFullScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
+	f, roots := newFixtureRoots(t, "alice", "bob")
+	ctx := context.Background()
+	gone := writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
+	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
+	_, err := f.ix.FullScan(ctx)
+	require.NoError(t, err)
+	thumbGone := f.gen.Path(store.IDFor(gone))
+	require.FileExists(t, thumbGone)
+
+	// aliceのドライブが未マウントになった状況を模す：中身だけ消してルートは残す
+	require.NoError(t, os.Remove(gone))
+
+	stats, err := f.ix.FullScan(ctx)
+
+	require.NoError(t, err)
+	require.Equal(t, 0, stats.Removed,
+		"空に見えるルートの写真は消さない（bobに写真が残っていても）")
+	n, err := f.st.Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.FileExists(t, thumbGone, "サムネイルも残る")
+}
+
+// 引数からルートが外れたら、その配下の写真はインデックスから消す。
+// インデックスは「いま指定されているもの」に従う。
+func TestFullScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
+	f, roots := newFixtureRoots(t, "alice", "bob")
+	ctx := context.Background()
+	writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
+	dropped := writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
+	_, err := f.ix.FullScan(ctx)
+	require.NoError(t, err)
+
+	// bob を引数から外して起動し直した状況を模す
+	f2 := &Indexer{roots: roots[:1], st: f.st, gen: f.gen, log: f.ix.log}
+
+	stats, err := f2.FullScan(ctx)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Removed, "どのルートの配下でもない写真は消す")
+	n, err := f.st.Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.NoFileExists(t, f.gen.Path(store.IDFor(dropped)), "サムネイルも消える")
+}
+
+// ルートのパスごと消えている（ボリュームが外れた等）ときは、そのルートを
+// 飛ばして他のルートの処理を続ける。1つの外付けドライブが外れただけで
+// 走査全体が止まると、生きているルートの更新まで反映されなくなる。
+func TestFullScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
+	f, roots := newFixtureRoots(t, "alice", "bob")
+	ctx := context.Background()
+	writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
+	kept := writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
+	_, err := f.ix.FullScan(ctx)
+	require.NoError(t, err)
+
+	// aliceのルートごと消す
+	require.NoError(t, os.RemoveAll(roots[0]))
+	// bobに新しい写真を足す
+	writeTestJPEG(t, roots[1], "c.jpg", 40, 20)
+
+	stats, err := f.ix.FullScan(ctx)
+
+	require.NoError(t, err, "読めないルートがあっても走査全体は失敗しない")
+	require.Equal(t, 1, stats.Indexed, "生きているルートの新しい写真は取り込む")
+	require.Equal(t, 0, stats.Removed, "読めないルートの写真は消さない")
+	require.FileExists(t, f.gen.Path(store.IDFor(kept)))
+	n, err := f.st.Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"path/filepath"
+	"strings"
 
 	"github.com/yendo/famifo-proto/internal/photo"
 )
@@ -28,68 +29,116 @@ func (ix *Indexer) FullScan(ctx context.Context) (Stats, error) {
 	}
 
 	var st Stats
-	found := 0 // 走査で見つかった対象ファイル数（ルートが空/未マウントかどうかの判定に使う。Statsには含めない）
-	walkErr := filepath.WalkDir(ix.root, func(path string, d fs.DirEntry, err error) error {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		if err != nil {
-			if path == ix.root {
-				// ルート自体が読めない場合は「中身が空だった」と区別できないため
-				// 削除フェーズに進まず、走査全体を中断する。
-				return err
+	// ルートごとの発見数。空/未マウントかどうかをルート単位で判定するために使う。
+	// 合計で数えると、生きているルートに写真がある限りガードが発動しない。
+	found := make(map[string]int, len(ix.roots))
+	walk := func(root string) error {
+		return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
 			}
-			// 読めないディレクトリやファイルは飛ばす（権限エラーなど）
-			ix.log.Warn("走査をスキップ", "path", path, "err", err)
-			st.Skipped++
-			return nil
-		}
-		if d.IsDir() || !photo.IsSupported(path) {
-			return nil
-		}
-		found++
+			if err != nil {
+				if path == root {
+					// ルート自体が読めない場合は「中身が空だった」と区別できないため
+					// 削除フェーズに進まず、走査全体を中断する。
+					return err
+				}
+				// 読めないディレクトリやファイルは飛ばす（権限エラーなど）
+				ix.log.Warn("走査をスキップ", "path", path, "err", err)
+				st.Skipped++
+				return nil
+			}
+			if d.IsDir() || !photo.IsSupported(path) {
+				return nil
+			}
+			found[root]++
 
-		fi, err := d.Info()
-		if err != nil {
-			ix.log.Warn("ファイル情報を取得できずスキップ", "path", path, "err", err)
-			st.Skipped++
-			return nil
-		}
+			fi, err := d.Info()
+			if err != nil {
+				ix.log.Warn("ファイル情報を取得できずスキップ", "path", path, "err", err)
+				st.Skipped++
+				return nil
+			}
 
-		// 見つかったパスは消し込む。走査後に残ったものが削除されたファイル。
-		modTime, wasKnown := known[path]
-		delete(known, path)
-		if wasKnown && modTime == fi.ModTime().Unix() {
-			st.Unchanged++
-			return nil
-		}
+			// 見つかったパスは消し込む。走査後に残ったものが削除されたファイル。
+			modTime, wasKnown := known[path]
+			delete(known, path)
+			if wasKnown && modTime == fi.ModTime().Unix() {
+				st.Unchanged++
+				return nil
+			}
 
-		if err := ix.IndexFile(ctx, path); err != nil {
-			ix.log.Warn("インデックスをスキップ", "path", path, "err", err)
-			st.Skipped++
+			if err := ix.IndexFile(ctx, path); err != nil {
+				ix.log.Warn("インデックスをスキップ", "path", path, "err", err)
+				st.Skipped++
+				return nil
+			}
+			st.Indexed++
 			return nil
-		}
-		st.Indexed++
-		return nil
-	})
-	if walkErr != nil {
-		return st, walkErr
+		})
 	}
 
-	if found == 0 && len(known) > 0 {
-		// 走査が1件も見つけられなかったのにインデックスには残りがある。
-		// ドライブが未マウントなどでルートが「たまたま空に見える」場合と、
-		// 本当に全部消された場合を区別できないため、安全側に倒して削除しない。
-		ix.log.Warn("走査結果が空のため削除をスキップした", "root", ix.root, "remaining", len(known))
-		return st, nil
+	for _, root := range ix.roots {
+		if err := walk(root); err != nil {
+			if ctx.Err() != nil {
+				return st, err
+			}
+			// ルート自体を読めない（ボリュームが外れた等）。1つのドライブが
+			// 外れただけで走査全体を止めると、生きているルートの更新まで
+			// 반映されなくなる。このルートは found が0のままなので、配下の
+			// 削除は下のガードが自動的に見送る。
+			ix.log.Warn("ルートを読めないため飛ばした", "root", root, "err", err)
+			continue
+		}
 	}
 
+	// 1件も見つからなかったルートは、ドライブが未マウントで「たまたま空に
+	// 見える」のか、本当に全部消されたのかを区別できない。安全側に倒して、
+	// そのルート配下の削除を見送る。
+	var empty []string
+	for _, root := range ix.roots {
+		if found[root] == 0 {
+			empty = append(empty, root)
+		}
+	}
+
+	guarded := 0
 	for path := range known {
+		if underAny(empty, path) {
+			guarded++
+			continue
+		}
 		if err := ix.RemoveFile(ctx, path); err != nil {
 			ix.log.Warn("削除の反映に失敗", "path", path, "err", err)
 			continue
 		}
 		st.Removed++
 	}
+	if guarded > 0 {
+		ix.log.Warn("走査結果が空のルートがあるため削除をスキップした",
+			"roots", empty, "remaining", guarded)
+	}
 	return st, nil
+}
+
+// underAny は path がいずれかのルート配下にあるかを返す。
+func underAny(roots []string, path string) bool {
+	for _, root := range roots {
+		if under(root, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// under は path が root 配下にあるかを返す。
+// セパレータを1つ補ってから前方一致させるため、"/a" が "/ab" を巻き込まない。
+func under(root, path string) bool {
+	if path == root {
+		return true
+	}
+	if !strings.HasSuffix(root, string(filepath.Separator)) {
+		root += string(filepath.Separator)
+	}
+	return strings.HasPrefix(path, root)
 }

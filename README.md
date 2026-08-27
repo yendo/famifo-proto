@@ -30,12 +30,115 @@ CGO_ENABLED=0 go build -o famifo-proto .
 ./famifo-proto -dir /path/to/photos
 ```
 
+Several roots can be given at once, separated by the OS list separator (`:` on Unix):
+
+```bash
+./famifo-proto -dir /home/alice/Photos:/home/bob/Photos
+```
+
+Roots may not be duplicated or nested inside one another, and `-data` has to sit outside
+every one of them.
+
 | Flag | Default | Description |
 |---|---|---|
-| `-dir` | (required) | Directory to collect photos from |
+| `-dir` | (required) | Directories to collect photos from, `:`-separated |
 | `-data` | `./famifo-data` | Where the database and thumbnail cache are stored |
 | `-addr` | `:8080` | HTTP listen address |
-| `-thumb` | `480` | Thumbnail size, longest edge in pixels |
+| `-version` | | Print the build version and exit |
+
+### Timezone
+
+Photos are grouped by the day they were taken, which depends on the machine's local timezone.
+The binary embeds the IANA database, so setting `TZ` is enough even where the filesystem has no
+zoneinfo — a bare container, for instance. Without it the process falls back to UTC and files
+those photos under the wrong day. The startup log prints the zone it resolved:
+
+```
+msg=起動 version="a4272a5b (2026-08-26T14:27:20Z)" timezone=JST+09:00 dirs=[/photos] ...
+```
+
+Check that line before letting a first index run to completion; rebuilding one costs hours.
+
+## Docker
+
+The image is built `FROM scratch` around the static binary — 15MB, no runtime
+dependencies.
+
+```bash
+docker build --build-arg VERSION=$(git rev-parse --short HEAD) -t famifo .
+```
+
+`.git` is kept out of the build context, so Go's automatic VCS stamping has nothing to
+read and `-version` would report `dev`. Pass `VERSION` and it is embedded instead.
+
+### Running it
+
+```bash
+docker run -d --restart unless-stopped -p 8080:8080 \
+  --user 1027:100 \
+  -v /volume1/photo:/photos:ro \
+  -v /volume1/famifo/data:/data \
+  famifo
+```
+
+Photo directories are mounted read-only. `:ro` is enforced by the kernel, so even a
+root process inside the container cannot delete them.
+
+To index several separate locations, mount each one and name it as a root:
+
+```bash
+docker run -d --restart unless-stopped -p 8080:8080 \
+  --user 1027:100 \
+  -v /volume1/photo:/photos/main:ro \
+  -v /mnt/usb:/photos/usb:ro \
+  -v /volume1/famifo/data:/data \
+  famifo -dir /photos/main:/photos/usb -data /data
+```
+
+Split them by what can disappear independently. The per-root guard described under
+Limitations only helps when a root is its own root: with the default single `-dir
+/photos`, one mount going missing does not make `/photos` look empty, so nothing stops
+its photos being dropped from the index. Splitting a single mount into several roots
+buys nothing, since they come and go together.
+
+### The `/data` mount is not optional
+
+Left out, the database and thumbnail cache land in the container's writable layer and
+are gone the moment the container is recreated — which is exactly what updating the
+image on DSM does. That costs a full reindex, and nothing reveals it until the first
+update.
+
+### Running as a non-root user
+
+The container defaults to uid/gid `65532`. Docker cannot address a user by name here —
+a `scratch` image has no `/etc/passwd` — so the id is numeric. To match an account on
+the host:
+
+```bash
+ssh nas 'id famifo'                                     # find the uid and gid
+ssh nas 'sudo chown 1027:100 /volume1/famifo/data'      # let it write there
+docker run --user 1027:100 ...                          # no rebuild needed
+```
+
+`--build-arg UID=1027 --build-arg GID=100` bakes the same thing into the image, for
+environments whose UI cannot pass `--user`.
+
+Ownership of a bind mount comes from the host directory and is not adjusted by Docker,
+so the directory has to be writable by that id beforehand. Named volumes behave
+differently — they inherit ownership from the image — but a bind mount keeps the cache
+visible on the NAS, where deleting it to force a rebuild is a file-manager operation
+rather than a shell one. Losing it costs only rebuild time; it holds nothing that is
+not derived from the photos.
+
+### Timezone in a container
+
+`TZ` is set to `Asia/Tokyo` in the image. It matters: see the Timezone section above.
+Check the startup log after any change to the run command.
+
+```bash
+docker logs <container> | head -1
+```
+
 
 ## Using the gallery
 
@@ -81,13 +184,20 @@ skipping.
 - **Meant for use inside a LAN.** Neither authentication nor HTTPS is implemented. To reach it
   from outside, connect to your home LAN over a VPN (Tailscale or similar) rather than opening a
   port.
-- **A scan that finds zero photos does not delete anything.** Starting up while an external drive
-  is unmounted produces an empty scan, which looks exactly like "everything was deleted". To keep
-  that from wiping the index, `FullScan` skips deletions when the scan is empty *and* the existing
-  index is not, and logs a `走査結果が空のため削除をスキップした` warning. The side effect is that
-  if you really did delete every photo, the database rows and thumbnails stay behind and the same
-  warning appears on every startup. To recover, delete the data directory (`-data`, default
-  `./famifo-data`) and start again — the database and thumbnail cache are rebuilt.
+- **A root that scans empty loses nothing.** Starting up while an external drive is unmounted
+  produces an empty scan of that root, which looks exactly like "everything under it was
+  deleted". `FullScan` therefore judges each root separately: a root that turns up no photos
+  keeps its existing entries, even when the other roots are healthy, and logs a
+  `走査結果が空のルートがあるため削除をスキップした` warning. A root it cannot read at all is
+  skipped the same way, with `ルートを読めないため飛ばした`, rather than aborting the scan and
+  stalling the healthy roots. The side effect is that if you really did empty a root, its rows
+  and thumbnails stay behind and the warning repeats on every startup. To recover, delete the
+  data directory (`-data`, default `./famifo-data`) and start again — the database and thumbnail
+  cache are rebuilt.
+- **Dropping a root from `-dir` deletes its photos from the index.** The index follows what you
+  currently point it at. Photos under a path that is no longer a root are removed, thumbnails
+  included, and getting them back means reindexing. This is the one case the guard above does
+  not cover, because the root is absent rather than empty.
 
 ## Design
 

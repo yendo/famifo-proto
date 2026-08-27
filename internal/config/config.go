@@ -11,12 +11,14 @@ import (
 	"strings"
 )
 
+// ErrVersionRequested は -version が指定されたことを表す。
+var ErrVersionRequested = errors.New("version requested")
+
 // Config はアプリの実行時設定。すべてコマンドライン引数から与えられる。
 type Config struct {
-	PhotoDir  string // 写真を収集するルートディレクトリ
-	DataDir   string // DBとサムネイルキャッシュの置き場
-	Addr      string // HTTPの待ち受けアドレス
-	ThumbSize int    // サムネイルの長辺ピクセル数
+	PhotoDirs []string // 写真を収集するルートディレクトリ（複数可）
+	DataDir   string   // DBとサムネイルキャッシュの置き場
+	Addr      string   // HTTPの待ち受けアドレス
 }
 
 // Parse は引数を解析して検証済みのConfigを返す。argsにはプログラム名を含めない。
@@ -25,39 +27,71 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	fs.SetOutput(stderr)
 
 	var c Config
-	fs.StringVar(&c.PhotoDir, "dir", "", "写真を収集するディレクトリ (必須)")
+	var dirs string
+	fs.StringVar(&dirs, "dir", "",
+		fmt.Sprintf("写真を収集するディレクトリ (必須)。%q で区切って複数指定できる",
+			string(filepath.ListSeparator)))
 	fs.StringVar(&c.DataDir, "data", "./famifo-data", "DBとサムネイルキャッシュの保存先")
 	fs.StringVar(&c.Addr, "addr", ":8080", "HTTPの待ち受けアドレス")
-	fs.IntVar(&c.ThumbSize, "thumb", 480, "サムネイルの長辺ピクセル数")
+	showVersion := fs.Bool("version", false, "バージョンを表示して終了する")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
+	// バージョンを表示するだけなので -dir は要らない。検証まで進めない。
+	if *showVersion {
+		return Config{}, ErrVersionRequested
+	}
+	// 空文字を SplitList に渡すと [""] ではなく [] が返るので、
+	// 「未指定」は Validate 側の「1つ以上必須」で捕まる。
+	c.PhotoDirs = filepath.SplitList(dirs)
 	return c, c.Validate()
 }
 
 // Validate は設定の不備を報告する。ここでのエラーは起動を中止させる。
 func (c Config) Validate() error {
-	if c.PhotoDir == "" {
+	if len(c.PhotoDirs) == 0 {
 		return errors.New("-dir は必須です")
 	}
-	fi, err := os.Stat(c.PhotoDir)
-	if err != nil {
-		return fmt.Errorf("-dir を読めません: %w", err)
-	}
-	if !fi.IsDir() {
-		return fmt.Errorf("-dir はディレクトリではありません: %s", c.PhotoDir)
-	}
-	if c.ThumbSize < 1 || c.ThumbSize > 4096 {
-		return fmt.Errorf("-thumb は 1..4096 で指定してください: %d", c.ThumbSize)
+	for i, dir := range c.PhotoDirs {
+		fi, err := os.Stat(dir)
+		if err != nil {
+			// ':' はUnixのパスに使える文字なので、それを含むディレクトリを
+			// 渡すと意図しない位置で切れる。分割結果を見せて原因を読めるようにする。
+			return fmt.Errorf("-dir を読めません: %w（-dir は %q で区切って解釈しました: %v）",
+				err, string(filepath.ListSeparator), c.PhotoDirs)
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("-dir はディレクトリではありません: %s", dir)
+		}
+		// 同じルートを2回走査しても無駄なだけ。入れ子は同じファイルを2回
+		// 走査し、サムネイルを2回作る。
+		for _, other := range c.PhotoDirs[i+1:] {
+			nested, err := dirContains(dir, other)
+			if err != nil {
+				return fmt.Errorf("-dir を解決できません: %w", err)
+			}
+			if !nested {
+				if nested, err = dirContains(other, dir); err != nil {
+					return fmt.Errorf("-dir を解決できません: %w", err)
+				}
+			}
+			if nested {
+				return fmt.Errorf("-dir が重複または入れ子になっています: %s と %s", dir, other)
+			}
+		}
 	}
 	if c.Addr == "" {
 		return errors.New("-addr は必須です")
 	}
-	if inside, err := dirContains(c.PhotoDir, c.DataDir); err != nil {
-		return fmt.Errorf("-data を解決できません: %w", err)
-	} else if inside {
-		return fmt.Errorf("-data は -dir の外に置いてください（自己増殖の原因になります）: %s は %s の中です", c.DataDir, c.PhotoDir)
+	for _, dir := range c.PhotoDirs {
+		inside, err := dirContains(dir, c.DataDir)
+		if err != nil {
+			return fmt.Errorf("-data を解決できません: %w", err)
+		}
+		if inside {
+			return fmt.Errorf("-data は -dir の外に置いてください（自己増殖の原因になります）: %s は %s の中です", c.DataDir, dir)
+		}
 	}
 	return nil
 }

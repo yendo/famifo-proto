@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -205,4 +206,43 @@ func side(b bool, yes, no string) string {
 		return yes
 	}
 	return no
+}
+
+// DBを作り直すたびに全サムネイルを作り直すと、4,495枚で37分（NASなら数時間）
+// かかる。写真が変わっていないなら既存のものをそのまま使う。
+func TestGenerateSkipsWhenTheThumbnailIsUpToDate(t *testing.T) {
+	g := newTestGenerator(t, 100)
+	dir := t.TempDir()
+	src := writeImage(t, dir, "a.jpg", 400, 200)
+	require.NoError(t, g.Generate(src, testID))
+
+	// 中身を見分けられる印を置き、元ファイルより新しくする
+	marker := []byte("not a real thumbnail")
+	require.NoError(t, os.WriteFile(g.Path(testID), marker, 0o644))
+	future := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(g.Path(testID), future, future))
+
+	require.NoError(t, g.Generate(src, testID))
+
+	got, err := os.ReadFile(g.Path(testID))
+	require.NoError(t, err)
+	require.Equal(t, marker, got, "元ファイルが変わっていなければ作り直さない")
+}
+
+// 写真が差し替えられたらサムネイルは古い。mtimeで判定する。
+func TestGenerateRebuildsWhenTheSourceIsNewer(t *testing.T) {
+	g := newTestGenerator(t, 100)
+	dir := t.TempDir()
+	src := writeImage(t, dir, "a.jpg", 400, 200)
+	require.NoError(t, g.Generate(src, testID))
+	require.NoError(t, os.WriteFile(g.Path(testID), []byte("stale"), 0o644))
+
+	// 元ファイルをサムネイルより新しくする
+	future := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(src, future, future))
+
+	require.NoError(t, g.Generate(src, testID))
+
+	cfg := decodeThumb(t, g.Path(testID))
+	require.Equal(t, 100, cfg.Width, "元が新しければ作り直す")
 }

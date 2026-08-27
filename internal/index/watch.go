@@ -35,7 +35,7 @@ func (w *Watcher) Close() error { return w.fsw.Close() }
 
 // Run はコンテキストがキャンセルされるまで監視を続ける。
 func (w *Watcher) Run(ctx context.Context) error {
-	if err := w.addTree(w.ix.root); err != nil {
+	if err := w.addRoots(); err != nil {
 		return err
 	}
 
@@ -123,6 +123,16 @@ func (w *Watcher) flush(ctx context.Context, pending map[string]time.Time, now t
 		}
 		w.log.Info("インデックスを更新", "path", path)
 	}
+}
+
+// addRoots はすべてのルート以下を監視対象に加える。
+func (w *Watcher) addRoots() error {
+	for _, root := range w.ix.roots {
+		if err := w.addTree(root); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // addTree は root 以下の全ディレクトリを監視対象に加える。
