@@ -75,7 +75,7 @@ read and `-version` would report `dev`. Pass `VERSION` and it is embedded instea
 
 ```bash
 docker run -d --restart unless-stopped -p 8080:8080 \
-  --user 1027:100 \
+  --user 1029:100 \
   -v /volume1/photo:/photos:ro \
   -v /volume1/famifo/data:/data \
   famifo
@@ -88,7 +88,7 @@ To index several separate locations, mount each one and name it as a root:
 
 ```bash
 docker run -d --restart unless-stopped -p 8080:8080 \
-  --user 1027:100 \
+  --user 1029:100 \
   -v /volume1/photo:/photos/main:ro \
   -v /mnt/usb:/photos/usb:ro \
   -v /volume1/famifo/data:/data \
@@ -110,17 +110,17 @@ update.
 
 ### Running as a non-root user
 
-The container defaults to uid/gid `65532`. Docker cannot address a user by name here —
+The container defaults to uid/gid `1029:100`. Docker cannot address a user by name here —
 a `scratch` image has no `/etc/passwd` — so the id is numeric. To match an account on
 the host:
 
 ```bash
 ssh nas 'id famifo'                                     # find the uid and gid
-ssh nas 'sudo chown 1027:100 /volume1/famifo/data'      # let it write there
-docker run --user 1027:100 ...                          # no rebuild needed
+ssh nas 'sudo chown 1029:100 /volume1/famifo/data'      # let it write there
+docker run --user 1029:100 ...                          # no rebuild needed
 ```
 
-`--build-arg UID=1027 --build-arg GID=100` bakes the same thing into the image, for
+`--build-arg UID=1029 --build-arg GID=100` bakes the same thing into the image, for
 environments whose UI cannot pass `--user`.
 
 Ownership of a bind mount comes from the host directory and is not adjusted by Docker,

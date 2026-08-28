@@ -1,0 +1,42 @@
+---
+name: Go
+
+on: # yamllint disable-line rule:truthy
+  push:
+    branches:
+      - "**"
+
+permissions: {}
+
+jobs:
+  build:
+    name: Go
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7 # zizmor: ignore[unpinned-uses]
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7 # zizmor: ignore[unpinned-uses]
+        with:
+          go-version-file: go.mod
+
+      - name: Go vet
+        run: make vet
+
+      - name: Build
+        run: make build
+
+      - name: Unit test
+        run: make unit-test
+
+      - name: Browser test
+        run: |
+          docker pull chromedp/headless-shell:latest
+          make browser-test

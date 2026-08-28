@@ -55,10 +55,10 @@ const famifo = (() => {
   // テストから直接叩いて検証できる。
   function layout(groups, cols, tileH, labelH, gap) {
     const entries = [];
-    let y = 0;       // いま組み立て中のストライプの上端
+    let y = 0; // いま組み立て中のストライプの上端
     let stripeH = 0; // その高さ。0なら未開始
-    let rem = 0;     // その残り列数
-    let start = 0;   // 次のグループの先頭写真の通し番号
+    let rem = 0; // その残り列数
+    let start = 0; // 次のグループの先頭写真の通し番号
 
     for (const g of groups) {
       const span = Math.min(g.n, cols);
@@ -89,7 +89,12 @@ const famifo = (() => {
     let found = 0;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (key(entries[mid]) <= v) { found = mid; lo = mid + 1; } else { hi = mid - 1; }
+      if (key(entries[mid]) <= v) {
+        found = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
     }
     return found;
   }
@@ -97,8 +102,12 @@ const famifo = (() => {
   // レイアウトのy座標は #spacer の上端が0。文書のスクロール位置とは、
   // 上部バー（sticky でも流れの中で場所を占める）とギャラリーの余白の
   // ぶんだけずれる。変換はこの2つに集約する。
-  function toLayoutY(docY) { return docY - spacerTop; }
-  function toDocY(layoutY) { return layoutY + spacerTop; }
+  function toLayoutY(docY) {
+    return docY - spacerTop;
+  }
+  function toDocY(layoutY) {
+    return layoutY + spacerTop;
+  }
 
   // 通し番号 i の写真が属する段の上端。
   function yForIndex(L, i) {
@@ -182,8 +191,8 @@ const famifo = (() => {
       return;
     }
     const gap = parseFloat(cs.rowGap) || 0;
-    const labelH = parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue('--label-h')) || 0;
+    const labelH =
+      parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--label-h')) || 0;
 
     L = layout(days, cols, tileW, labelH, gap); // タイルは正方形なので幅がそのまま高さ
     spacer.style.height = `${Math.max(0, L.height)}px`;
@@ -220,7 +229,7 @@ const famifo = (() => {
   // 取得済みの塊からタイルを引く。未取得なら null。
   function tileAt(i) {
     const tiles = chunks.get(Math.floor(i / chunkSize));
-    return tiles ? tiles[i % chunkSize] ?? null : null;
+    return tiles ? (tiles[i % chunkSize] ?? null) : null;
   }
 
   function ensureChunk(i) {
@@ -250,7 +259,10 @@ const famifo = (() => {
     const fetchFrom = Math.max(0, firstChunk - 1);
     const fetchTo = Math.min(Math.floor((total - 1) / chunkSize), lastChunk + 1);
     for (let ci = fetchFrom; ci <= fetchTo; ci++) {
-      if (!chunks.has(ci)) fetchChunk(ci).then(render).catch(() => {});
+      if (!chunks.has(ci))
+        fetchChunk(ci)
+          .then(render)
+          .catch(() => {});
     }
 
     // 必要な塊が1つでも欠けていると穴の空いたカードになるので、揃うまで描かない
@@ -298,10 +310,12 @@ const famifo = (() => {
     }
     // 段の途中から貼るとき（大きい日をスクロールしている最中）はラベルを落とす
     const head = tileAt(from);
-    const label = piece.r0 > 0 || !head ? ''
-      : `<div class="daylabel">${formatDay(head.date)}</div>`;
-    return `<div class="daycard" style="grid-column:span ${piece.e.span};`
-      + `grid-template-columns:repeat(${piece.e.span},1fr)">${label}${tiles.join('')}</div>`;
+    const label =
+      piece.r0 > 0 || !head ? '' : `<div class="daylabel">${formatDay(head.date)}</div>`;
+    return (
+      `<div class="daycard" style="grid-column:span ${piece.e.span};` +
+      `grid-template-columns:repeat(${piece.e.span},1fr)">${label}${tiles.join('')}</div>`
+    );
   }
 
   // "2026-02-08" → "2026年2月8日"。今年なら年を省く。
@@ -328,9 +342,7 @@ const famifo = (() => {
     // 持たせて、必ずどこかのストライプに当てる。隙間に当たった場合は次の
     // ストライプが返るが、そこが実際に最初に見える内容なので正しい。
     const anchorY = scroller.scrollTop - prevTop;
-    const at = prev
-      ? visibleWindow(prev, anchorY, anchorY + prev.tileH + prev.gap)
-      : null;
+    const at = prev ? visibleWindow(prev, anchorY, anchorY + prev.tileH + prev.gap) : null;
     const topIndex = at ? at.from : 0;
 
     measure();
@@ -423,14 +435,20 @@ const famifo = (() => {
     e.preventDefault();
     const i = Number(tile.dataset.i);
     if (!Number.isInteger(i)) return; // 通し番号が無いタイルは無視する。
-                                      // NaN は i < 0 も i >= total も満たさず、
-                                      // offset=NaN のリクエストまで素通りする
+    // NaN は i < 0 も i >= total も満たさず、
+    // offset=NaN のリクエストまで素通りする
     open(i).catch(() => {});
   });
 
   box.addEventListener('click', (e) => {
-    if (e.target.closest('.lb-prev')) { show(idx - 1); return; }
-    if (e.target.closest('.lb-next')) { show(idx + 1); return; }
+    if (e.target.closest('.lb-prev')) {
+      show(idx - 1);
+      return;
+    }
+    if (e.target.closest('.lb-next')) {
+      show(idx + 1);
+      return;
+    }
     close();
   });
 
@@ -445,27 +463,35 @@ const famifo = (() => {
   let startY = 0;
   let tracking = false;
 
-  box.addEventListener('touchstart', (e) => {
-    // 2本指はピンチズーム。ブラウザに任せる
-    tracking = e.touches.length === 1;
-    if (!tracking) return;
-    startX = e.touches[0].clientX;
-    startY = e.touches[0].clientY;
-  }, { passive: true });
+  box.addEventListener(
+    'touchstart',
+    (e) => {
+      // 2本指はピンチズーム。ブラウザに任せる
+      tracking = e.touches.length === 1;
+      if (!tracking) return;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+    },
+    { passive: true },
+  );
 
-  box.addEventListener('touchend', (e) => {
-    if (!tracking) return;
-    tracking = false;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - startX;
-    const dy = t.clientY - startY;
+  box.addEventListener(
+    'touchend',
+    (e) => {
+      if (!tracking) return;
+      tracking = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
 
-    if (Math.abs(dx) > SWIPE_X && Math.abs(dx) > Math.abs(dy)) {
-      show(dx < 0 ? idx + 1 : idx - 1);
-    } else if (dy > SWIPE_Y && Math.abs(dy) > Math.abs(dx)) {
-      close();
-    }
-  }, { passive: true });
+      if (Math.abs(dx) > SWIPE_X && Math.abs(dx) > Math.abs(dy)) {
+        show(dx < 0 ? idx + 1 : idx - 1);
+      } else if (dy > SWIPE_Y && Math.abs(dy) > Math.abs(dx)) {
+        close();
+      }
+    },
+    { passive: true },
+  );
 })();
 
 // 日付スクラバー。ドラッグで全期間の任意の位置へ飛ぶ。
@@ -536,7 +562,9 @@ const famifo = (() => {
     bar.setPointerCapture(e.pointerId);
     startDrag(e.clientY);
   });
-  bar.addEventListener('pointermove', (e) => { if (dragging) seek(e.clientY); });
+  bar.addEventListener('pointermove', (e) => {
+    if (dragging) seek(e.clientY);
+  });
   bar.addEventListener('pointerup', endDrag);
   bar.addEventListener('pointercancel', endDrag);
 
