@@ -22,13 +22,14 @@ ARG VERSION=dev
 # 書き忘れた瞬間に写真の共有フォルダへの全権を持つ。
 #
 # Docker はユーザー名では動かせない。scratch には /etc/passwd が無いので
-# uid/gid の数値で指定する。NAS 側で作ったユーザーに合わせるには:
+# uid/gid の数値で指定する。既定値は配置先の NAS で作った famifo ユーザーに
+# 合わせてある。別の環境で使うなら:
 #
 #   ssh nas 'id famifo'            → uid/gid を調べる
-#   docker run --user 1027:100 ... → 実行時に指定（再ビルド不要）
-#   docker build --build-arg UID=1027 --build-arg GID=100 ...  → 焼き込む
-ARG UID=65532
-ARG GID=65532
+#   docker run --user 1000:1000 ... → 実行時に指定（再ビルド不要）
+#   docker build --build-arg UID=1000 --build-arg GID=1000 ...  → 焼き込む
+ARG UID=1029
+ARG GID=100
 
 COPY --from=build /famifo /famifo
 
@@ -55,10 +56,9 @@ EXPOSE 8080
 
 # 既定はマウントだけで動く形。写真は /photos の下に、データは /data に置く。
 #
-#   ssh nas 'sudo mkdir -p /volume1/famifo/data && sudo chown 1027:100 /volume1/famifo/data'
+#   ssh nas 'sudo mkdir -p /volume1/famifo/data && sudo chown 1029:100 /volume1/famifo/data'
 #
 #   docker run -d --restart unless-stopped -p 8080:8080 \
-#     --user 1027:100 \
 #     -v /volume1/photo:/photos:ro \
 #     -v /volume1/famifo/data:/data \
 #     ghcr.io/yendo/famifo-proto
@@ -69,7 +69,6 @@ EXPOSE 8080
 # 写真の置き場所が複数あるなら、-v 1つにつき -dir 1つを明示する。
 #
 #   docker run -d --restart unless-stopped -p 8080:8080 \
-#     --user 1027:100 \
 #     -v /volume1/photo:/photos/main:ro \
 #     -v /mnt/usb:/photos/usb:ro \
 #     -v /volume1/famifo/data:/data \
