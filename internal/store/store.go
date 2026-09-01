@@ -21,14 +21,25 @@ var ErrNotFound = errors.New("photo not found")
 
 // Photo はインデックス上の1枚の写真。
 type Photo struct {
-	ID       string    // パスから導出した安定ID。URLに露出させる
-	Path     string    // ディスク上の絶対パス
-	TakenAt  time.Time // EXIF撮影日時、無ければmtime
-	ModTime  time.Time // ファイルのmtime。再スキャン時の変更検知に使う
-	Size     int64
-	Ext      string // 小文字の拡張子（"." 込み）
-	HasThumb bool   // サムネイルキャッシュが存在するか
+	ID      string    // パスから導出した安定ID。URLに露出させる
+	Path    string    // ディスク上の絶対パス
+	TakenAt time.Time // EXIF撮影日時、無ければmtime
+	ModTime time.Time // ファイルのmtime。再スキャン時の変更検知に使う
+	Size    int64
+	Ext     string // 小文字の拡張子（"." 込み）
+	// ThumbSource はサムネイルの出どころ。消してよいのは自前で作ったものだけなので、
+	// 「あるか」ではなく「どこにあるか」を持つ。
+	ThumbSource ThumbSource
 }
+
+// ThumbSource はサムネイルの出どころ。
+type ThumbSource string
+
+const (
+	ThumbNone   ThumbSource = ""       // サムネイルが無い
+	ThumbFamifo ThumbSource = "famifo" // famifoが生成し、サムネイルキャッシュに置いたもの
+	ThumbSyno   ThumbSource = "eadir"  // Synologyが @eaDir に持っているもの。読むだけで書き換えない
+)
 
 // IDFor はパスから安定したIDを導出する。
 // URLにファイルシステムのパスを露出させないためと、
@@ -49,7 +60,7 @@ CREATE TABLE IF NOT EXISTS photos (
     mod_time  INTEGER NOT NULL,
     size      INTEGER NOT NULL,
     ext       TEXT NOT NULL,
-    has_thumb INTEGER NOT NULL
+    thumb_source TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_photos_order ON photos(taken_at DESC, id DESC);
 `
@@ -76,7 +87,7 @@ func Open(dbPath string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 const upsertSQL = `
-INSERT INTO photos (id, path, taken_at, mod_time, size, ext, has_thumb)
+INSERT INTO photos (id, path, taken_at, mod_time, size, ext, thumb_source)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     path      = excluded.path,
@@ -84,24 +95,24 @@ ON CONFLICT(id) DO UPDATE SET
     mod_time  = excluded.mod_time,
     size      = excluded.size,
     ext       = excluded.ext,
-    has_thumb = excluded.has_thumb`
+    thumb_source = excluded.thumb_source`
 
 // Upsert は写真を登録または更新する。
 func (s *Store) Upsert(ctx context.Context, p Photo) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
-		p.ID, p.Path, p.TakenAt.Unix(), p.ModTime.Unix(), p.Size, p.Ext, p.HasThumb)
+		p.ID, p.Path, p.TakenAt.Unix(), p.ModTime.Unix(), p.Size, p.Ext, p.ThumbSource)
 	if err != nil {
 		return fmt.Errorf("写真を保存できません (%s): %w", p.Path, err)
 	}
 	return nil
 }
 
-const selectCols = `id, path, taken_at, mod_time, size, ext, has_thumb`
+const selectCols = `id, path, taken_at, mod_time, size, ext, thumb_source`
 
 func scanPhoto(row interface{ Scan(...any) error }) (Photo, error) {
 	var p Photo
 	var takenAt, modTime int64
-	if err := row.Scan(&p.ID, &p.Path, &takenAt, &modTime, &p.Size, &p.Ext, &p.HasThumb); err != nil {
+	if err := row.Scan(&p.ID, &p.Path, &takenAt, &modTime, &p.Size, &p.Ext, &p.ThumbSource); err != nil {
 		return Photo{}, err
 	}
 	p.TakenAt = time.Unix(takenAt, 0)
@@ -123,7 +134,7 @@ func (s *Store) GetByID(ctx context.Context, id string) (Photo, error) {
 }
 
 // DeleteByPath はパスで写真を削除し、削除した行を返す。
-// 呼び出し側はサムネイルを消すかどうかの判断に HasThumb を使う。
+// 呼び出し側はサムネイルを消すかどうかの判断に ThumbSource を使う。
 // 該当が無い場合は ok=false を返し、エラーにはしない。
 func (s *Store) DeleteByPath(ctx context.Context, path string) (Photo, bool, error) {
 	row := s.db.QueryRowContext(ctx,

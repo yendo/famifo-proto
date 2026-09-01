@@ -32,8 +32,8 @@ func New(roots []string, st *store.Store, gen *thumb.Generator, log *slog.Logger
 // IndexFile は1ファイルをインデックスに反映する。
 //
 // 対象外の拡張子とディレクトリは黙って無視する（エラーではない）。
-// KindRasterでサムネイルを作れなかった場合はエラーを返し、DBには登録しない。
-// 壊れた画像を登録すると一覧に読み込めない <img> が並んでしまうため。
+// 自前で作るしかないKindRasterでサムネイルを作れなかった場合はエラーを返し、
+// DBには登録しない。壊れた画像を登録すると一覧に読み込めない <img> が並ぶため。
 func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	kind := photo.KindOf(path)
 	if kind == photo.KindUnsupported {
@@ -56,11 +56,17 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 		TakenAt: takenat.Resolve(path, fi.ModTime()),
 	}
 
-	if kind == photo.KindRaster {
+	// Synologyが作ったサムネイルがあれば借りる。デコードもリサイズもせずに済み、
+	// famifoがデコードできないHEICも一覧に出せるようになる。@eaDir は読むだけで、
+	// 書き込みも削除もしない。
+	switch {
+	case thumb.HasSyno(path):
+		p.ThumbSource = store.ThumbSyno
+	case kind == photo.KindRaster:
 		if err := ix.gen.Generate(path, p.ID); err != nil {
 			return err
 		}
-		p.HasThumb = true
+		p.ThumbSource = store.ThumbFamifo
 	}
 
 	return ix.st.Upsert(ctx, p)
@@ -76,7 +82,7 @@ func (ix *Indexer) RemoveFile(ctx context.Context, path string) error {
 	if !ok {
 		return nil
 	}
-	if p.HasThumb {
+	if p.ThumbSource == store.ThumbFamifo {
 		if err := ix.gen.Remove(p.ID); err != nil {
 			// DBからは消えているので、キャッシュの消し残しは致命的ではない
 			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID, "err", err)
@@ -95,7 +101,7 @@ func (ix *Indexer) RemoveTree(ctx context.Context, dir string) error {
 		return err
 	}
 	for _, p := range photos {
-		if !p.HasThumb {
+		if p.ThumbSource != store.ThumbFamifo {
 			continue
 		}
 		if err := ix.gen.Remove(p.ID); err != nil {

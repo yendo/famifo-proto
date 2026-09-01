@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"path/filepath"
 	"strconv"
 
 	"github.com/yendo/famifo-proto/internal/photo"
@@ -61,7 +60,7 @@ func (s *Server) buildRange(r *http.Request, offset, limit int) (itemsView, erro
 			ThumbURL: "/photo/" + p.ID,
 			Date:     p.TakenAt.Format("2006-01-02"),
 		}
-		if p.HasThumb {
+		if p.ThumbSource != store.ThumbNone {
 			pv.ThumbURL = "/thumb/" + p.ID
 		}
 		v.Photos = append(v.Photos, pv)
@@ -151,18 +150,21 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleThumb はサムネイルを配信する。
+// handleThumb はサムネイルを配信する。出どころによって置き場所が違う。
 func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.lookup(w, r)
 	if !ok {
 		return
 	}
-	if !p.HasThumb {
-		// HEICなどサムネイルを作らないフォーマット。原本を使うべき。
+	switch p.ThumbSource {
+	case store.ThumbFamifo:
+		http.ServeFile(w, r, thumb.CachePath(s.thumbDir, p.ID))
+	case store.ThumbSyno:
+		http.ServeFile(w, r, thumb.SynoPath(p.Path))
+	default:
+		// 借りるものも作れるものも無い写真。原本を使うべき。
 		http.NotFound(w, r)
-		return
 	}
-	http.ServeFile(w, r, filepath.Join(s.thumbDir, thumb.RelPath(p.ID)))
 }
 
 // handlePhoto は原本を配信する。

@@ -318,7 +318,10 @@ func seedCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
 			}
 
 			id := store.IDFor(path)
-			hasThumb := gen.Generate(path, id) == nil
+			thumbSource := store.ThumbFamifo
+			if gen.Generate(path, id) != nil {
+				thumbSource = store.ThumbNone
+			}
 
 			// 分単位で戻す。最大30枚なので日をまたがない。
 			takenAt := corpusBase.AddDate(0, 0, -d).Add(-time.Duration(k) * time.Minute)
@@ -328,7 +331,7 @@ func seedCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
 			}
 			p := store.Photo{
 				ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
-				Size: fi.Size(), Ext: ".jpg", HasThumb: hasThumb,
+				Size: fi.Size(), Ext: ".jpg", ThumbSource: thumbSource,
 			}
 			if err := st.Upsert(ctx, p); err != nil {
 				return fmt.Errorf("写真を登録できません (%s): %w", name, err)

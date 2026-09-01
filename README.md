@@ -14,9 +14,18 @@ Indexes photos on a local disk and serves them as a browsable gallery to any bro
 | Extension | Thumbnail | Notes |
 |---|---|---|
 | `.jpg` `.jpeg` `.png` `.gif` `.webp` | generated | |
-| `.heic` `.heif` | not generated | The original is served as-is, so it will not display outside Safari |
+| `.heic` `.heif` | borrowed from Synology if one is there | Otherwise the original is served as-is, so it will not display outside Safari |
 
 Video is out of scope.
+
+### Synology thumbnails
+
+On a Synology NAS the thumbnails Synology Photos already made are served directly from
+`<photo directory>/@eaDir/<photo name>/SYNOPHOTO_THUMB_M.jpg` instead of generating new ones.
+Nothing is copied, decoding is skipped entirely, and HEIC photos get a thumbnail that famifo
+cannot produce on its own.
+
+`@eaDir` is only ever read. famifo never writes to or deletes anything inside it.
 
 ## Build
 
