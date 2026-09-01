@@ -742,7 +742,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 		const win = document.querySelector('#window');
 		new MutationObserver((records) => {
 			for (const r of records) {
-				// render() は innerHTML を差し替えるので、必ず removedNodes を伴う。
+				// 貼り付け範囲が進むと、#window の直下から日カードが出入りする。
 				// タイルの追加のみ（あり得ないが）を貼り替えと数えないため区別する。
 				// break しているので、1回のコールバックに複数回分の render の記録が
 				// まとまって届いた場合は1回としか数えない。つまりこの数は下限。
@@ -838,7 +838,13 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 
 	// ここが本命の検出器。貼り替えが起きてよいのは、貼り付ける内容が
 	// 変わったときだけ。範囲が1塊ぶん進んだのだから、貼り替えはちょうど1回。
-	// 同じ内容の貼り直しが挟まれば2回以上になる。
+	//
+	// 限界: render() が innerHTML の全置換をやめて差分適用になったため、
+	// 「同じ内容での貼り直し」はDOMを何も変えず、この計測器には現れない。
+	// つまり下のガードの回帰は、いまはここでは捕まらない（差分適用では
+	// 貼り直しても実害がほぼ無いので、そのぶん危険度も下がっている）。
+	// 捕まえたければ、data-i の書き戻し（render の最後で必ず起きる）を
+	// attributeFilter で観測する形に変える必要がある。
 	// 絶対回数ではなく「前後の差」を見るので、下の合体（後述）の影響を受けない。
 	// ガードが無いときの余分な貼り替えは ResizeObserver 経由で、
 	// レンダリングのステップ境界を跨いで別のコールバックとして配送されるため、
@@ -863,6 +869,126 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 		"塊境界を跨ぐスクロールで%d回も貼り替えている（貼り替えの暴走。"+
 			"ResizeObserverのフィードバックループの疑い）",
 		afterScroll)
+}
+
+// --- Task: TestTilesSurviveAPlainScroll ---
+//
+// 1行スクロールしたあとも、引き続き見えている写真のタイルが「同じDOM要素」の
+// まま残っているかを見る。
+//
+// iPhone / iPad で、スクロール中に写真の表示領域全体が一瞬真っ黒になる問題の
+// 再発防止テスト。原因は render() が可視範囲のDOMを毎回まるごと作り直して
+// いたこと。WebKitは内容と寸法が同時に変わった合成レイヤーのバッキングストアを
+// 捨てて描き直すため、再ペイントが間に合わないフレームで背景色(--bg)が露出する。
+//
+// 症状そのもの（黒フレーム）はBlinkでは再現しない。Blinkは新しいタイルの
+// ラスタライズが終わるまで古い内容を描き続けるためである。したがってヘッドレス
+// Chromeで観測できるのは症状ではなく原因のほうで、このテストは「残っている写真の
+// 要素が使い回されているか」だけを見る。
+//
+// 同一性の目印にはDOM要素のエキスパンドプロパティを使う。属性ではないので
+// HTMLの文字列には現れず、要素が作り直されれば必ず消える。写真の照合には
+// data-full（写真ごとに一意なURL）を使う。id属性の付け方にテストが依存しない
+// ようにするため。
+func TestTilesSurviveAPlainScroll(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	// このRun群の中でタイムアウト付きに待つ箇所の合計:
+	//   初回描画待ち(waitForTiles 10s) + 貼り付け範囲の静定待ち(Poll 10s) +
+	//   スクロール後の静定待ち(Poll 10s) = 30s。
+	// Evaluateなど残りの実行時間の余裕を見て60秒とする。
+	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	// 深い位置へ飛ばした直後は塊の取得が続くため、範囲が落ち着く前に目印を
+	// 付けても意味がない。範囲が3回連続で変わらないことを静定とみなす。
+	// 最初の塊を超えて進んだこと(from >= chunkSize)も併せて要求する。
+	// 取得待ちで render() が早期returnし、pastedが初期値のまま固まっている
+	// ケースと区別できないため。
+	const rangeSettledJS = `(() => {
+		const r = famifo.pastedRange();
+		const k = r.from + ':' + r.to;
+		if (window.__k !== k) { window.__k = k; window.__n = 0; return false; }
+		return r.from >= famifo.chunkSize && (window.__n = (window.__n || 0) + 1) >= 3;
+	})()`
+
+	// いま貼られているタイルに目印を付け、写っている写真を控える。
+	const markJS = `(() => {
+		const tiles = [...document.querySelectorAll('#window .tile')];
+		window.__before = tiles.map((t) => t.dataset.full);
+		for (const t of tiles) t.__kept = true;
+		window.__pastedFrom = famifo.pastedRange().from;
+		return tiles.length;
+	})()`
+
+	const scrollOneRowJS = `(() => {
+		const win = document.querySelector('#window');
+		const r = win.querySelector('.tile').getBoundingClientRect();
+		const gap = parseFloat(getComputedStyle(win).rowGap) || 0;
+		famifo.scroller.scrollTop += r.height + gap;
+	})()`
+
+	// 貼り付け範囲が実際に動き、そのうえで落ち着くまで待つ。動いたことまで
+	// 見ないと、まだ貼り替えが起きていない状態で使い回しを数えてしまい、
+	// 実装が壊れていても全件が「残っている」と出て素通りする。
+	const movedAndSettledJS = `(() => {
+		const r = famifo.pastedRange();
+		if (r.from === window.__pastedFrom) return false;
+		const k = r.from + ':' + r.to;
+		if (window.__k2 !== k) { window.__k2 = k; window.__n2 = 0; return false; }
+		return (window.__n2 = (window.__n2 || 0) + 1) >= 3;
+	})()`
+
+	// スクロール後も見えている写真について、要素が使い回されたかを数える。
+	const countJS = `(() => {
+		const before = new Set(window.__before);
+		const tiles = [...document.querySelectorAll('#window .tile')];
+		let common = 0;
+		let reused = 0;
+		for (const t of tiles) {
+			if (!before.has(t.dataset.full)) continue;
+			common++;
+			if (t.__kept) reused++;
+		}
+		return { Common: common, Reused: reused, Total: tiles.length };
+	})()`
+
+	var marked int
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1600, 900),
+		chromedp.Navigate(baseURL),
+		waitForTiles(10*time.Second),
+		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
+		chromedp.Poll(rangeSettledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Evaluate(markJS, &marked),
+	)
+	require.NoError(t, err)
+	require.Greater(t, marked, 0, "目印を付ける時点でタイルが1枚も貼られていない")
+
+	var got struct {
+		Common, Reused, Total int
+	}
+	err = chromedp.Run(rctx,
+		chromedp.Evaluate(scrollOneRowJS, nil),
+		chromedp.Poll(movedAndSettledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Evaluate(countJS, &got),
+	)
+	require.NoError(t, err)
+	t.Logf("PROBE: 目印を付けたタイル=%d枚 スクロール後のタイル=%d枚 "+
+		"うち引き続き見えている写真=%d枚 要素が残ったもの=%d枚",
+		marked, got.Total, got.Common, got.Reused)
+
+	// 前提の確認。1行進んだだけなら大半の写真は見えたままのはず。ここが0なら
+	// 貼り付け範囲が丸ごと入れ替わっており、使い回しの有無を問う場面に
+	// 到達していない。
+	require.Greater(t, got.Common, 0,
+		"1行スクロールしたら、引き続き見えている写真が1枚も無くなった。このテストの前提が崩れている")
+
+	require.Equalf(t, got.Common, got.Reused,
+		"引き続き見えている写真%d枚のうち、DOM要素が使い回されたのは%d枚だけだった。"+
+			"render() が可視範囲のDOMを作り直している疑い"+
+			"（WebKitで写真の表示領域が一瞬真っ黒になる原因）",
+		got.Common, got.Reused)
 }
 
 // --- Task: TestLightboxCrossesChunkBoundary ---

@@ -290,7 +290,14 @@ const famifo = (() => {
 
     renderedKey = key;
     pasted = { from, to };
-    win.innerHTML = parts.join('');
+    // 全置換ではなく差分で当てる。作り直すと、中身も寸法も同時に変わった
+    // 合成レイヤーになる。WebKitはこのときバッキングストアを捨てて描き直す
+    // ため、再ペイントが間に合わないフレームで背景色が露出する（iPhone /
+    // iPad でスクロール中に表示領域全体が一瞬真っ黒になる）。Blinkは新しい
+    // ラスタが揃うまで古い内容を描き続けるので、そちらでは表面化しない。
+    // 残る写真の要素をそのまま使い回せば、その状況自体を作らない。
+    // タイルとカードの id 属性が対応付けの手がかりになる。
+    Idiomorph.morph(win, parts.join(''), { morphStyle: 'innerHTML' });
     win.style.transform = `translateY(${w.pasteY}px)`;
 
     // 各タイルに通し番号を書く。切り出す範囲は連続しているのでDOM順と一致する。
@@ -313,7 +320,7 @@ const famifo = (() => {
     const label =
       piece.r0 > 0 || !head ? '' : `<div class="daylabel">${formatDay(head.date)}</div>`;
     return (
-      `<div class="daycard" style="grid-column:span ${piece.e.span};` +
+      `<div class="daycard" id="d-${piece.e.d}" style="grid-column:span ${piece.e.span};` +
       `grid-template-columns:repeat(${piece.e.span},1fr)">${label}${tiles.join('')}</div>`
     );
   }
