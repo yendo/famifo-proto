@@ -69,6 +69,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 // handle は1つのfsnotifyイベントを処理する。
 func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[string]time.Time) {
+	if inExcludedDir(ev.Name) {
+		return
+	}
 	switch {
 	case ev.Has(fsnotify.Remove), ev.Has(fsnotify.Rename):
 		// Renameは「この名前から消えた」を意味する。移動先は別途Createで届く。
@@ -146,6 +149,12 @@ func (w *Watcher) addTree(root string) error {
 		if !d.IsDir() {
 			return nil
 		}
+		// 中のイベントはどのみち無視するので、監視枠を消費しない。
+		// inotifyは再帰監視をしないぶん1ディレクトリ=1枠で、@eaDirは
+		// 写真1枚につき1つできる。max_user_watches(既定8192)を容易に超える。
+		if excludedDirs[d.Name()] {
+			return fs.SkipDir
+		}
 		if err := w.fsw.Add(path); err != nil {
 			w.log.Warn("監視対象を追加できません", "path", path, "err", err)
 		}
@@ -157,7 +166,16 @@ func (w *Watcher) addTree(root string) error {
 func (w *Watcher) enqueueTree(root string, pending map[string]time.Time) {
 	now := time.Now()
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !photo.IsSupported(path) {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if excludedDirs[d.Name()] {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !photo.IsSupported(path) {
 			return nil
 		}
 		pending[path] = now

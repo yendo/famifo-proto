@@ -17,6 +17,28 @@ type Stats struct {
 	Skipped   int // 破損・権限エラーで飛ばした枚数
 }
 
+// excludedDirs はNAS側が作る管理用ディレクトリ。中身は写真と同じ拡張子を持つが
+// 写真ではないので、降りると1枚が複数枚に見える。
+var excludedDirs = map[string]bool{
+	// Synologyは写真1枚につき @eaDir/<ファイル名>/SYNOPHOTO_THUMB_*.jpg を作る。
+	// EXIFが無いためmtimeに落ち、生成した日に大量の重複が積み上がる。
+	"@eaDir": true,
+	// Synologyのゴミ箱。削除した写真が一覧に復活する。
+	"#recycle": true,
+}
+
+// inExcludedDir はパスの途中に excludedDirs のディレクトリが挟まっているかを報告する。
+// 走査は fs.SkipDir で降りずに済むが、fsnotify のイベントは個々のパスで届くため
+// こちらで判定する必要がある。
+func inExcludedDir(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if excludedDirs[part] {
+			return true
+		}
+	}
+	return false
+}
+
 // FullScan はルートディレクトリを走査してインデックスをディスクの実態に合わせる。
 //
 // fsnotifyはアプリが停止していた間の変更を検知できないため、起動のたびにこれを
@@ -48,7 +70,13 @@ func (ix *Indexer) FullScan(ctx context.Context) (Stats, error) {
 				st.Skipped++
 				return nil
 			}
-			if d.IsDir() || !photo.IsSupported(path) {
+			if d.IsDir() {
+				if excludedDirs[d.Name()] {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if !photo.IsSupported(path) {
 				return nil
 			}
 			found[root]++
