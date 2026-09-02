@@ -1,227 +1,228 @@
 :root {
-  --bg: #111;
-  --fg: #eee;
-  --tile-bg: #222;
-  --gap: 4px;
-  /* ヘッダーの高さ。ノッチ端末では safe-area の分だけ伸びる。
+	--bg: #111;
+	--fg: #eee;
+	--tile-bg: #222;
+	--gap: 4px;
+	/* ヘッダーの高さ。ノッチ端末では safe-area の分だけ伸びる。
      スクラバーの開始位置がこれに追従する必要があるため1箇所で定義する。 */
-  --topbar-h: calc(max(12px, env(safe-area-inset-top)) + 32px);
-  /* 日付ラベルの高さ。JSがレイアウト計算に使うため、定義はここ1箇所だけ。 */
-  --label-h: 20px;
+	--topbar-h: calc(max(12px, env(safe-area-inset-top)) + 32px);
+	/* 日付ラベルの高さ。JSがレイアウト計算に使うため、定義はここ1箇所だけ。 */
+	--label-h: 20px;
 }
 
 * {
-  box-sizing: border-box;
+	box-sizing: border-box;
 }
 
 /* ブラウザ純正のスクロールバーは出さない。スクロール位置の表示も操作も
    .scrubber が引き受ける。2本並ぶとトラックの起点が違って上下にずれる。
    スクロール自体（ホイール・キー・タッチ）は効いたまま。 */
 html {
-  scrollbar-width: none;
+	scrollbar-width: none;
 } /* Firefox 64+, Chrome 121+ */
 html::-webkit-scrollbar {
-  display: none;
+	display: none;
 } /* 旧 Chrome / Safari */
 
 body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;
-  -webkit-text-size-adjust: 100%;
+	margin: 0;
+	background: var(--bg);
+	color: var(--fg);
+	font-family:
+		system-ui, -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;
+	-webkit-text-size-adjust: 100%;
 }
 
 /* ライトボックス表示中に背後の一覧がスクロールしないようにする */
 body.locked {
-  overflow: hidden;
+	overflow: hidden;
 }
 
 .topbar {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 12px 16px;
-  padding-top: max(12px, env(safe-area-inset-top));
-  background: rgba(17, 17, 17, 0.9);
-  backdrop-filter: blur(8px);
-  min-height: var(--topbar-h);
-  box-sizing: border-box;
+	position: sticky;
+	top: 0;
+	z-index: 5;
+	display: flex;
+	align-items: baseline;
+	gap: 12px;
+	padding: 12px 16px;
+	padding-top: max(12px, env(safe-area-inset-top));
+	background: rgba(17, 17, 17, 0.9);
+	backdrop-filter: blur(8px);
+	min-height: var(--topbar-h);
+	box-sizing: border-box;
 }
 .topbar h1 {
-  margin: 0;
-  font-size: 1rem;
-  letter-spacing: 0.08em;
+	margin: 0;
+	font-size: 1rem;
+	letter-spacing: 0.08em;
 }
 .count {
-  font-size: 0.8rem;
-  opacity: 0.6;
+	font-size: 0.8rem;
+	opacity: 0.6;
 }
 
 /* スクロール領域。高さは #spacer が決める */
 .gallery {
-  padding: var(--gap);
+	padding: var(--gap);
 }
 
 /* 全枚数分の高さを持つ箱。ブラウザのスクロールバーはこれを見る */
 #spacer {
-  position: relative;
+	position: relative;
 }
 
 /* 可視範囲のタイルだけを並べる。位置は JS が translateY で動かす */
 #window {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
 }
 /* 列数を測るためだけの空のグリッド。#window から測ると、直前のレイアウトの
    カードが持つ grid-column: span N がトラック列を押し広げてしまい、本当の
    列数が読めない。子を持たないこの要素なら中身に左右されない。 */
 #colprobe {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 0;
-  visibility: hidden;
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 0;
+	visibility: hidden;
 }
 #window,
 #colprobe {
-  display: grid;
-  gap: var(--gap);
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+	display: grid;
+	gap: var(--gap);
+	grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
 }
 @media (min-width: 700px) {
-  #window,
-  #colprobe {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  }
+	#window,
+	#colprobe {
+		grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+	}
 }
 @media (min-width: 1100px) {
-  #window,
-  #colprobe {
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  }
+	#window,
+	#colprobe {
+		grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+	}
 }
 
 /* 日ごとのカード。占める列数はJSがインラインで書く（min(枚数, 列数)）。
    repeat(var(--n), 1fr) はCSSの仕様上書けないため custom property に寄せられない。
    内側は外側と同じgapの等幅グリッドなので、中の1枚は外側の1列と一致する。 */
 .daycard {
-  display: grid;
-  gap: var(--gap);
+	display: grid;
+	gap: var(--gap);
 }
 
 .daylabel {
-  grid-column: 1 / -1; /* 全幅を占め、以降のタイルを次の段へ送る */
-  height: var(--label-h);
-  font-size: 0.75rem;
-  line-height: var(--label-h);
-  opacity: 0.65;
+	grid-column: 1 / -1; /* 全幅を占め、以降のタイルを次の段へ送る */
+	height: var(--label-h);
+	font-size: 0.75rem;
+	line-height: var(--label-h);
+	opacity: 0.65;
 }
 
 .tile {
-  display: block;
-  aspect-ratio: 1;
-  overflow: hidden;
-  border-radius: 2px;
-  background: var(--tile-bg);
+	display: block;
+	aspect-ratio: 1;
+	overflow: hidden;
+	border-radius: 2px;
+	background: var(--tile-bg);
 }
 .tile img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
 }
 
 .lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #000;
-  /* ピンチズームはブラウザに任せ、左右スワイプは自前で拾う */
-  touch-action: pinch-zoom;
+	position: fixed;
+	inset: 0;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #000;
+	/* ピンチズームはブラウザに任せ、左右スワイプは自前で拾う */
+	touch-action: pinch-zoom;
 }
 .lightbox[hidden] {
-  display: none;
+	display: none;
 }
 .lightbox img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
 }
 
 .lb-nav {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 22%;
-  border: 0;
-  background: transparent;
-  color: transparent;
-  font-size: 2rem;
-  cursor: pointer;
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 22%;
+	border: 0;
+	background: transparent;
+	color: transparent;
+	font-size: 2rem;
+	cursor: pointer;
 }
 .lb-prev {
-  left: 0;
+	left: 0;
 }
 .lb-next {
-  right: 0;
+	right: 0;
 }
 /* タッチ端末では矢印を出さない（スワイプで操作するため） */
 @media (hover: hover) {
-  .lb-nav:hover {
-    color: rgba(255, 255, 255, 0.7);
-  }
+	.lb-nav:hover {
+		color: rgba(255, 255, 255, 0.7);
+	}
 }
 
 /* 日付スクラバー。スクロール中だけ現れる */
 .scrubber {
-  position: fixed;
-  top: var(--topbar-h);
-  right: 0;
-  bottom: 0;
-  width: 32px;
-  z-index: 6;
-  touch-action: none;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
+	position: fixed;
+	top: var(--topbar-h);
+	right: 0;
+	bottom: 0;
+	width: 32px;
+	z-index: 6;
+	touch-action: none;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.2s;
 }
 .scrubber[hidden] {
-  display: none;
+	display: none;
 }
 .scrubber.visible {
-  opacity: 1;
-  pointer-events: auto;
+	opacity: 1;
+	pointer-events: auto;
 }
 
 .scrub-thumb {
-  position: absolute;
-  right: 4px;
-  width: 24px;
-  height: 40px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.35);
+	position: absolute;
+	right: 4px;
+	width: 24px;
+	height: 40px;
+	border-radius: 12px;
+	background: rgba(255, 255, 255, 0.35);
 }
 
 .scrub-label {
-  position: absolute;
-  right: 36px;
-  padding: 4px 10px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.85);
-  color: var(--fg);
-  font-size: 0.85rem;
-  white-space: nowrap;
+	position: absolute;
+	right: 36px;
+	padding: 4px 10px;
+	border-radius: 4px;
+	background: rgba(0, 0, 0, 0.85);
+	color: var(--fg);
+	font-size: 0.85rem;
+	white-space: nowrap;
 }
 .scrub-label[hidden] {
-  display: none;
+	display: none;
 }
