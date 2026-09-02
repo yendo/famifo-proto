@@ -44,19 +44,31 @@ func NewGenerator(dir string, size int) (*Generator, error) {
 // eaDir はSynologyがサムネイルなどを置く管理用ディレクトリの名前。
 const eaDir = "@eaDir"
 
-// synoThumbName は借りるサムネイルのファイル名。Mは短辺320px（4:3なら長辺427px）で、
-// famifo自身が作る長辺480pxよりわずかに小さい。XLは長辺1707px・約1MBあり一覧には過大。
+// synoThumbName は一覧に借りるサムネイルのファイル名。Mは短辺320px（4:3なら
+// 長辺427px）で、famifo自身が作る長辺480pxよりわずかに小さい。
 const synoThumbName = "SYNOPHOTO_THUMB_M.jpg"
+
+// synoLargeName は拡大表示に借りるJPEGのファイル名。長辺1707px・約1MBで、
+// 一覧には過大だが1枚だけ見せる場面では妥当な大きさになる。
+const synoLargeName = "SYNOPHOTO_THUMB_XL.jpg"
 
 // CachePath は自前で生成したサムネイルのパスを返す。
 // 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
 func CachePath(dir, id string) string { return filepath.Join(dir, id[:2], id+".jpg") }
 
-// SynoPath はSynologyがsrcPathの写真用に持つサムネイルのパスを返す。
-// 実在するとは限らない。あるかどうかは HasSyno で確かめる。
-func SynoPath(srcPath string) string {
-	return filepath.Join(filepath.Dir(srcPath), eaDir, filepath.Base(srcPath), synoThumbName)
+// synoPath は @eaDir の中の1ファイルのパスを組み立てる。
+func synoPath(srcPath, name string) string {
+	return filepath.Join(filepath.Dir(srcPath), eaDir, filepath.Base(srcPath), name)
 }
+
+// SynoThumbPath はSynologyがsrcPathの写真用に持つ一覧用サムネイルのパスを返す。
+// 実在するとは限らない。あるかどうかは HasSyno で確かめる。
+func SynoThumbPath(srcPath string) string { return synoPath(srcPath, synoThumbName) }
+
+// SynoLargePath はSynologyがsrcPathの写真用に持つ拡大表示用JPEGのパスを返す。
+// SynoThumbPath と同じディレクトリを指す。存在は確かめない。MとXLは同じ生成器が
+// 一緒に書くため、Mがあることを確かめてあればXLもあるものとして扱う。
+func SynoLargePath(srcPath string) string { return synoPath(srcPath, synoLargeName) }
 
 // HasSyno は借りられるサムネイルがあるかを報告する。
 //
@@ -64,7 +76,7 @@ func SynoPath(srcPath string) string {
 // 違うので存在確認だけで弾けるが、手で消したあとに空の .jpg が残るような状況も
 // あるため、通常ファイルかつ中身があることまで見る。
 func HasSyno(srcPath string) bool {
-	fi, err := os.Stat(SynoPath(srcPath))
+	fi, err := os.Stat(SynoThumbPath(srcPath))
 	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
 }
 

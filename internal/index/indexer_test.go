@@ -151,7 +151,7 @@ func TestRemoveFileIsQuietForUnknownPath(t *testing.T) {
 // writeSynoThumb は srcPath の写真用のサムネイルを @eaDir に置く。
 func writeSynoThumb(t *testing.T, srcPath string) string {
 	t.Helper()
-	out := thumb.SynoPath(srcPath)
+	out := thumb.SynoThumbPath(srcPath)
 	writeTestJPEG(t, filepath.Dir(out), filepath.Base(out), 20, 10)
 	return out
 }
@@ -189,7 +189,7 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 	f := newFixture(t)
 	path := filepath.Join(f.root, "a.heic")
 	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
-	fail := filepath.Join(filepath.Dir(thumb.SynoPath(path)), "SYNOPHOTO_THUMB_M.fail")
+	fail := filepath.Join(filepath.Dir(thumb.SynoThumbPath(path)), "SYNOPHOTO_THUMB_M.fail")
 	require.NoError(t, os.MkdirAll(filepath.Dir(fail), 0o755))
 	require.NoError(t, os.WriteFile(fail, nil, 0o644))
 

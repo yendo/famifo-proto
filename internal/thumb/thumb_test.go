@@ -56,16 +56,22 @@ func TestCachePathShardsByFirstTwoChars(t *testing.T) {
 		CachePath("/data/thumbs", testID))
 }
 
-func TestSynoPathPointsAtTheMediumThumbnail(t *testing.T) {
+func TestSynoThumbPathPointsAtTheMediumThumbnail(t *testing.T) {
 	require.Equal(t,
 		"/photos/2026-08-16/@eaDir/IMG_0428.HEIC/SYNOPHOTO_THUMB_M.jpg",
-		SynoPath("/photos/2026-08-16/IMG_0428.HEIC"))
+		SynoThumbPath("/photos/2026-08-16/IMG_0428.HEIC"))
+}
+
+func TestSynoLargePathPointsAtTheXLThumbnail(t *testing.T) {
+	require.Equal(t,
+		"/photos/2026-08-16/@eaDir/IMG_0428.HEIC/SYNOPHOTO_THUMB_XL.jpg",
+		SynoLargePath("/photos/2026-08-16/IMG_0428.HEIC"))
 }
 
 func TestHasSynoFindsTheThumbnailSynologyLeftBehind(t *testing.T) {
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.heic", 40, 20) // 中身は問わない。存在だけを見る
-	writeImage(t, mkdirAll(t, filepath.Dir(SynoPath(src))), "SYNOPHOTO_THUMB_M.jpg", 20, 10)
+	writeImage(t, mkdirAll(t, filepath.Dir(SynoThumbPath(src))), "SYNOPHOTO_THUMB_M.jpg", 20, 10)
 
 	require.True(t, HasSyno(src))
 }
@@ -80,7 +86,7 @@ func TestHasSynoIsFalseWithoutEaDir(t *testing.T) {
 func TestHasSynoIsFalseWhenOnlyAFailMarkerIsThere(t *testing.T) {
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.heic", 40, 20)
-	eaDir := mkdirAll(t, filepath.Dir(SynoPath(src)))
+	eaDir := mkdirAll(t, filepath.Dir(SynoThumbPath(src)))
 	require.NoError(t, os.WriteFile(filepath.Join(eaDir, "SYNOPHOTO_THUMB_M.fail"), nil, 0o644))
 
 	require.False(t, HasSyno(src))
@@ -90,7 +96,7 @@ func TestHasSynoIsFalseWhenOnlyAFailMarkerIsThere(t *testing.T) {
 func TestHasSynoIsFalseForAnEmptyThumbnail(t *testing.T) {
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.heic", 40, 20)
-	eaDir := mkdirAll(t, filepath.Dir(SynoPath(src)))
+	eaDir := mkdirAll(t, filepath.Dir(SynoThumbPath(src)))
 	require.NoError(t, os.WriteFile(filepath.Join(eaDir, "SYNOPHOTO_THUMB_M.jpg"), nil, 0o644))
 
 	require.False(t, HasSyno(src))

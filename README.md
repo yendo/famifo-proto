@@ -14,7 +14,7 @@ Indexes photos on a local disk and serves them as a browsable gallery to any bro
 | Extension | Thumbnail | Notes |
 |---|---|---|
 | `.jpg` `.jpeg` `.png` `.gif` `.webp` | generated | |
-| `.heic` `.heif` | borrowed from Synology if one is there | Otherwise the original is served as-is, so it will not display outside Safari |
+| `.heic` `.heif` | borrowed from Synology if one is there | Synology's large JPEG is served in place of the original, so these display outside Safari too. With nothing to borrow the original is served as-is and only Safari shows it |
 
 Video is out of scope.
 
@@ -24,6 +24,12 @@ On a Synology NAS the thumbnails Synology Photos already made are served directl
 `<photo directory>/@eaDir/<photo name>/SYNOPHOTO_THUMB_M.jpg` instead of generating new ones.
 Nothing is copied, decoding is skipped entirely, and HEIC photos get a thumbnail that famifo
 cannot produce on its own.
+
+Enlarging a HEIC serves `SYNOPHOTO_THUMB_XL.jpg` (1707px on the long edge) from that same
+directory instead of the original. famifo cannot decode HEIC and no browser but Safari will
+display it, so the borrowed JPEG is what makes those photos viewable on Android and on a PC.
+Safari gives up some resolution in exchange. A HEIC with nothing to borrow still gets its
+original.
 
 `@eaDir` is only ever read. famifo never writes to or deletes anything inside it.
 
