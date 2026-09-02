@@ -58,7 +58,7 @@ func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, src 
 	case store.ThumbFamifo:
 		writeFileAt(t, thumb.CachePath(f.thumbDir, p.ID), "thumb-"+name)
 	case store.ThumbSyno:
-		writeFileAt(t, thumb.SynoPath(path), "eadir-"+name)
+		writeFileAt(t, thumb.SynoThumbPath(path), "eadir-"+name)
 	}
 	return p
 }

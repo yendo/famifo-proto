@@ -52,9 +52,9 @@ const synoThumbName = "SYNOPHOTO_THUMB_M.jpg"
 // 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
 func CachePath(dir, id string) string { return filepath.Join(dir, id[:2], id+".jpg") }
 
-// SynoPath はSynologyがsrcPathの写真用に持つサムネイルのパスを返す。
+// SynoThumbPath はSynologyがsrcPathの写真用に持つ一覧用サムネイルのパスを返す。
 // 実在するとは限らない。あるかどうかは HasSyno で確かめる。
-func SynoPath(srcPath string) string {
+func SynoThumbPath(srcPath string) string {
 	return filepath.Join(filepath.Dir(srcPath), eaDir, filepath.Base(srcPath), synoThumbName)
 }
 
@@ -64,7 +64,7 @@ func SynoPath(srcPath string) string {
 // 違うので存在確認だけで弾けるが、手で消したあとに空の .jpg が残るような状況も
 // あるため、通常ファイルかつ中身があることまで見る。
 func HasSyno(srcPath string) bool {
-	fi, err := os.Stat(SynoPath(srcPath))
+	fi, err := os.Stat(SynoThumbPath(srcPath))
 	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
 }
 

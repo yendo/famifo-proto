@@ -160,7 +160,7 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	case store.ThumbFamifo:
 		http.ServeFile(w, r, thumb.CachePath(s.thumbDir, p.ID))
 	case store.ThumbSyno:
-		http.ServeFile(w, r, thumb.SynoPath(p.Path))
+		http.ServeFile(w, r, thumb.SynoThumbPath(p.Path))
 	default:
 		// 借りるものも作れるものも無い写真。原本を使うべき。
 		http.NotFound(w, r)
