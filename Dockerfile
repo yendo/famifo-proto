@@ -1,4 +1,4 @@
-FROM golang:1.25 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 
 # 依存を先に取る。ソースを変えただけでダウンロードし直さないため。
