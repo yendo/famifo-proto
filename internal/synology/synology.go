@@ -7,6 +7,7 @@ package synology
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // eaDir はSynologyがサムネイルなどを置く管理用ディレクトリの名前。
@@ -42,4 +43,29 @@ func LargePath(srcPath string) string { return entryPath(srcPath, largeName) }
 func HasThumb(srcPath string) bool {
 	fi, err := os.Stat(ThumbPath(srcPath))
 	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
+}
+
+// managedDirs はSynologyが写真ディレクトリの中に作る管理用ディレクトリ。
+// 中身は写真と同じ拡張子を持つが写真ではないので、降りると1枚が複数枚に見える。
+var managedDirs = map[string]bool{
+	// 写真1枚につき @eaDir/<ファイル名>/SYNOPHOTO_THUMB_*.jpg を作る。
+	// EXIFが無いためmtimeに落ち、生成した日に大量の重複が積み上がる。
+	eaDir: true,
+	// Synologyのゴミ箱。削除した写真が一覧に復活する。
+	"#recycle": true,
+}
+
+// IsManagedDir はディレクトリ名が走査対象外かを報告する。
+func IsManagedDir(name string) bool { return managedDirs[name] }
+
+// InManagedDir はパスの途中に管理用ディレクトリが挟まっているかを報告する。
+// 走査は fs.SkipDir で降りずに済むが、fsnotify のイベントは個々のパスで
+// 届くためこちらで判定する必要がある。
+func InManagedDir(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if managedDirs[part] {
+			return true
+		}
+	}
+	return false
 }

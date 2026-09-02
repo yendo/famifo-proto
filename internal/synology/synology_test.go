@@ -61,3 +61,17 @@ func TestHasThumbIsFalseForAnEmptyThumbnail(t *testing.T) {
 
 	require.False(t, HasThumb(src))
 }
+
+func TestIsManagedDirCoversSynologysOwnDirectories(t *testing.T) {
+	require.True(t, IsManagedDir("@eaDir"))
+	require.True(t, IsManagedDir("#recycle"))
+	require.False(t, IsManagedDir("2026-08-16"))
+}
+
+// 走査は fs.SkipDir で降りずに済むが、fsnotify のイベントは個々のパスで
+// 届くため、途中に挟まっているかを見る必要がある。
+func TestInManagedDirFindsTheDirectoryAnywhereInThePath(t *testing.T) {
+	require.True(t, InManagedDir("/photos/@eaDir/IMG_0001.jpg/SYNOPHOTO_THUMB_M.jpg"))
+	require.True(t, InManagedDir("/photos/#recycle/deleted.jpg"))
+	require.False(t, InManagedDir("/photos/2026-08-16/IMG_0001.jpg"))
+}

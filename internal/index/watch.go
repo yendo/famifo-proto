@@ -11,6 +11,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/synology"
 )
 
 // Watcher はfsnotifyでディレクトリツリーを監視し、変更をインデックスに反映する。
@@ -69,7 +70,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 // handle は1つのfsnotifyイベントを処理する。
 func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[string]time.Time) {
-	if inExcludedDir(ev.Name) {
+	if synology.InManagedDir(ev.Name) {
 		return
 	}
 	switch {
@@ -152,7 +153,7 @@ func (w *Watcher) addTree(root string) error {
 		// 中のイベントはどのみち無視するので、監視枠を消費しない。
 		// inotifyは再帰監視をしないぶん1ディレクトリ=1枠で、@eaDirは
 		// 写真1枚につき1つできる。max_user_watches(既定8192)を容易に超える。
-		if excludedDirs[d.Name()] {
+		if synology.IsManagedDir(d.Name()) {
 			return fs.SkipDir
 		}
 		if err := w.fsw.Add(path); err != nil {
@@ -170,7 +171,7 @@ func (w *Watcher) enqueueTree(root string, pending map[string]time.Time) {
 			return nil
 		}
 		if d.IsDir() {
-			if excludedDirs[d.Name()] {
+			if synology.IsManagedDir(d.Name()) {
 				return fs.SkipDir
 			}
 			return nil
