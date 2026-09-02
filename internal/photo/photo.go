@@ -55,7 +55,7 @@ const (
 	KindRaster
 	// KindOpaque はインデックスはするがデコードせず、原本をそのまま配信するファイル。
 	// HEIC/HEIFが該当する。原本はSafari以外では表示できないため、@eaDir から
-	// 借りられる場合に限り、配信時にSynologyのJPEGへ差し替える（internal/web）。
+	// 借りられる場合に限り、配信時にSynologyのJPEGへ差し替える（FullPath）。
 	KindOpaque
 )
 
