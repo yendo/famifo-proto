@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/yendo/famifo-proto/internal/store"
+	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
@@ -58,8 +59,8 @@ func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, src 
 	case store.ThumbFamifo:
 		writeFileAt(t, thumb.CachePath(f.thumbDir, p.ID), "thumb-"+name)
 	case store.ThumbSyno:
-		writeFileAt(t, thumb.SynoThumbPath(path), "eadir-"+name)
-		writeFileAt(t, thumb.SynoLargePath(path), "eadir-xl-"+name)
+		writeFileAt(t, synology.ThumbPath(path), "eadir-"+name)
+		writeFileAt(t, synology.LargePath(path), "eadir-xl-"+name)
 	}
 	return p
 }

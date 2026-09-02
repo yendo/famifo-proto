@@ -12,6 +12,7 @@ import (
 
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
+	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/takenat"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
@@ -60,7 +61,7 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	// famifoがデコードできないHEICも一覧に出せるようになる。@eaDir は読むだけで、
 	// 書き込みも削除もしない。
 	switch {
-	case thumb.HasSyno(path):
+	case synology.HasThumb(path):
 		p.ThumbSource = store.ThumbSyno
 	case kind == photo.KindRaster:
 		if err := ix.gen.Generate(path, p.ID); err != nil {

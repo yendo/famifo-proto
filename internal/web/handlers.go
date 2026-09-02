@@ -10,6 +10,7 @@ import (
 
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
+	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
@@ -160,7 +161,7 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	case store.ThumbFamifo:
 		http.ServeFile(w, r, thumb.CachePath(s.thumbDir, p.ID))
 	case store.ThumbSyno:
-		http.ServeFile(w, r, thumb.SynoThumbPath(p.Path))
+		http.ServeFile(w, r, synology.ThumbPath(p.Path))
 	default:
 		// 借りるものも作れるものも無い写真。原本を使うべき。
 		http.NotFound(w, r)
@@ -179,7 +180,7 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	}
 	if photo.KindOf(p.Path) == photo.KindOpaque && p.ThumbSource == store.ThumbSyno {
 		// 拡張子が .jpg なのでServeFileがContent-Typeを引ける。
-		http.ServeFile(w, r, thumb.SynoLargePath(p.Path))
+		http.ServeFile(w, r, synology.LargePath(p.Path))
 		return
 	}
 	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。

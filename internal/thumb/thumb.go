@@ -1,8 +1,7 @@
-// Package thumb は一覧表示用のサムネイルを生成・管理する。出力は常にJPEG。
+// Package thumb は一覧表示用のサムネイルを生成する。出力は常にJPEG。
 //
-// サムネイルには2つの出どころがある。Synologyが @eaDir に作ったものと、無ければ
-// 自前で生成してキャッシュに置いたもの。生成にHEICは来ない（デコードしない方針）が、
-// 借りるほうはHEICも対象になる。
+// 生成にHEICは来ない（自前ではデコードしない方針）。Synologyが @eaDir に持つ
+// サムネイルを借りる経路は internal/synology が扱う。
 package thumb
 
 import (
@@ -41,44 +40,9 @@ func NewGenerator(dir string, size int) (*Generator, error) {
 	return &Generator{dir: dir, size: size}, nil
 }
 
-// eaDir はSynologyがサムネイルなどを置く管理用ディレクトリの名前。
-const eaDir = "@eaDir"
-
-// synoThumbName は一覧に借りるサムネイルのファイル名。Mは短辺320px（4:3なら
-// 長辺427px）で、famifo自身が作る長辺480pxよりわずかに小さい。
-const synoThumbName = "SYNOPHOTO_THUMB_M.jpg"
-
-// synoLargeName は拡大表示に借りるJPEGのファイル名。長辺1707px・約1MBで、
-// 一覧には過大だが1枚だけ見せる場面では妥当な大きさになる。
-const synoLargeName = "SYNOPHOTO_THUMB_XL.jpg"
-
 // CachePath は自前で生成したサムネイルのパスを返す。
 // 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
 func CachePath(dir, id string) string { return filepath.Join(dir, id[:2], id+".jpg") }
-
-// synoPath は @eaDir の中の1ファイルのパスを組み立てる。
-func synoPath(srcPath, name string) string {
-	return filepath.Join(filepath.Dir(srcPath), eaDir, filepath.Base(srcPath), name)
-}
-
-// SynoThumbPath はSynologyがsrcPathの写真用に持つ一覧用サムネイルのパスを返す。
-// 実在するとは限らない。あるかどうかは HasSyno で確かめる。
-func SynoThumbPath(srcPath string) string { return synoPath(srcPath, synoThumbName) }
-
-// SynoLargePath はSynologyがsrcPathの写真用に持つ拡大表示用JPEGのパスを返す。
-// SynoThumbPath と同じディレクトリを指す。存在は確かめない。MとXLは同じ生成器が
-// 一緒に書くため、Mがあることを確かめてあればXLもあるものとして扱う。
-func SynoLargePath(srcPath string) string { return synoPath(srcPath, synoLargeName) }
-
-// HasSyno は借りられるサムネイルがあるかを報告する。
-//
-// DSM 7.3 はHEICをデコードできず、.jpg の代わりに0バイトの .fail を置く。拡張子が
-// 違うので存在確認だけで弾けるが、手で消したあとに空の .jpg が残るような状況も
-// あるため、通常ファイルかつ中身があることまで見る。
-func HasSyno(srcPath string) bool {
-	fi, err := os.Stat(SynoThumbPath(srcPath))
-	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
-}
 
 // Path はサムネイルの絶対パスを返す。
 func (g *Generator) Path(id string) string { return CachePath(g.dir, id) }
