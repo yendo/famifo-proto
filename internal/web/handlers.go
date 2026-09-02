@@ -167,10 +167,19 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handlePhoto は原本を配信する。
+// handlePhoto は拡大表示用の画像を配信する。
+//
+// HEICはSafari以外のブラウザが表示できない。@eaDir から借りているなら原本ではなく
+// SynologyのXL（長辺1707px）を配信する。thumb_source が eadir であればMがあり、
+// MとXLは同じ生成器が一緒に書くので、XLの存在はそこから導ける。
 func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.lookup(w, r)
 	if !ok {
+		return
+	}
+	if photo.KindOf(p.Path) == photo.KindOpaque && p.ThumbSource == store.ThumbSyno {
+		// 拡張子が .jpg なのでServeFileがContent-Typeを引ける。
+		http.ServeFile(w, r, thumb.SynoLargePath(p.Path))
 		return
 	}
 	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。

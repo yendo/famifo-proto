@@ -59,6 +59,7 @@ func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, src 
 		writeFileAt(t, thumb.CachePath(f.thumbDir, p.ID), "thumb-"+name)
 	case store.ThumbSyno:
 		writeFileAt(t, thumb.SynoThumbPath(path), "eadir-"+name)
+		writeFileAt(t, thumb.SynoLargePath(path), "eadir-xl-"+name)
 	}
 	return p
 }
@@ -122,6 +123,8 @@ func TestServeOriginalSetsHEICContentType(t *testing.T) {
 	rec := do(t, f.h, "/photo/"+p.ID)
 
 	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "original-a.heic", rec.Body.String(),
+		"借りるものが無いHEICは従来どおり原本を配信する")
 	require.Equal(t, "image/heic", rec.Header().Get("Content-Type"),
 		"Goのmimeパッケージが知らないので自前で設定する")
 }
@@ -157,4 +160,28 @@ func TestServeThumbFromEaDir(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-a.heic", rec.Body.String())
+}
+
+func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
+	f := newWebFixture(t, 10)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), store.ThumbSyno)
+
+	rec := do(t, f.h, "/photo/"+p.ID)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "eadir-xl-a.heic", rec.Body.String(),
+		"HEICの原本はSafari以外で表示できないのでXLを代わりに配信する")
+	require.Equal(t, "image/jpeg", rec.Header().Get("Content-Type"),
+		"配信するのはJPEGなので拡張子からMIMEが引ける")
+}
+
+func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
+	f := newWebFixture(t, 10)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), store.ThumbSyno)
+
+	rec := do(t, f.h, "/photo/"+p.ID)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "original-a.jpg", rec.Body.String(),
+		"元から表示できる形式は原本のフル解像度を出す。借用は見えないものの代替に限る")
 }

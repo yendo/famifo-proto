@@ -16,7 +16,8 @@ const (
 	// KindRaster はGoでデコードでき、サムネイルを生成するファイル。
 	KindRaster
 	// KindOpaque はインデックスはするがデコードせず、原本をそのまま配信するファイル。
-	// HEIC/HEIFが該当する。Safari以外では表示できないが、設計上それを許容している。
+	// HEIC/HEIFが該当する。原本はSafari以外では表示できないため、@eaDir から
+	// 借りられる場合に限り、配信時にSynologyのJPEGへ差し替える（internal/web）。
 	KindOpaque
 )
 
