@@ -62,6 +62,12 @@ func TestSynoThumbPathPointsAtTheMediumThumbnail(t *testing.T) {
 		SynoThumbPath("/photos/2026-08-16/IMG_0428.HEIC"))
 }
 
+func TestSynoLargePathPointsAtTheXLThumbnail(t *testing.T) {
+	require.Equal(t,
+		"/photos/2026-08-16/@eaDir/IMG_0428.HEIC/SYNOPHOTO_THUMB_XL.jpg",
+		SynoLargePath("/photos/2026-08-16/IMG_0428.HEIC"))
+}
+
 func TestHasSynoFindsTheThumbnailSynologyLeftBehind(t *testing.T) {
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.heic", 40, 20) // 中身は問わない。存在だけを見る
