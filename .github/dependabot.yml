@@ -22,3 +22,15 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+
+  # idiomorph is bundled under internal/web/static/, and package.json is only
+  # a declaration for Dependabot alerts. A version-only PR would drift from
+  # the actual bundled code, so we skip PRs and only receive notifications.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "idiomorph"

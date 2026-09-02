@@ -244,3 +244,28 @@ func TestFullScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 3, n)
 }
+
+func TestFullScanSkipsSynologyMetadataDirs(t *testing.T) {
+	f := newFixture(t)
+	writeTestJPEG(t, f.root, "IMG_0001.jpg", 40, 20)
+	// Synologyは写真1枚につき @eaDir/<ファイル名>/SYNOPHOTO_THUMB_*.jpg を作る。
+	// 拡張子だけでは本物と区別が付かず、1枚が4枚に見える。
+	thumbs := filepath.Join(f.root, "@eaDir", "IMG_0001.jpg")
+	writeTestJPEG(t, thumbs, "SYNOPHOTO_THUMB_SM.jpg", 10, 5)
+	writeTestJPEG(t, thumbs, "SYNOPHOTO_THUMB_M.jpg", 20, 10)
+	writeTestJPEG(t, thumbs, "SYNOPHOTO_THUMB_XL.jpg", 80, 40)
+	// ゴミ箱に残った写真も復活させない。
+	writeTestJPEG(t, filepath.Join(f.root, "#recycle"), "deleted.jpg", 40, 20)
+
+	stats, err := f.ix.FullScan(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Indexed, "本物の1枚だけを取り込む")
+	require.Equal(t, 0, stats.Skipped, "除外はスキップとして数えない")
+
+	paths, err := f.st.AllPaths(context.Background())
+	require.NoError(t, err)
+	require.Len(t, paths, 1)
+	_, ok := paths[filepath.Join(f.root, "IMG_0001.jpg")]
+	require.True(t, ok, "本物が残っていること")
+}

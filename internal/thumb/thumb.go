@@ -1,5 +1,8 @@
-// Package thumb は一覧表示用のサムネイルを生成・管理する。
-// 出力は常にJPEG。HEICはデコードしない方針のためここには来ない。
+// Package thumb は一覧表示用のサムネイルを生成・管理する。出力は常にJPEG。
+//
+// サムネイルには2つの出どころがある。Synologyが @eaDir に作ったものと、無ければ
+// 自前で生成してキャッシュに置いたもの。生成にHEICは来ない（デコードしない方針）が、
+// 借りるほうはHEICも対象になる。
 package thumb
 
 import (
@@ -38,12 +41,35 @@ func NewGenerator(dir string, size int) (*Generator, error) {
 	return &Generator{dir: dir, size: size}, nil
 }
 
-// RelPath はキャッシュ内の相対パスを返す。
+// eaDir はSynologyがサムネイルなどを置く管理用ディレクトリの名前。
+const eaDir = "@eaDir"
+
+// synoThumbName は借りるサムネイルのファイル名。Mは短辺320px（4:3なら長辺427px）で、
+// famifo自身が作る長辺480pxよりわずかに小さい。XLは長辺1707px・約1MBあり一覧には過大。
+const synoThumbName = "SYNOPHOTO_THUMB_M.jpg"
+
+// CachePath は自前で生成したサムネイルのパスを返す。
 // 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
-func RelPath(id string) string { return filepath.Join(id[:2], id+".jpg") }
+func CachePath(dir, id string) string { return filepath.Join(dir, id[:2], id+".jpg") }
+
+// SynoPath はSynologyがsrcPathの写真用に持つサムネイルのパスを返す。
+// 実在するとは限らない。あるかどうかは HasSyno で確かめる。
+func SynoPath(srcPath string) string {
+	return filepath.Join(filepath.Dir(srcPath), eaDir, filepath.Base(srcPath), synoThumbName)
+}
+
+// HasSyno は借りられるサムネイルがあるかを報告する。
+//
+// DSM 7.3 はHEICをデコードできず、.jpg の代わりに0バイトの .fail を置く。拡張子が
+// 違うので存在確認だけで弾けるが、手で消したあとに空の .jpg が残るような状況も
+// あるため、通常ファイルかつ中身があることまで見る。
+func HasSyno(srcPath string) bool {
+	fi, err := os.Stat(SynoPath(srcPath))
+	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
+}
 
 // Path はサムネイルの絶対パスを返す。
-func (g *Generator) Path(id string) string { return filepath.Join(g.dir, RelPath(id)) }
+func (g *Generator) Path(id string) string { return CachePath(g.dir, id) }
 
 // Generate は srcPath の画像からサムネイルを作る。
 // デコードできないファイルはエラーを返し、キャッシュには何も残さない。

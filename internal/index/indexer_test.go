@@ -71,7 +71,7 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path)
 	require.Equal(t, ".jpg", got.Ext)
-	require.True(t, got.HasThumb)
+	require.Equal(t, store.ThumbFamifo, got.ThumbSource)
 	require.FileExists(t, f.gen.Path(got.ID))
 }
 
@@ -85,7 +85,7 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
 	require.NoError(t, err)
-	require.False(t, got.HasThumb, "HEICはサムネイルを作らない")
+	require.Equal(t, store.ThumbNone, got.ThumbSource, "HEICはデコードできない")
 	require.NoFileExists(t, f.gen.Path(got.ID))
 }
 
@@ -146,4 +146,72 @@ func TestRemoveFileIsQuietForUnknownPath(t *testing.T) {
 	f := newFixture(t)
 
 	require.NoError(t, f.ix.RemoveFile(context.Background(), filepath.Join(f.root, "never.jpg")))
+}
+
+// writeSynoThumb は srcPath の写真用のサムネイルを @eaDir に置く。
+func writeSynoThumb(t *testing.T, srcPath string) string {
+	t.Helper()
+	out := thumb.SynoPath(srcPath)
+	writeTestJPEG(t, filepath.Dir(out), filepath.Base(out), 20, 10)
+	return out
+}
+
+func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
+	f := newFixture(t)
+	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
+	writeSynoThumb(t, path)
+
+	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+
+	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	require.NoError(t, err)
+	require.Equal(t, store.ThumbSyno, got.ThumbSource)
+	require.NoFileExists(t, f.gen.Path(got.ID), "借りられるなら自前では作らない")
+}
+
+// HEICはGoでデコードできないが、Synologyのサムネイルがあれば一覧に出せる。
+func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
+	f := newFixture(t)
+	path := filepath.Join(f.root, "a.heic")
+	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
+	writeSynoThumb(t, path)
+
+	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+
+	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	require.NoError(t, err)
+	require.Equal(t, store.ThumbSyno, got.ThumbSource)
+}
+
+// DSM 7.3 がHEICのデコードに失敗すると .fail だけが残る。famifoも作れないので
+// サムネイル無しのまま原本を配信する。.fail を置き換えるのはfamifoの仕事ではない。
+func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T) {
+	f := newFixture(t)
+	path := filepath.Join(f.root, "a.heic")
+	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
+	fail := filepath.Join(filepath.Dir(thumb.SynoPath(path)), "SYNOPHOTO_THUMB_M.fail")
+	require.NoError(t, os.MkdirAll(filepath.Dir(fail), 0o755))
+	require.NoError(t, os.WriteFile(fail, nil, 0o644))
+
+	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+
+	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	require.NoError(t, err)
+	require.Equal(t, store.ThumbNone, got.ThumbSource)
+}
+
+// famifoはSynology Photosの領域に書き込まない。消しもしない。
+func TestRemoveFileKeepsTheSynologyThumbnail(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
+	synoThumb := writeSynoThumb(t, path)
+	require.NoError(t, f.ix.IndexFile(ctx, path))
+
+	require.NoError(t, f.ix.RemoveFile(ctx, path))
+
+	require.FileExists(t, synoThumb, "@eaDir には触れない")
+	n, err := f.st.Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 0, n)
 }

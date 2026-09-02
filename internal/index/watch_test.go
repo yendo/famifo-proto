@@ -155,3 +155,40 @@ func TestWatcherDebouncesRepeatedWrites(t *testing.T) {
 
 	requireCount(t, f, 1)
 }
+
+func TestWatcherIgnoresSynologyThumbnailsCreatedLater(t *testing.T) {
+	f := newFixture(t)
+	startWatcher(t, f)
+
+	writeTestJPEG(t, f.root, "IMG_0001.jpg", 40, 20)
+	requireCount(t, f, 1)
+
+	// Synologyは写真が置かれた後にサムネイルを作る。取り込むと1枚が複数枚に見える。
+	writeTestJPEG(t, filepath.Join(f.root, "@eaDir", "IMG_0001.jpg"),
+		"SYNOPHOTO_THUMB_M.jpg", 20, 10)
+
+	// 増えないことの確認なのでdebounceの経過を待ってから数える。
+	time.Sleep(3 * testDebounce)
+	n, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "サムネイルを取り込まないこと")
+}
+
+func TestWatcherSkipsSynologyDirsInMovedDirectory(t *testing.T) {
+	f := newFixture(t)
+	startWatcher(t, f)
+
+	// ディレクトリごと移動した場合、中身には個別のイベントが来ないため
+	// enqueueTree が自前で走査する。そこにも除外が要る。
+	staging := filepath.Join(t.TempDir(), "album")
+	writeTestJPEG(t, staging, "IMG_0001.jpg", 40, 20)
+	writeTestJPEG(t, filepath.Join(staging, "@eaDir", "IMG_0001.jpg"),
+		"SYNOPHOTO_THUMB_M.jpg", 20, 10)
+	require.NoError(t, os.Rename(staging, filepath.Join(f.root, "album")))
+
+	requireCount(t, f, 1)
+	time.Sleep(3 * testDebounce)
+	n, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "移動後に遅れて取り込まれないこと")
+}

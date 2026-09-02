@@ -21,13 +21,13 @@ func openTestStore(t *testing.T) *Store {
 
 func photoAt(path string, takenAt time.Time) Photo {
 	return Photo{
-		ID:       IDFor(path),
-		Path:     path,
-		TakenAt:  takenAt,
-		ModTime:  takenAt,
-		Size:     1234,
-		Ext:      ".jpg",
-		HasThumb: true,
+		ID:          IDFor(path),
+		Path:        path,
+		TakenAt:     takenAt,
+		ModTime:     takenAt,
+		Size:        1234,
+		Ext:         ".jpg",
+		ThumbSource: ThumbFamifo,
 	}
 }
 
@@ -59,7 +59,7 @@ func TestUpsertThenGetByID(t *testing.T) {
 	require.Equal(t, want.Path, got.Path)
 	require.Equal(t, want.TakenAt.Unix(), got.TakenAt.Unix())
 	require.Equal(t, want.Size, got.Size)
-	require.True(t, got.HasThumb)
+	require.Equal(t, ThumbFamifo, got.ThumbSource)
 }
 
 func TestUpsertReplacesExistingRow(t *testing.T) {
@@ -69,13 +69,13 @@ func TestUpsertReplacesExistingRow(t *testing.T) {
 	require.NoError(t, s.Upsert(ctx, p))
 
 	p.TakenAt = time.Unix(1700000000, 0)
-	p.HasThumb = false
+	p.ThumbSource = ThumbNone
 	require.NoError(t, s.Upsert(ctx, p))
 
 	got, err := s.GetByID(ctx, p.ID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1700000000), got.TakenAt.Unix())
-	require.False(t, got.HasThumb)
+	require.Equal(t, ThumbNone, got.ThumbSource)
 
 	n, err := s.Count(ctx)
 	require.NoError(t, err)
@@ -100,7 +100,7 @@ func TestDeleteByPath(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, p.ID, got.ID)
-	require.True(t, got.HasThumb) // サムネイル削除の判断に使う
+	require.Equal(t, ThumbFamifo, got.ThumbSource) // サムネイル削除の判断に使う
 
 	_, ok, err = s.DeleteByPath(ctx, p.Path)
 	require.NoError(t, err)
@@ -307,5 +307,22 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 				"offset=%d の写真は %s のはず", offset, g.Date)
 			offset++
 		}
+	}
+}
+
+func TestUpsertRoundTripsEveryThumbSource(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	for _, src := range []ThumbSource{ThumbNone, ThumbFamifo, ThumbSyno} {
+		t.Run(string(src), func(t *testing.T) {
+			p := photoAt("/photos/"+string(src)+".jpg", time.Unix(1600000000, 0))
+			p.ThumbSource = src
+			require.NoError(t, s.Upsert(ctx, p))
+
+			got, err := s.GetByID(ctx, p.ID)
+			require.NoError(t, err)
+			require.Equal(t, src, got.ThumbSource)
+		})
 	}
 }

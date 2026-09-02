@@ -42,24 +42,32 @@ func newWebFixture(t *testing.T, pageSize int) *webFixture {
 	return &webFixture{h: srv.Handler(), st: st, thumbDir: thumbDir, photoDir: photoDir}
 }
 
-// addPhoto は原本ファイルとDB行を用意する。hasThumbならサムネイルも置く。
-func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, hasThumb bool) store.Photo {
+// addPhoto は原本ファイルとDB行を用意する。srcに応じてサムネイルも置く。
+func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, src store.ThumbSource) store.Photo {
 	t.Helper()
 	path := filepath.Join(f.photoDir, name)
 	require.NoError(t, os.WriteFile(path, []byte("original-"+name), 0o644))
 
 	p := store.Photo{
 		ID: store.IDFor(path), Path: path, TakenAt: takenAt, ModTime: takenAt,
-		Size: 10, Ext: filepath.Ext(name), HasThumb: hasThumb,
+		Size: 10, Ext: filepath.Ext(name), ThumbSource: src,
 	}
 	require.NoError(t, f.st.Upsert(context.Background(), p))
 
-	if hasThumb {
-		tp := filepath.Join(f.thumbDir, thumb.RelPath(p.ID))
-		require.NoError(t, os.MkdirAll(filepath.Dir(tp), 0o755))
-		require.NoError(t, os.WriteFile(tp, []byte("thumb-"+name), 0o644))
+	switch src {
+	case store.ThumbFamifo:
+		writeFileAt(t, thumb.CachePath(f.thumbDir, p.ID), "thumb-"+name)
+	case store.ThumbSyno:
+		writeFileAt(t, thumb.SynoPath(path), "eadir-"+name)
 	}
 	return p
+}
+
+// writeFileAt は親ディレクトリごとファイルを書く。
+func writeFileAt(t *testing.T, path, body string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 }
 
 func do(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
@@ -71,7 +79,7 @@ func do(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder 
 
 func TestServeThumb(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), true)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), store.ThumbFamifo)
 
 	rec := do(t, f.h, "/thumb/"+p.ID)
 
@@ -89,7 +97,7 @@ func TestServeThumbNotFoundForUnknownID(t *testing.T) {
 
 func TestServeThumbNotFoundWhenPhotoHasNone(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), false)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), store.ThumbNone)
 
 	rec := do(t, f.h, "/thumb/"+p.ID)
 
@@ -98,7 +106,7 @@ func TestServeThumbNotFoundWhenPhotoHasNone(t *testing.T) {
 
 func TestServeOriginal(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), true)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), store.ThumbFamifo)
 
 	rec := do(t, f.h, "/photo/"+p.ID)
 
@@ -109,7 +117,7 @@ func TestServeOriginal(t *testing.T) {
 
 func TestServeOriginalSetsHEICContentType(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), false)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), store.ThumbNone)
 
 	rec := do(t, f.h, "/photo/"+p.ID)
 
@@ -139,4 +147,14 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 			require.NotEqual(t, http.StatusOK, rec.Code)
 		})
 	}
+}
+
+func TestServeThumbFromEaDir(t *testing.T) {
+	f := newWebFixture(t, 10)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), store.ThumbSyno)
+
+	rec := do(t, f.h, "/thumb/"+p.ID)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "eadir-a.heic", rec.Body.String())
 }

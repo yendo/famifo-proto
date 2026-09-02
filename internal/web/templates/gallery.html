@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>famifo</title>
 <link rel="stylesheet" href="/static/app.css">
+{{/* 可視範囲の貼り替えを差分で当てるために使う。app.js は読み込み直後に
+     render() まで走るため、必ずこれより先に読む。どちらも defer なので
+     実行順は記述順になる。
+
+     ファイルは内容を変えずに同梱している。CDNから読むと、NASもiPadも
+     インターネットに出られることが表示の条件になり、届かないとギャラリーが
+     何も出なくなる。家庭内LANで完結する構成を崩さない。
+
+     入手元 (0BSD):
+       https://cdn.jsdelivr.net/npm/idiomorph@0.7.4/dist/idiomorph.min.js
+     更新するときはURLのバージョンを上げて取り直す。バージョンは
+     package.json にも書いてある。Dependabot alert に載せるためだけの
+     申告なので、取り直したら必ず両方そろえる。 */}}
+<script src="/static/idiomorph.min.js" defer></script>
 <script src="/static/app.js" defer></script>
 </head>
 <body>
