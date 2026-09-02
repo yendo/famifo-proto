@@ -32,14 +32,6 @@ func photoAt(path string, takenAt time.Time) photo.Photo {
 	}
 }
 
-func TestIDForIsStableAndDistinct(t *testing.T) {
-	a := photo.IDFor("/photos/a.jpg")
-
-	require.Len(t, a, 32)
-	require.Equal(t, a, photo.IDFor("/photos/a.jpg"))
-	require.NotEqual(t, a, photo.IDFor("/photos/b.jpg"))
-}
-
 func TestOpenEnablesWAL(t *testing.T) {
 	s := openTestStore(t)
 

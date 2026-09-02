@@ -69,7 +69,7 @@ Synologyの知識も同様に3箇所へ散っている。`thumb`（`@eaDir` の�
 | `index` | ディスクとインデックスの同期 | `photo` `takenat` `synology` `thumb` `store` |
 | `web` | HTTP配信のみ | `photo` `store` |
 
-`web` のimportが5つから2つに減り、`store → web` の型依存が切れる。循環は無い
+`web` のimportが3つから2つに減り、`store → web` の型依存が切れる。循環は無い
 （`thumb → photo → synology` の一方向）。
 
 ### `internal/synology` を切り出す

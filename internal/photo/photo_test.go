@@ -7,6 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIDForIsStableAndDistinct(t *testing.T) {
+	a := IDFor("/photos/a.jpg")
+
+	require.Len(t, a, 32)
+	require.Equal(t, a, IDFor("/photos/a.jpg"))
+	require.NotEqual(t, a, IDFor("/photos/b.jpg"))
+}
+
 func TestKindOf(t *testing.T) {
 	tests := map[string]Kind{
 		"a.jpg":              KindRaster,
@@ -94,6 +102,36 @@ func TestThumbPathBySource(t *testing.T) {
 			got, ok := ThumbPath(tt.p, cacheDir)
 			require.Equal(t, tt.ok, ok)
 			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestHasThumbAgreesWithThumbSource(t *testing.T) {
+	tests := []struct {
+		name string
+		src  ThumbSource
+		want bool
+	}{
+		{
+			name: "自前で生成したものはある",
+			src:  ThumbFamifo,
+			want: true,
+		},
+		{
+			name: "借りたものもある",
+			src:  ThumbSyno,
+			want: true,
+		},
+		{
+			name: "どちらでもなければ無い",
+			src:  ThumbNone,
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := Photo{ID: testID, Path: "/photos/a.jpg", ThumbSource: tt.src}
+			require.Equal(t, tt.want, HasThumb(p))
 		})
 	}
 }

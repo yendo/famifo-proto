@@ -101,6 +101,7 @@ func ContentType(name string) string {
 func CachePath(dir, id string) string { return filepath.Join(dir, id[:2], id+".jpg") }
 
 // ThumbPath は一覧に出すサムネイルのパスを返す。無ければ ok=false。
+// ok=false のとき、一覧は原本のURLにフォールバックし、/thumb/ エンドポイントは404を返す。
 //
 // cacheDir は -data から来る配置設定で、写真そのものの属性ではないため引数で受ける。
 func ThumbPath(p Photo, cacheDir string) (string, bool) {
@@ -111,6 +112,12 @@ func ThumbPath(p Photo, cacheDir string) (string, bool) {
 		return synology.ThumbPath(p.Path), true
 	}
 	return "", false
+}
+
+// HasThumb は一覧に出せるサムネイルがあるかを報告する。
+// パスを組み立てずに判定できるので、一覧の組み立てではこちらを使う。
+func HasThumb(p Photo) bool {
+	return p.ThumbSource == ThumbFamifo || p.ThumbSource == ThumbSyno
 }
 
 // FullPath は拡大表示に配信するファイルのパスを返す。
