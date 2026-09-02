@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/yendo/famifo-proto/internal/synology"
 )
 
 // Photo はインデックス上の1枚の写真。
@@ -97,3 +99,31 @@ func ContentType(name string) string {
 // CachePath は自前で生成したサムネイルのパスを返す。
 // 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
 func CachePath(dir, id string) string { return filepath.Join(dir, id[:2], id+".jpg") }
+
+// ThumbPath は一覧に出すサムネイルのパスを返す。無ければ ok=false。
+//
+// cacheDir は -data から来る配置設定で、写真そのものの属性ではないため引数で受ける。
+func ThumbPath(p Photo, cacheDir string) (string, bool) {
+	switch p.ThumbSource {
+	case ThumbFamifo:
+		return CachePath(cacheDir, p.ID), true
+	case ThumbSyno:
+		return synology.ThumbPath(p.Path), true
+	}
+	return "", false
+}
+
+// FullPath は拡大表示に配信するファイルのパスを返す。
+//
+// HEICはSafari以外のブラウザが表示できない。@eaDir から借りているなら原本ではなく
+// SynologyのXL（長辺1707px）を返す。thumb_source が eadir であればMがあり、MとXLは
+// 同じ生成器が一緒に書くので、XLの存在はそこから導ける。
+//
+// 戻り値がパスだけで済むのは、XLのファイル名が .jpg で終わるためである。
+// 呼び出し側は ContentType(FullPath(p)) でMIMEを引けばよく、分岐を持たなくてよい。
+func FullPath(p Photo) string {
+	if KindOf(p.Path) == KindOpaque && p.ThumbSource == ThumbSyno {
+		return synology.LargePath(p.Path)
+	}
+	return p.Path
+}

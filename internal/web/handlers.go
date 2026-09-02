@@ -10,7 +10,6 @@ import (
 
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
-	"github.com/yendo/famifo-proto/internal/synology"
 )
 
 // photoView は1枚分のテンプレート入力。
@@ -60,7 +59,7 @@ func (s *Server) buildRange(r *http.Request, offset, limit int) (itemsView, erro
 			ThumbURL: "/photo/" + p.ID,
 			Date:     p.TakenAt.Format("2006-01-02"),
 		}
-		if p.ThumbSource != photo.ThumbNone {
+		if _, ok := photo.ThumbPath(p, s.thumbDir); ok {
 			pv.ThumbURL = "/thumb/" + p.ID
 		}
 		v.Photos = append(v.Photos, pv)
@@ -150,42 +149,32 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleThumb はサムネイルを配信する。出どころによって置き場所が違う。
+// handleThumb はサムネイルを配信する。どのファイルを出すかは photo が決める。
 func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.lookup(w, r)
 	if !ok {
 		return
 	}
-	switch p.ThumbSource {
-	case photo.ThumbFamifo:
-		http.ServeFile(w, r, photo.CachePath(s.thumbDir, p.ID))
-	case photo.ThumbSyno:
-		http.ServeFile(w, r, synology.ThumbPath(p.Path))
-	default:
+	path, ok := photo.ThumbPath(p, s.thumbDir)
+	if !ok {
 		// 借りるものも作れるものも無い写真。原本を使うべき。
 		http.NotFound(w, r)
+		return
 	}
+	http.ServeFile(w, r, path)
 }
 
 // handlePhoto は拡大表示用の画像を配信する。
-//
-// HEICはSafari以外のブラウザが表示できない。@eaDir から借りているなら原本ではなく
-// SynologyのXL（長辺1707px）を配信する。thumb_source が eadir であればMがあり、
-// MとXLは同じ生成器が一緒に書くので、XLの存在はそこから導ける。
 func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.lookup(w, r)
 	if !ok {
 		return
 	}
-	if photo.KindOf(p.Path) == photo.KindOpaque && p.ThumbSource == photo.ThumbSyno {
-		// 拡張子が .jpg なのでServeFileがContent-Typeを引ける。
-		http.ServeFile(w, r, synology.LargePath(p.Path))
-		return
-	}
+	path := photo.FullPath(p)
 	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
 	// 先に設定しておけばServeContentは上書きしない。
-	w.Header().Set("Content-Type", photo.ContentType(p.Path))
-	http.ServeFile(w, r, p.Path)
+	w.Header().Set("Content-Type", photo.ContentType(path))
+	http.ServeFile(w, r, path)
 }
 
 // lookup はURLのIDから写真を引く。
