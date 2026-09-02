@@ -43,6 +43,7 @@ import (
 	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/require"
 
+	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
@@ -319,10 +320,10 @@ func seedCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
 				return fmt.Errorf("テスト画像を書けません (%s): %w", name, err)
 			}
 
-			id := store.IDFor(path)
-			thumbSource := store.ThumbFamifo
+			id := photo.IDFor(path)
+			thumbSource := photo.ThumbFamifo
 			if gen.Generate(path, id) != nil {
-				thumbSource = store.ThumbNone
+				thumbSource = photo.ThumbNone
 			}
 
 			// 分単位で戻す。最大30枚なので日をまたがない。
@@ -331,7 +332,7 @@ func seedCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
 			if statErr != nil {
 				return fmt.Errorf("テスト画像を統計できません (%s): %w", name, statErr)
 			}
-			p := store.Photo{
+			p := photo.Photo{
 				ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
 				Size: fi.Size(), Ext: ".jpg", ThumbSource: thumbSource,
 			}
@@ -402,7 +403,7 @@ func expectedPhotoURLs(n int) []string {
 	out := make([]string, n)
 	for i := 0; i < n; i++ {
 		path := filepath.Join(testPhotoDir, fmt.Sprintf("p%04d.jpg", i))
-		out[i] = "/photo/" + store.IDFor(path)
+		out[i] = "/photo/" + photo.IDFor(path)
 	}
 	return out
 }
@@ -1737,7 +1738,7 @@ func seedStallCorpus(st *store.Store, gen *thumb.Generator, photoDir string) err
 		if err := writeTestJPEG(path, i); err != nil {
 			return fmt.Errorf("テスト画像を書けません (%s): %w", path, err)
 		}
-		id := store.IDFor(path)
+		id := photo.IDFor(path)
 		if err := gen.Generate(path, id); err != nil {
 			return fmt.Errorf("サムネイルを作れません (%s): %w", path, err)
 		}
@@ -1747,9 +1748,9 @@ func seedStallCorpus(st *store.Store, gen *thumb.Generator, photoDir string) err
 		if err != nil {
 			return err
 		}
-		p := store.Photo{
+		p := photo.Photo{
 			ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
-			Size: fi.Size(), Ext: ".jpg", ThumbSource: store.ThumbFamifo,
+			Size: fi.Size(), Ext: ".jpg", ThumbSource: photo.ThumbFamifo,
 		}
 		if err := st.Upsert(ctx, p); err != nil {
 			return fmt.Errorf("写真を登録できません (%s): %w", path, err)

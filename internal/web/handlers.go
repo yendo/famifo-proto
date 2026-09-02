@@ -61,7 +61,7 @@ func (s *Server) buildRange(r *http.Request, offset, limit int) (itemsView, erro
 			ThumbURL: "/photo/" + p.ID,
 			Date:     p.TakenAt.Format("2006-01-02"),
 		}
-		if p.ThumbSource != store.ThumbNone {
+		if p.ThumbSource != photo.ThumbNone {
 			pv.ThumbURL = "/thumb/" + p.ID
 		}
 		v.Photos = append(v.Photos, pv)
@@ -158,9 +158,9 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch p.ThumbSource {
-	case store.ThumbFamifo:
+	case photo.ThumbFamifo:
 		http.ServeFile(w, r, thumb.CachePath(s.thumbDir, p.ID))
-	case store.ThumbSyno:
+	case photo.ThumbSyno:
 		http.ServeFile(w, r, synology.ThumbPath(p.Path))
 	default:
 		// 借りるものも作れるものも無い写真。原本を使うべき。
@@ -178,7 +178,7 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if photo.KindOf(p.Path) == photo.KindOpaque && p.ThumbSource == store.ThumbSyno {
+	if photo.KindOf(p.Path) == photo.KindOpaque && p.ThumbSource == photo.ThumbSyno {
 		// 拡張子が .jpg なのでServeFileがContent-Typeを引ける。
 		http.ServeFile(w, r, synology.LargePath(p.Path))
 		return
@@ -191,15 +191,15 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 
 // lookup はURLのIDから写真を引く。
 // パスではなくIDを経由することで、インデックスに無いファイルは配信できない。
-func (s *Server) lookup(w http.ResponseWriter, r *http.Request) (store.Photo, bool) {
+func (s *Server) lookup(w http.ResponseWriter, r *http.Request) (photo.Photo, bool) {
 	p, err := s.st.GetByID(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
-		return store.Photo{}, false
+		return photo.Photo{}, false
 	}
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return store.Photo{}, false
+		return photo.Photo{}, false
 	}
 	return p, true
 }

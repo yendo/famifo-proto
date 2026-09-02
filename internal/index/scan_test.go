@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/yendo/famifo-proto/internal/store"
+	"github.com/yendo/famifo-proto/internal/photo"
 )
 
 func TestFullScanIndexesNestedPhotos(t *testing.T) {
@@ -94,7 +94,7 @@ func TestFullScanRemovesDeletedPhotos(t *testing.T) {
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
 	_, err := f.ix.FullScan(ctx)
 	require.NoError(t, err)
-	thumbPath := f.gen.Path(store.IDFor(path))
+	thumbPath := f.gen.Path(photo.IDFor(path))
 	require.FileExists(t, thumbPath)
 
 	// アプリ停止中に消されたことを模す
@@ -131,8 +131,8 @@ func TestFullScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
-	thumbA := f.gen.Path(store.IDFor(pathA))
-	thumbB := f.gen.Path(store.IDFor(pathB))
+	thumbA := f.gen.Path(photo.IDFor(pathA))
+	thumbB := f.gen.Path(photo.IDFor(pathB))
 	require.FileExists(t, thumbA)
 	require.FileExists(t, thumbB)
 
@@ -178,7 +178,7 @@ func TestFullScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
 	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
 	_, err := f.ix.FullScan(ctx)
 	require.NoError(t, err)
-	thumbGone := f.gen.Path(store.IDFor(gone))
+	thumbGone := f.gen.Path(photo.IDFor(gone))
 	require.FileExists(t, thumbGone)
 
 	// aliceのドライブが未マウントになった状況を模す：中身だけ消してルートは残す
@@ -215,7 +215,7 @@ func TestFullScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
-	require.NoFileExists(t, f.gen.Path(store.IDFor(dropped)), "サムネイルも消える")
+	require.NoFileExists(t, f.gen.Path(photo.IDFor(dropped)), "サムネイルも消える")
 }
 
 // ルートのパスごと消えている（ボリュームが外れた等）ときは、そのルートを
@@ -239,7 +239,7 @@ func TestFullScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
 	require.NoError(t, err, "読めないルートがあっても走査全体は失敗しない")
 	require.Equal(t, 1, stats.Indexed, "生きているルートの新しい写真は取り込む")
 	require.Equal(t, 0, stats.Removed, "読めないルートの写真は消さない")
-	require.FileExists(t, f.gen.Path(store.IDFor(kept)))
+	require.FileExists(t, f.gen.Path(photo.IDFor(kept)))
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 3, n)

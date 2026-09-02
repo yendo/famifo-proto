@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -68,11 +69,11 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path)
 	require.Equal(t, ".jpg", got.Ext)
-	require.Equal(t, store.ThumbFamifo, got.ThumbSource)
+	require.Equal(t, photo.ThumbFamifo, got.ThumbSource)
 	require.FileExists(t, f.gen.Path(got.ID))
 }
 
@@ -84,9 +85,9 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, store.ThumbNone, got.ThumbSource, "HEICはデコードできない")
+	require.Equal(t, photo.ThumbNone, got.ThumbSource, "HEICはデコードできない")
 	require.NoFileExists(t, f.gen.Path(got.ID))
 }
 
@@ -132,7 +133,7 @@ func TestRemoveFileDeletesRowAndThumb(t *testing.T) {
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
 	require.NoError(t, f.ix.IndexFile(ctx, path))
-	thumbPath := f.gen.Path(store.IDFor(path))
+	thumbPath := f.gen.Path(photo.IDFor(path))
 	require.FileExists(t, thumbPath)
 
 	require.NoError(t, f.ix.RemoveFile(ctx, path))
@@ -164,9 +165,9 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, store.ThumbSyno, got.ThumbSource)
+	require.Equal(t, photo.ThumbSyno, got.ThumbSource)
 	require.NoFileExists(t, f.gen.Path(got.ID), "借りられるなら自前では作らない")
 }
 
@@ -179,9 +180,9 @@ func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, store.ThumbSyno, got.ThumbSource)
+	require.Equal(t, photo.ThumbSyno, got.ThumbSource)
 }
 
 // DSM 7.3 がHEICのデコードに失敗すると .fail だけが残る。famifoも作れないので
@@ -196,9 +197,9 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, store.ThumbNone, got.ThumbSource)
+	require.Equal(t, photo.ThumbNone, got.ThumbSource)
 }
 
 // famifoはSynology Photosの領域に書き込まない。消しもしない。

@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -44,21 +45,21 @@ func newWebFixture(t *testing.T, pageSize int) *webFixture {
 }
 
 // addPhoto は原本ファイルとDB行を用意する。srcに応じてサムネイルも置く。
-func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, src store.ThumbSource) store.Photo {
+func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, src photo.ThumbSource) photo.Photo {
 	t.Helper()
 	path := filepath.Join(f.photoDir, name)
 	require.NoError(t, os.WriteFile(path, []byte("original-"+name), 0o644))
 
-	p := store.Photo{
-		ID: store.IDFor(path), Path: path, TakenAt: takenAt, ModTime: takenAt,
+	p := photo.Photo{
+		ID: photo.IDFor(path), Path: path, TakenAt: takenAt, ModTime: takenAt,
 		Size: 10, Ext: filepath.Ext(name), ThumbSource: src,
 	}
 	require.NoError(t, f.st.Upsert(context.Background(), p))
 
 	switch src {
-	case store.ThumbFamifo:
+	case photo.ThumbFamifo:
 		writeFileAt(t, thumb.CachePath(f.thumbDir, p.ID), "thumb-"+name)
-	case store.ThumbSyno:
+	case photo.ThumbSyno:
 		writeFileAt(t, synology.ThumbPath(path), "eadir-"+name)
 		writeFileAt(t, synology.LargePath(path), "eadir-xl-"+name)
 	}
@@ -81,7 +82,7 @@ func do(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder 
 
 func TestServeThumb(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), store.ThumbFamifo)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
 
 	rec := do(t, f.h, "/thumb/"+p.ID)
 
@@ -99,7 +100,7 @@ func TestServeThumbNotFoundForUnknownID(t *testing.T) {
 
 func TestServeThumbNotFoundWhenPhotoHasNone(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), store.ThumbNone)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbNone)
 
 	rec := do(t, f.h, "/thumb/"+p.ID)
 
@@ -108,7 +109,7 @@ func TestServeThumbNotFoundWhenPhotoHasNone(t *testing.T) {
 
 func TestServeOriginal(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), store.ThumbFamifo)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
 
 	rec := do(t, f.h, "/photo/"+p.ID)
 
@@ -119,7 +120,7 @@ func TestServeOriginal(t *testing.T) {
 
 func TestServeOriginalSetsHEICContentType(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), store.ThumbNone)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbNone)
 
 	rec := do(t, f.h, "/photo/"+p.ID)
 
@@ -144,7 +145,7 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 	for _, target := range []string{
 		"/photo/../../etc/passwd",
 		"/thumb/..%2f..%2fetc%2fpasswd",
-		"/photo/" + store.IDFor("/etc/passwd"),
+		"/photo/" + photo.IDFor("/etc/passwd"),
 	} {
 		t.Run(target, func(t *testing.T) {
 			rec := do(t, f.h, target)
@@ -155,7 +156,7 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 
 func TestServeThumbFromEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), store.ThumbSyno)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbSyno)
 
 	rec := do(t, f.h, "/thumb/"+p.ID)
 
@@ -165,7 +166,7 @@ func TestServeThumbFromEaDir(t *testing.T) {
 
 func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), store.ThumbSyno)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbSyno)
 
 	rec := do(t, f.h, "/photo/"+p.ID)
 
@@ -178,7 +179,7 @@ func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 
 func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), store.ThumbSyno)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbSyno)
 
 	rec := do(t, f.h, "/photo/"+p.ID)
 

@@ -48,8 +48,8 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 		return nil
 	}
 
-	p := store.Photo{
-		ID:      store.IDFor(path),
+	p := photo.Photo{
+		ID:      photo.IDFor(path),
 		Path:    path,
 		ModTime: fi.ModTime(),
 		Size:    fi.Size(),
@@ -62,12 +62,12 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	// 書き込みも削除もしない。
 	switch {
 	case synology.HasThumb(path):
-		p.ThumbSource = store.ThumbSyno
+		p.ThumbSource = photo.ThumbSyno
 	case kind == photo.KindRaster:
 		if err := ix.gen.Generate(path, p.ID); err != nil {
 			return err
 		}
-		p.ThumbSource = store.ThumbFamifo
+		p.ThumbSource = photo.ThumbFamifo
 	}
 
 	return ix.st.Upsert(ctx, p)
@@ -83,7 +83,7 @@ func (ix *Indexer) RemoveFile(ctx context.Context, path string) error {
 	if !ok {
 		return nil
 	}
-	if p.ThumbSource == store.ThumbFamifo {
+	if p.ThumbSource == photo.ThumbFamifo {
 		if err := ix.gen.Remove(p.ID); err != nil {
 			// DBからは消えているので、キャッシュの消し残しは致命的ではない
 			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID, "err", err)
@@ -102,7 +102,7 @@ func (ix *Indexer) RemoveTree(ctx context.Context, dir string) error {
 		return err
 	}
 	for _, p := range photos {
-		if p.ThumbSource != store.ThumbFamifo {
+		if p.ThumbSource != photo.ThumbFamifo {
 			continue
 		}
 		if err := ix.gen.Remove(p.ID); err != nil {
