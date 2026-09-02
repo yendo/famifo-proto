@@ -33,10 +33,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/require"
@@ -1702,4 +1704,216 @@ func TestScrollMapsIntoLayoutSpace(t *testing.T) {
 			"テストとして意味がない。上部バーが場所を占めているか確認すること")
 	require.InDelta(t, got.Expected, got.Converted, 1.0,
 		"スクロール位置をレイアウト座標に直した値が、その写真の段の上端と一致しない")
+}
+
+// --- Task: TestLongScrollDoesNotStallOnSlowServer ---
+
+// 長いスクロールの再現に使うcorpus。共有corpus(200枚)は塊が4つしかなく、
+// 「通り過ぎた塊の取得が滞留する」状況そのものを作れないため別に用意する。
+// 塊の数(= stallPhotoCount / stallPageSize = 60)が、下まで降りる間に
+// 積み上がる取得要求の上限になる。
+const (
+	stallPhotoCount = 1200
+	stallPerDay     = 20
+	stallPageSize   = 20
+
+	// stallItemDelay は /items 1本あたりの応答時間。フルスキャンでCPUが
+	// 埋まったNASを模す。直列化と併せて「1本ずつ、250msかけて捌く」になる。
+	// 全60塊で15秒ぶん。下まで降りるスクロール自体は5秒ほどなので、
+	// 通り過ぎた塊を取り続ける限り、着いた先の塊はその後ろで待たされる。
+	stallItemDelay = 250 * time.Millisecond
+
+	// stallCatchUp は手を止めてから一番古い写真が貼られるまでの許容時間。
+	// 止まった場所に必要な塊は5つ前後(可視範囲+オーバースキャン+先読み)で
+	// 1.3秒ほど。残りの塊を捌き終わるのを待つ側とはっきり分かれる値。
+	stallCatchUp = 4 * time.Second
+)
+
+// seedStallCorpus は stallPhotoCount 枚を stallPerDay 枚ずつの日に分けて登録する。
+func seedStallCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
+	ctx := context.Background()
+	for i := 0; i < stallPhotoCount; i++ {
+		path := filepath.Join(photoDir, fmt.Sprintf("s%05d.jpg", i))
+		if err := writeTestJPEG(path, i); err != nil {
+			return fmt.Errorf("テスト画像を書けません (%s): %w", path, err)
+		}
+		id := store.IDFor(path)
+		if err := gen.Generate(path, id); err != nil {
+			return fmt.Errorf("サムネイルを作れません (%s): %w", path, err)
+		}
+		takenAt := corpusBase.AddDate(0, 0, -(i / stallPerDay)).
+			Add(-time.Duration(i%stallPerDay) * time.Minute)
+		fi, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		p := store.Photo{
+			ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
+			Size: fi.Size(), Ext: ".jpg", ThumbSource: store.ThumbFamifo,
+		}
+		if err := st.Upsert(ctx, p); err != nil {
+			return fmt.Errorf("写真を登録できません (%s): %w", path, err)
+		}
+	}
+	return nil
+}
+
+// startStallGallery はフルスキャン中のNASを模したギャラリーを起動する。
+// CPUが埋まって同時に1本しか捌けない状態を、/items を直列化したうえで
+// 1本あたり stallItemDelay かけることで作る。サムネイルは遅くしない
+// （滞留の実測では29秒のうち /items が273本、/thumb が10本だった）。
+func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64) {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	photoDir := filepath.Join(tempDir, "photos")
+	thumbDir := filepath.Join(tempDir, "thumbs")
+	require.NoError(t, os.MkdirAll(photoDir, 0o755))
+
+	st, err := store.Open(filepath.Join(tempDir, "stall.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { st.Close() })
+
+	gen, err := thumb.NewGenerator(thumbDir, 480)
+	require.NoError(t, err)
+	require.NoError(t, seedStallCorpus(st, gen, photoDir))
+
+	webSrv, err := NewServer(st, thumbDir, stallPageSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	var items, dropped int64
+	h := webSrv.Handler()
+	gate := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/items" {
+			atomic.AddInt64(&items, 1)
+			gate <- struct{}{}
+			defer func() { <-gate }()
+			// ブラウザが取得をやめた要求はここで捨てる。実物の handleItems も
+			// ListRange に r.Context() を渡しており、切断された要求は
+			// DBまで行かずに終わる。捨てないハーネスにすると、ブラウザが何を
+			// 諦めてもサーバは全部を挽き続け、この不具合の再現にならない。
+			select {
+			case <-time.After(stallItemDelay):
+			case <-r.Context().Done():
+				atomic.AddInt64(&dropped, 1)
+				return
+			}
+		}
+		h.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv.URL, &items, &dropped
+}
+
+// 一番古い写真まで降りたあと、画面がそこに追いつくこと。
+//
+// render() は通過中の位置の塊を fetchChunk() で取りに行く。これが中断
+// されないと、止まった場所の塊が「通り過ぎただけの塊」の後ろに並ぶ。
+// 塊が1つでも欠けている間 render() は貼らずに帰るため、#window は
+// 画面外に置かれた前回の内容を保持したまま、ビューポートには何も出ない。
+// 配信が遅いほど滞留は長く、スクロールした距離に比例して伸びる。
+func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
+	requireBrowser(t)
+
+	url, itemsSeen, itemsDropped := startStallGallery(t)
+	ctx := newTab(t)
+	rctx, cancel := context.WithTimeout(ctx, 180*time.Second)
+	defer cancel()
+
+	var height int
+	require.NoError(t, chromedp.Run(rctx,
+		chromedp.EmulateViewport(800, 600),
+		chromedp.Navigate(url),
+		waitForTiles(30*time.Second),
+		chromedp.Evaluate(`document.querySelector('#spacer').offsetHeight`, &height),
+	))
+	require.Greater(t, height, 0, "レイアウトの高さを取得できなかった")
+
+	// ホイールで下まで降りる操作。1回で飛ばすと通り過ぎる塊が無く、
+	// この不具合自体が起きない（スクラバーで飛ぶと1秒で着く）。
+	const steps = 200
+	for i := 1; i <= steps; i++ {
+		require.NoError(t, chromedp.Run(rctx,
+			chromedp.Evaluate(fmt.Sprintf(`document.scrollingElement.scrollTop=%d`, height*i/steps), nil),
+			chromedp.Sleep(20*time.Millisecond)))
+	}
+	duringScroll := atomic.LoadInt64(itemsSeen)
+
+	// 手を止めてから、一番古い写真が実際に貼られるまでを測る。
+	wantFrom := stallPhotoCount - stallPageSize*3
+	start := time.Now()
+	pollErr := chromedp.Run(rctx, chromedp.Poll(
+		fmt.Sprintf(`famifo.pastedRange().from >= %d`, wantFrom),
+		nil, chromedp.WithPollingTimeout(120*time.Second)))
+	elapsed := time.Since(start)
+
+	var pasted struct {
+		From int `json:"from"`
+		To   int `json:"to"`
+	}
+	require.NoError(t, chromedp.Run(rctx, chromedp.Evaluate(`famifo.pastedRange()`, &pasted)))
+
+	t.Logf("追いつくまで %v: /items はスクロール中に%d本、合計%d本（うちブラウザが諦めた%d本、全%d塊）pasted=%d..%d",
+		elapsed.Round(time.Millisecond), duringScroll, atomic.LoadInt64(itemsSeen),
+		atomic.LoadInt64(itemsDropped), stallPhotoCount/stallPageSize, pasted.From, pasted.To)
+
+	require.NoErrorf(t, pollErr,
+		"一番古い写真が貼られないまま終わった: pasted=%d..%d (期待 from>=%d) /items=%d本",
+		pasted.From, pasted.To, wantFrom, atomic.LoadInt64(itemsSeen))
+	require.Lessf(t, elapsed, stallCatchUp,
+		"手を止めてから画面が追いつくまで %v かかった（許容 %v）。"+
+			"通り過ぎた塊の取得が中断されず、止まった場所の塊がその後ろに並んでいる。"+
+			"/items はスクロール中に%d本、追いつくまでに合計%d本（全%d塊）",
+		elapsed.Round(time.Millisecond), stallCatchUp,
+		duringScroll, atomic.LoadInt64(itemsSeen), stallPhotoCount/stallPageSize)
+}
+
+// --- Task: TestLightboxFetchSurvivesAGridRender ---
+
+// awaitPromise は Evaluate に await させる。Promiseを返す式をそのまま
+// 評価すると、解決を待たずに空の結果が返る。
+func awaitPromise(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+	return p.WithAwaitPromise(true)
+}
+
+// ライトボックスが取りに行った塊を、一覧の貼り替えで切らないこと。
+//
+// 仮想スクロールではDOMに可視範囲のタイルしか無いため、ライトボックスは
+// 全体の通し番号で動く。つまり一覧の可視範囲とは無関係な位置の塊を取りに行く。
+// これを abandonChunksOutside が「可視範囲の外だから」と切ると、送った先の
+// 写真がいつまでも出ない。切ってよいのは一覧の貼り替えが始めた取得だけ。
+func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
+	requireBrowser(t)
+
+	url, _, _ := startStallGallery(t)
+	ctx := newTab(t)
+	rctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	// 一覧は先頭を映したまま、そこから最も遠い写真をライトボックスの経路
+	// (urlAt) で取りに行き、その取得中に一覧を貼り替える。配信が遅いので
+	// render() の時点で取得は必ずまだ終わっていない。
+	const js = `(async () => {
+		const p = famifo.urlAt(famifo.total - 1);
+		famifo.render();
+		try {
+			return (await p) ? "取得できた" : "URLがnull";
+		} catch (e) {
+			return "中断された: " + e.name;
+		}
+	})()`
+
+	var got string
+	require.NoError(t, chromedp.Run(rctx,
+		chromedp.EmulateViewport(800, 600),
+		chromedp.Navigate(url),
+		waitForTiles(30*time.Second),
+		chromedp.Evaluate(js, &got, awaitPromise),
+	))
+
+	require.Equalf(t, "取得できた", got,
+		"一番古い写真のURLを引けなかった(%s)。一覧の貼り替えがライトボックスの取得まで中断している",
+		got)
 }
