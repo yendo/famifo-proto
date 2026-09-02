@@ -51,11 +51,6 @@ func decodeThumb(t *testing.T, path string) image.Config {
 	return cfg
 }
 
-func TestCachePathShardsByFirstTwoChars(t *testing.T) {
-	require.Equal(t, filepath.Join("/data/thumbs", "ab", testID+".jpg"),
-		CachePath("/data/thumbs", testID))
-}
-
 func TestGenerateScalesLandscapeByLongEdge(t *testing.T) {
 	g := newTestGenerator(t, 100)
 	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)

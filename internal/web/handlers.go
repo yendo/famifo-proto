@@ -11,7 +11,6 @@ import (
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
-	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 // photoView は1枚分のテンプレート入力。
@@ -159,7 +158,7 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	}
 	switch p.ThumbSource {
 	case photo.ThumbFamifo:
-		http.ServeFile(w, r, thumb.CachePath(s.thumbDir, p.ID))
+		http.ServeFile(w, r, photo.CachePath(s.thumbDir, p.ID))
 	case photo.ThumbSyno:
 		http.ServeFile(w, r, synology.ThumbPath(p.Path))
 	default:

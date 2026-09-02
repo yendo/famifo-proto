@@ -1,6 +1,7 @@
 package photo
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -51,4 +52,12 @@ func TestContentType(t *testing.T) {
 			require.Equal(t, want, ContentType(name))
 		})
 	}
+}
+
+// testID は32文字のダミーID。IDFor の出力と同じ形（16進32文字）にしてある。
+const testID = "abcdef0123456789abcdef0123456789"
+
+func TestCachePathShardsByFirstTwoChars(t *testing.T) {
+	require.Equal(t, filepath.Join("/data/thumbs", "ab", testID+".jpg"),
+		CachePath("/data/thumbs", testID))
 }

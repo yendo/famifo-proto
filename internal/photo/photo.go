@@ -93,3 +93,7 @@ func ContentType(name string) string {
 	}
 	return "application/octet-stream"
 }
+
+// CachePath は自前で生成したサムネイルのパスを返す。
+// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
+func CachePath(dir, id string) string { return filepath.Join(dir, id[:2], id+".jpg") }

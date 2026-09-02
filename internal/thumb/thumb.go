@@ -19,6 +19,7 @@ import (
 	_ "image/png" // image.Decode にPNGを登録する
 
 	"github.com/evanoberholster/imagemeta"
+	"github.com/yendo/famifo-proto/internal/photo"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // image.Decode にWebPを登録する（デコードのみ）
 )
@@ -40,12 +41,8 @@ func NewGenerator(dir string, size int) (*Generator, error) {
 	return &Generator{dir: dir, size: size}, nil
 }
 
-// CachePath は自前で生成したサムネイルのパスを返す。
-// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
-func CachePath(dir, id string) string { return filepath.Join(dir, id[:2], id+".jpg") }
-
 // Path はサムネイルの絶対パスを返す。
-func (g *Generator) Path(id string) string { return CachePath(g.dir, id) }
+func (g *Generator) Path(id string) string { return photo.CachePath(g.dir, id) }
 
 // Generate は srcPath の画像からサムネイルを作る。
 // デコードできないファイルはエラーを返し、キャッシュには何も残さない。

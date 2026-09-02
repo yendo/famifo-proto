@@ -87,10 +87,3 @@ func decodeThumbImage(t *testing.T, path string) image.Image {
 	require.NoError(t, err)
 	return img
 }
-
-// mkdirAll はディレクトリを作ってそのパスを返す。
-func mkdirAll(t *testing.T, dir string) string {
-	t.Helper()
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	return dir
-}
