@@ -19,6 +19,7 @@ const famifo = (() => {
 
 	// 塊番号 -> { html, urls }
 	const chunks = new Map();
+	// 塊番号 -> { job, controller }。取得中のものだけが入る。
 	const inFlight = new Map();
 
 	let L = null;
@@ -229,13 +230,22 @@ const famifo = (() => {
 		spacerTop = spacer.getBoundingClientRect().top + scroller.scrollTop;
 	}
 
-	async function fetchChunk(ci) {
+	// keep を立てた取得は abandonChunksOutside の対象から外す。ライトボックスは
+	// 一覧の可視範囲と無関係な位置の写真を取りに行くため、貼り替えの都合で
+	// 切られると送った先の写真がいつまでも出ない。
+	async function fetchChunk(ci, { keep = false } = {}) {
 		if (chunks.has(ci)) return chunks.get(ci);
-		if (inFlight.has(ci)) return inFlight.get(ci);
+		const pending = inFlight.get(ci);
+		if (pending) {
+			if (keep) pending.keep = true; // 一覧が始めた取得でも、途中から守る側に回る
+			return pending.job;
+		}
 
+		const controller = new AbortController();
 		const job = (async () => {
 			const res = await fetch(
 				`/items?offset=${ci * chunkSize}&limit=${chunkSize}`,
+				{ signal: controller.signal },
 			);
 			if (!res.ok) throw new Error(`items ${res.status}`);
 			const html = await res.text();
@@ -244,14 +254,28 @@ const famifo = (() => {
 			return tiles;
 		})().finally(() => inFlight.delete(ci));
 
-		inFlight.set(ci, job);
+		inFlight.set(ci, { job, controller, keep });
 		return job;
+	}
+
+	// abandonChunksOutside は [from, to] の外で取得中の塊を諦める。
+	// keep が立っているもの（ライトボックスが要求したもの）は触らない。
+	//
+	// スクロール中は通過した位置ごとに取得が始まる。切らずに置くと、止まった
+	// 場所の塊が「通り過ぎただけの塊」の後ろに並ぶ。塊が1つでも欠けている間
+	// render() は貼らずに帰るため、配信が遅いと画面は長く止まったままになる
+	// （フルスキャン中のNASで実測: 20,000枚を下まで降りて28秒）。
+	// 中断された取得は chunks に何も残さないので、後で必要になれば取り直す。
+	function abandonChunksOutside(from, to) {
+		for (const [ci, pending] of inFlight) {
+			if (!pending.keep && (ci < from || ci > to)) pending.controller.abort();
+		}
 	}
 
 	// 全体の通し番号から写真のURLを引く。未取得なら取りに行く。
 	async function urlAt(i) {
 		if (i < 0 || i >= total) return null;
-		const tiles = await fetchChunk(Math.floor(i / chunkSize));
+		const tiles = await fetchChunk(Math.floor(i / chunkSize), { keep: true });
 		return tiles[i % chunkSize]?.url ?? null;
 	}
 
@@ -263,7 +287,7 @@ const famifo = (() => {
 
 	function ensureChunk(i) {
 		if (i < 0 || i >= total) return;
-		fetchChunk(Math.floor(i / chunkSize)).catch(() => {});
+		fetchChunk(Math.floor(i / chunkSize), { keep: true }).catch(() => {});
 	}
 
 	function render() {
@@ -290,6 +314,7 @@ const famifo = (() => {
 			Math.floor((total - 1) / chunkSize),
 			lastChunk + 1,
 		);
+		abandonChunksOutside(fetchFrom, fetchTo);
 		for (let ci = fetchFrom; ci <= fetchTo; ci++) {
 			if (!chunks.has(ci))
 				fetchChunk(ci)
