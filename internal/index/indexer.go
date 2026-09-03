@@ -1,5 +1,9 @@
 // Package index はディスク上の写真とSQLiteインデックスを同期させる。
 // 起動時のフルスキャンとfsnotifyによる追従の両方をここで担う。
+//
+// 1枚を取り込む手順のうち、重いものはサブパッケージに置く。
+// exif がEXIFを読み、takenat が撮影日時を決め、thumb がサムネイルを作る。
+// いずれも取り込み時にしか使わないので、internal/photo と横並びにはしない。
 package index
 
 import (
@@ -10,11 +14,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yendo/famifo-proto/internal/index/exif"
+	"github.com/yendo/famifo-proto/internal/index/takenat"
+	"github.com/yendo/famifo-proto/internal/index/thumb"
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
-	"github.com/yendo/famifo-proto/internal/takenat"
-	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 // Indexer は1ファイル単位でインデックスを更新する。
@@ -25,9 +30,17 @@ type Indexer struct {
 	log   *slog.Logger
 }
 
-// New はIndexerを作る。rootsは写真を収集するルートディレクトリ。
-func New(roots []string, st *store.Store, gen *thumb.Generator, log *slog.Logger) *Indexer {
-	return &Indexer{roots: roots, st: st, gen: gen, log: log}
+// New はIndexerを作る。rootsは写真を収集するルートディレクトリ、
+// thumbDir は生成したサムネイルの置き場所、thumbSize は長辺の最大ピクセル数。
+//
+// サムネイル生成器はここで組み立てる。呼び出し側にとってサムネイルは
+// インデックス作成の副産物であって、単体で持ち回る道具ではない。
+func New(roots []string, st *store.Store, thumbDir string, thumbSize int, log *slog.Logger) (*Indexer, error) {
+	gen, err := thumb.NewGenerator(thumbDir, thumbSize)
+	if err != nil {
+		return nil, err
+	}
+	return &Indexer{roots: roots, st: st, gen: gen, log: log}, nil
 }
 
 // IndexFile は1ファイルをインデックスに反映する。
@@ -48,13 +61,17 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 		return nil
 	}
 
+	// EXIFはここで1回だけ読む。撮影日時とサムネイルの向きの両方がこの1回で
+	// 決まるので、写真1枚につきEXIFのパースは1回で済む。
+	m := exif.Read(path)
+
 	p := photo.Photo{
 		ID:      photo.IDFor(path),
 		Path:    path,
 		ModTime: fi.ModTime(),
 		Size:    fi.Size(),
 		Ext:     strings.ToLower(filepath.Ext(path)),
-		TakenAt: takenat.Resolve(path, fi.ModTime()),
+		TakenAt: takenat.Resolve(m.TakenAt, fi.ModTime()),
 	}
 
 	// Synologyが作ったサムネイルがあれば借りる。デコードもリサイズもせずに済み、
@@ -64,7 +81,7 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	case synology.HasThumb(path):
 		p.ThumbSource = photo.ThumbSyno
 	case kind == photo.KindRaster:
-		if err := ix.gen.Generate(path, p.ID); err != nil {
+		if err := ix.gen.Generate(path, p.ID, m.Orientation); err != nil {
 			return err
 		}
 		p.ThumbSource = photo.ThumbFamifo
@@ -85,15 +102,15 @@ func (ix *Indexer) RemoveFile(ctx context.Context, path string) error {
 	}
 	if p.ThumbSource == photo.ThumbFamifo {
 		if err := ix.gen.Remove(p.ID); err != nil {
-			// DBからは消えているので、キャッシュの消し残しは致命的ではない
+			// DBからは消えているので、サムネイルの消し残しは致命的ではない
 			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID, "err", err)
 		}
 	}
 	return nil
 }
 
-// RemoveTree はdir配下に登録されている写真をまとめてインデックスとサムネイル
-// キャッシュから消す。ディレクトリのリネーム/移動はfsnotifyでは子ファイルごとの
+// RemoveTree はdir配下に登録されている写真を、まとめてインデックスと
+// サムネイルの置き場から消す。ディレクトリのリネーム/移動はfsnotifyでは子ファイルごとの
 // イベントが来ないため、パスの前方一致で一括削除する必要がある。
 // 該当が無いパスに対しては何もしない。
 func (ix *Indexer) RemoveTree(ctx context.Context, dir string) error {
@@ -106,7 +123,7 @@ func (ix *Indexer) RemoveTree(ctx context.Context, dir string) error {
 			continue
 		}
 		if err := ix.gen.Remove(p.ID); err != nil {
-			// DBからは消えているので、キャッシュの消し残しは致命的ではない
+			// DBからは消えているので、サムネイルの消し残しは致命的ではない
 			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID, "err", err)
 		}
 	}

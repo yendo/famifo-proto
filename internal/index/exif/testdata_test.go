@@ -1,4 +1,4 @@
-package takenat
+package exif
 
 import (
 	"bytes"
@@ -128,6 +128,46 @@ func writeJPEGWithEXIFOffset(t *testing.T, dir, name string, when time.Time, off
 
 	out := append([]byte{0xFF, 0xD8}, app1.Bytes()...)
 	out = append(out, body.Bytes()[2:]...)
+
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, out, 0o644))
+	return path
+}
+
+// writeJPEGWithOrientation は IFD0 に Orientation タグだけを持つJPEGを書き出す。
+// orientation が 0 のときはEXIFを一切付けない。
+func writeJPEGWithOrientation(t *testing.T, dir, name string, orientation uint16) string {
+	t.Helper()
+
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	var body bytes.Buffer
+	require.NoError(t, jpeg.Encode(&body, img, nil))
+
+	out := body.Bytes()
+	if orientation != 0 {
+		le := binary.LittleEndian
+		var tiff bytes.Buffer
+		tiff.WriteString("II")              // リトルエンディアン
+		binary.Write(&tiff, le, uint16(42)) // TIFFマジック
+		binary.Write(&tiff, le, uint32(8))  // IFD0のオフセット
+
+		binary.Write(&tiff, le, uint16(1))      // IFD0: エントリ1件
+		binary.Write(&tiff, le, uint16(0x0112)) // Orientation
+		binary.Write(&tiff, le, uint16(3))      // SHORT
+		binary.Write(&tiff, le, uint32(1))      // 個数
+		binary.Write(&tiff, le, orientation)    // 4バイトの値欄に直接埋める
+		binary.Write(&tiff, le, uint16(0))      // 値欄の余り
+		binary.Write(&tiff, le, uint32(0))      // 次のIFDなし
+
+		var app1 bytes.Buffer
+		app1.Write([]byte{0xFF, 0xE1})
+		binary.Write(&app1, binary.BigEndian, uint16(2+6+tiff.Len()))
+		app1.WriteString("Exif\x00\x00")
+		app1.Write(tiff.Bytes())
+
+		out = append([]byte{0xFF, 0xD8}, app1.Bytes()...)
+		out = append(out, body.Bytes()[2:]...) // SOIを除いた残りを連結
+	}
 
 	path := filepath.Join(dir, name)
 	require.NoError(t, os.WriteFile(path, out, 0o644))

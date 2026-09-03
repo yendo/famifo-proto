@@ -17,7 +17,7 @@ var ErrVersionRequested = errors.New("version requested")
 // Config はアプリの実行時設定。すべてコマンドライン引数から与えられる。
 type Config struct {
 	PhotoDirs []string // 写真を収集するルートディレクトリ（複数可）
-	DataDir   string   // DBとサムネイルキャッシュの置き場
+	DataDir   string   // DBとサムネイルの置き場
 	Addr      string   // HTTPの待ち受けアドレス
 }
 
@@ -31,7 +31,7 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	fs.StringVar(&dirs, "dir", "",
 		fmt.Sprintf("写真を収集するディレクトリ (必須)。%q で区切って複数指定できる",
 			string(filepath.ListSeparator)))
-	fs.StringVar(&c.DataDir, "data", "./famifo-data", "DBとサムネイルキャッシュの保存先")
+	fs.StringVar(&c.DataDir, "data", "./famifo-data", "DBとサムネイルの保存先")
 	fs.StringVar(&c.Addr, "addr", ":8080", "HTTPの待ち受けアドレス")
 	showVersion := fs.Bool("version", false, "バージョンを表示して終了する")
 
@@ -122,5 +122,5 @@ func dirContains(photoDir, dataDir string) (bool, error) {
 // DBPath はSQLiteファイルのパスを返す。
 func (c Config) DBPath() string { return filepath.Join(c.DataDir, "famifo.db") }
 
-// ThumbDir はサムネイルキャッシュのルートを返す。
+// ThumbDir は生成したサムネイルのルートを返す。
 func (c Config) ThumbDir() string { return filepath.Join(c.DataDir, "thumbs") }

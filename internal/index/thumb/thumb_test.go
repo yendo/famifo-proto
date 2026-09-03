@@ -55,9 +55,9 @@ func TestGenerateScalesLandscapeByLongEdge(t *testing.T) {
 	g := newTestGenerator(t, 100)
 	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 
-	require.NoError(t, g.Generate(src, testID))
+	require.NoError(t, g.Generate(src, testID, 1))
 
-	cfg := decodeThumb(t, g.Path(testID))
+	cfg := decodeThumb(t, g.path(testID))
 	require.Equal(t, 100, cfg.Width)
 	require.Equal(t, 50, cfg.Height, "アスペクト比を保つ")
 }
@@ -66,9 +66,9 @@ func TestGenerateScalesPortraitByLongEdge(t *testing.T) {
 	g := newTestGenerator(t, 100)
 	src := writeImage(t, t.TempDir(), "a.jpg", 200, 400)
 
-	require.NoError(t, g.Generate(src, testID))
+	require.NoError(t, g.Generate(src, testID, 1))
 
-	cfg := decodeThumb(t, g.Path(testID))
+	cfg := decodeThumb(t, g.path(testID))
 	require.Equal(t, 50, cfg.Width)
 	require.Equal(t, 100, cfg.Height)
 }
@@ -77,9 +77,9 @@ func TestGenerateDoesNotUpscale(t *testing.T) {
 	g := newTestGenerator(t, 500)
 	src := writeImage(t, t.TempDir(), "a.jpg", 40, 20)
 
-	require.NoError(t, g.Generate(src, testID))
+	require.NoError(t, g.Generate(src, testID, 1))
 
-	cfg := decodeThumb(t, g.Path(testID))
+	cfg := decodeThumb(t, g.path(testID))
 	require.Equal(t, 40, cfg.Width)
 	require.Equal(t, 20, cfg.Height)
 }
@@ -91,9 +91,9 @@ func TestGenerateAcceptsPNGAndGIF(t *testing.T) {
 			g := newTestGenerator(t, 100)
 			src := writeImage(t, dir, name, 400, 200)
 
-			require.NoError(t, g.Generate(src, testID))
+			require.NoError(t, g.Generate(src, testID, 1))
 
-			require.Equal(t, 100, decodeThumb(t, g.Path(testID)).Width)
+			require.Equal(t, 100, decodeThumb(t, g.path(testID)).Width)
 		})
 	}
 }
@@ -103,30 +103,30 @@ func TestGenerateFailsOnUndecodableFile(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "broken.jpg")
 	require.NoError(t, os.WriteFile(src, []byte("this is not an image"), 0o644))
 
-	err := g.Generate(src, testID)
+	err := g.Generate(src, testID, 1)
 
 	require.Error(t, err)
-	require.NoFileExists(t, g.Path(testID), "失敗時に中途半端なファイルを残さない")
+	require.NoFileExists(t, g.path(testID), "失敗時に中途半端なファイルを残さない")
 }
 
 func TestGenerateFailsOnMissingFile(t *testing.T) {
 	g := newTestGenerator(t, 100)
 
-	require.Error(t, g.Generate(filepath.Join(t.TempDir(), "nope.jpg"), testID))
+	require.Error(t, g.Generate(filepath.Join(t.TempDir(), "nope.jpg"), testID, 1))
 }
 
 func TestRemove(t *testing.T) {
 	g := newTestGenerator(t, 100)
 	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
-	require.NoError(t, g.Generate(src, testID))
+	require.NoError(t, g.Generate(src, testID, 1))
 
 	require.NoError(t, g.Remove(testID))
 
-	require.NoFileExists(t, g.Path(testID))
+	require.NoFileExists(t, g.path(testID))
 	require.NoError(t, g.Remove(testID), "存在しないサムネイルの削除はエラーにしない")
 }
 
-// TestGenerateAppliesEXIFOrientation は、EXIFのOrientationがサムネイルの
+// TestGenerateAppliesOrientation は、渡されたOrientationがサムネイルの
 // 画素に実際に適用されることを確かめる。
 //
 // image.Decode はEXIFを見ずに生の画素をそのまま返し、jpeg.Encode はEXIFを
@@ -134,9 +134,11 @@ func TestRemove(t *testing.T) {
 // はどこにも残らず失われる。実測では手元の4,495枚中1,230枚(27.4%)が
 // Orientation 6/8 で、その全てが横倒しになっていた。
 //
+// 値が実際のEXIFから来ることは internal/index/exif と internal/index が押さえる。
+//
 // 元画像は 16x8（横長）で左上の四分割だけが赤。回転後にその赤がどの隅へ
 // 来るかで、寸法の入れ替えだけでなく画素が本当に動いたかまで見分けられる。
-func TestGenerateAppliesEXIFOrientation(t *testing.T) {
+func TestGenerateAppliesOrientation(t *testing.T) {
 	tests := []struct {
 		name        string
 		orientation uint16
@@ -145,7 +147,7 @@ func TestGenerateAppliesEXIFOrientation(t *testing.T) {
 		markerLeft  bool // 赤が左半分にあるか
 		markerTop   bool // 赤が上半分にあるか
 	}{
-		{"EXIFなし", 0, 16, 8, true, true},
+		{"0 不明", 0, 16, 8, true, true},
 		{"1 そのまま", 1, 16, 8, true, true},
 		{"2 左右反転", 2, 16, 8, false, true},
 		{"3 180度", 3, 16, 8, false, false},
@@ -159,11 +161,11 @@ func TestGenerateAppliesEXIFOrientation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := newTestGenerator(t, 100) // 16x8は縮小されないので画素を直接見られる
-			src := writeJPEGWithOrientation(t, t.TempDir(), "a.jpg", markerJPEG(16, 8), tt.orientation)
+			src := writeJPEGImage(t, t.TempDir(), "a.jpg", markerJPEG(16, 8))
 
-			require.NoError(t, g.Generate(src, testID))
+			require.NoError(t, g.Generate(src, testID, tt.orientation))
 
-			img := decodeThumbImage(t, g.Path(testID))
+			img := decodeThumbImage(t, g.path(testID))
 			b := img.Bounds()
 			require.Equalf(t, tt.wantW, b.Dx(),
 				"Orientation=%d のサムネイルの幅。縦横が入れ替わっていない疑い（実際 %dx%d）",
@@ -210,17 +212,17 @@ func TestGenerateSkipsWhenTheThumbnailIsUpToDate(t *testing.T) {
 	g := newTestGenerator(t, 100)
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.jpg", 400, 200)
-	require.NoError(t, g.Generate(src, testID))
+	require.NoError(t, g.Generate(src, testID, 1))
 
 	// 中身を見分けられる印を置き、元ファイルより新しくする
 	marker := []byte("not a real thumbnail")
-	require.NoError(t, os.WriteFile(g.Path(testID), marker, 0o644))
+	require.NoError(t, os.WriteFile(g.path(testID), marker, 0o644))
 	future := time.Now().Add(time.Hour)
-	require.NoError(t, os.Chtimes(g.Path(testID), future, future))
+	require.NoError(t, os.Chtimes(g.path(testID), future, future))
 
-	require.NoError(t, g.Generate(src, testID))
+	require.NoError(t, g.Generate(src, testID, 1))
 
-	got, err := os.ReadFile(g.Path(testID))
+	got, err := os.ReadFile(g.path(testID))
 	require.NoError(t, err)
 	require.Equal(t, marker, got, "元ファイルが変わっていなければ作り直さない")
 }
@@ -230,15 +232,15 @@ func TestGenerateRebuildsWhenTheSourceIsNewer(t *testing.T) {
 	g := newTestGenerator(t, 100)
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.jpg", 400, 200)
-	require.NoError(t, g.Generate(src, testID))
-	require.NoError(t, os.WriteFile(g.Path(testID), []byte("stale"), 0o644))
+	require.NoError(t, g.Generate(src, testID, 1))
+	require.NoError(t, os.WriteFile(g.path(testID), []byte("stale"), 0o644))
 
 	// 元ファイルをサムネイルより新しくする
 	future := time.Now().Add(time.Hour)
 	require.NoError(t, os.Chtimes(src, future, future))
 
-	require.NoError(t, g.Generate(src, testID))
+	require.NoError(t, g.Generate(src, testID, 1))
 
-	cfg := decodeThumb(t, g.Path(testID))
+	cfg := decodeThumb(t, g.path(testID))
 	require.Equal(t, 100, cfg.Width, "元が新しければ作り直す")
 }

@@ -22,7 +22,6 @@ import (
 	"github.com/yendo/famifo-proto/internal/config"
 	"github.com/yendo/famifo-proto/internal/index"
 	"github.com/yendo/famifo-proto/internal/store"
-	"github.com/yendo/famifo-proto/internal/thumb"
 	"github.com/yendo/famifo-proto/internal/web"
 )
 
@@ -136,11 +135,6 @@ func run() error {
 	}
 	defer st.Close()
 
-	gen, err := thumb.NewGenerator(cfg.ThumbDir(), thumbSize)
-	if err != nil {
-		return err
-	}
-
 	srv, err := web.NewServer(st, cfg.ThumbDir(), pageSize, log)
 	if err != nil {
 		return err
@@ -164,7 +158,10 @@ func run() error {
 		}
 	}()
 
-	ix := index.New(cfg.PhotoDirs, st, gen, log)
+	ix, err := index.New(cfg.PhotoDirs, st, cfg.ThumbDir(), thumbSize, log)
+	if err != nil {
+		return err
+	}
 
 	// fsnotifyは停止中の変更を検知できないので、起動のたびに実態と突き合わせる。
 	log.Info("フルスキャンを開始", "dirs", cfg.PhotoDirs)

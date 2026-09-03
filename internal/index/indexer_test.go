@@ -13,15 +13,17 @@ import (
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
-	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 type fixture struct {
-	ix   *Indexer
-	st   *store.Store
-	gen  *thumb.Generator
-	root string
+	ix       *Indexer
+	st       *store.Store
+	thumbDir string
+	root     string
 }
+
+// thumbPath は写真IDに対応するサムネイルのパスを返す。
+func (f *fixture) thumbPath(id string) string { return photo.FamifoThumbPath(f.thumbDir, id) }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
@@ -33,11 +35,12 @@ func newFixture(t *testing.T) *fixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	gen, err := thumb.NewGenerator(filepath.Join(base, "thumbs"), 100)
+	thumbDir := filepath.Join(base, "thumbs")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ix, err := New([]string{root}, st, thumbDir, 100, log)
 	require.NoError(t, err)
 
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return &fixture{ix: New([]string{root}, st, gen, log), st: st, gen: gen, root: root}
+	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: root}
 }
 
 // newFixtureRoots は複数のルートを持つ fixture を作る。roots[0] が f.root。
@@ -56,11 +59,12 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	gen, err := thumb.NewGenerator(filepath.Join(base, "thumbs"), 100)
+	thumbDir := filepath.Join(base, "thumbs")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ix, err := New(roots, st, thumbDir, 100, log)
 	require.NoError(t, err)
 
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return &fixture{ix: New(roots, st, gen, log), st: st, gen: gen, root: roots[0]}, roots
+	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: roots[0]}, roots
 }
 
 func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
@@ -74,7 +78,22 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 	require.Equal(t, path, got.Path)
 	require.Equal(t, ".jpg", got.Ext)
 	require.Equal(t, photo.ThumbFamifo, got.ThumbSource)
-	require.FileExists(t, f.gen.Path(got.ID))
+	require.FileExists(t, f.thumbPath(got.ID))
+}
+
+// TestIndexFileAppliesTheEXIFOrientationToTheThumbnail はEXIFから読んだ向きが
+// サムネイル生成まで届いていることを確かめる。読み取り(internal/index/exif)と
+// 適用(internal/index/thumb)は別パッケージなので、繋ぎ違えても双方のテストは通る。
+func TestIndexFileAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
+	f := newFixture(t)
+	// 縮小されない小ささにして、向きの適用が寸法にそのまま出るようにする。
+	path := writeJPEGWithOrientation(t, f.root, "a.jpg", 16, 8, 6)
+
+	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+
+	cfg := decodeThumbConfig(t, f.thumbPath(photo.IDFor(path)))
+	require.Equal(t, 8, cfg.Width, "Orientation=6 なら縦横が入れ替わる")
+	require.Equal(t, 16, cfg.Height)
 }
 
 func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
@@ -88,7 +107,7 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, photo.ThumbNone, got.ThumbSource, "HEICはデコードできない")
-	require.NoFileExists(t, f.gen.Path(got.ID))
+	require.NoFileExists(t, f.thumbPath(got.ID))
 }
 
 func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
@@ -133,7 +152,7 @@ func TestRemoveFileDeletesRowAndThumb(t *testing.T) {
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
 	require.NoError(t, f.ix.IndexFile(ctx, path))
-	thumbPath := f.gen.Path(photo.IDFor(path))
+	thumbPath := f.thumbPath(photo.IDFor(path))
 	require.FileExists(t, thumbPath)
 
 	require.NoError(t, f.ix.RemoveFile(ctx, path))
@@ -168,7 +187,7 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, photo.ThumbSyno, got.ThumbSource)
-	require.NoFileExists(t, f.gen.Path(got.ID), "借りられるなら自前では作らない")
+	require.NoFileExists(t, f.thumbPath(got.ID), "借りられるなら自前では作らない")
 }
 
 // HEICはGoでデコードできないが、Synologyのサムネイルがあれば一覧に出せる。

@@ -57,7 +57,7 @@ every one of them.
 | Flag | Default | Description |
 |---|---|---|
 | `-dir` | (required) | Directories to collect photos from, `:`-separated |
-| `-data` | `./famifo-data` | Where the database and thumbnail cache are stored |
+| `-data` | `./famifo-data` | Where the database and generated thumbnails are stored |
 | `-addr` | `:8080` | HTTP listen address |
 | `-version` | | Print the build version and exit |
 
@@ -118,10 +118,10 @@ buys nothing, since they come and go together.
 
 ### The `/data` mount is not optional
 
-Left out, the database and thumbnail cache land in the container's writable layer and
-are gone the moment the container is recreated — which is exactly what updating the
-image on DSM does. That costs a full reindex, and nothing reveals it until the first
-update.
+Left out, the database and generated thumbnails land in the container's writable
+layer and are gone the moment the container is recreated — which is exactly what
+updating the image on DSM does. That costs a full reindex, and nothing reveals it
+until the first update.
 
 ### Running as a non-root user
 
@@ -140,10 +140,10 @@ environments whose UI cannot pass `--user`.
 
 Ownership of a bind mount comes from the host directory and is not adjusted by Docker,
 so the directory has to be writable by that id beforehand. Named volumes behave
-differently — they inherit ownership from the image — but a bind mount keeps the cache
-visible on the NAS, where deleting it to force a rebuild is a file-manager operation
-rather than a shell one. Losing it costs only rebuild time; it holds nothing that is
-not derived from the photos.
+differently — they inherit ownership from the image — but a bind mount keeps the data
+directory visible on the NAS, where deleting it to force a rebuild is a file-manager
+operation rather than a shell one. Losing it costs only rebuild time; it holds nothing
+that is not derived from the photos.
 
 ### Timezone in a container
 
@@ -207,8 +207,8 @@ skipping.
   skipped the same way, with `ルートを読めないため飛ばした`, rather than aborting the scan and
   stalling the healthy roots. The side effect is that if you really did empty a root, its rows
   and thumbnails stay behind and the warning repeats on every startup. To recover, delete the
-  data directory (`-data`, default `./famifo-data`) and start again — the database and thumbnail
-  cache are rebuilt.
+  data directory (`-data`, default `./famifo-data`) and start again — the database and the
+  thumbnails are rebuilt.
 - **Dropping a root from `-dir` deletes its photos from the index.** The index follows what you
   currently point it at. Photos under a path that is no longer a root are removed, thumbnails
   included, and getting them back means reindexing. This is the one case the guard above does

@@ -65,13 +65,13 @@ func TestContentType(t *testing.T) {
 // testID は32文字のダミーID。IDFor の出力と同じ形（16進32文字）にしてある。
 const testID = "abcdef0123456789abcdef0123456789"
 
-func TestCachePathShardsByFirstTwoChars(t *testing.T) {
+func TestFamifoThumbPathShardsByFirstTwoChars(t *testing.T) {
 	require.Equal(t, filepath.Join("/data/thumbs", "ab", testID+".jpg"),
-		CachePath("/data/thumbs", testID))
+		FamifoThumbPath("/data/thumbs", testID))
 }
 
 func TestThumbPathBySource(t *testing.T) {
-	const cacheDir = "/data/thumbs"
+	const thumbDir = "/data/thumbs"
 	tests := []struct {
 		name string
 		p    Photo
@@ -79,9 +79,9 @@ func TestThumbPathBySource(t *testing.T) {
 		ok   bool
 	}{
 		{
-			name: "自前で生成したものはキャッシュから引く",
+			name: "自前で生成したものは自分の置き場から引く",
 			p:    Photo{ID: testID, Path: "/photos/a.jpg", ThumbSource: ThumbFamifo},
-			want: filepath.Join(cacheDir, "ab", testID+".jpg"),
+			want: filepath.Join(thumbDir, "ab", testID+".jpg"),
 			ok:   true,
 		},
 		{
@@ -99,7 +99,7 @@ func TestThumbPathBySource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := ThumbPath(tt.p, cacheDir)
+			got, ok := ThumbPath(tt.p, thumbDir)
 			require.Equal(t, tt.ok, ok)
 			require.Equal(t, tt.want, got)
 		})

@@ -57,7 +57,7 @@ func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, src 
 
 	switch src {
 	case photo.ThumbFamifo:
-		writeFileAt(t, photo.CachePath(f.thumbDir, p.ID), "thumb-"+name)
+		writeFileAt(t, photo.FamifoThumbPath(f.thumbDir, p.ID), "thumb-"+name)
 	case photo.ThumbSyno:
 		writeFileAt(t, synology.ThumbPath(path), "eadir-"+name)
 		writeFileAt(t, synology.LargePath(path), "eadir-xl-"+name)

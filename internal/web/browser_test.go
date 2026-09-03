@@ -43,9 +43,9 @@ import (
 	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/require"
 
+	"github.com/yendo/famifo-proto/internal/index/thumb"
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
-	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 const (
@@ -322,7 +322,7 @@ func seedCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
 
 			id := photo.IDFor(path)
 			thumbSource := photo.ThumbFamifo
-			if gen.Generate(path, id) != nil {
+			if gen.Generate(path, id, 1) != nil {
 				thumbSource = photo.ThumbNone
 			}
 
@@ -1739,7 +1739,7 @@ func seedStallCorpus(st *store.Store, gen *thumb.Generator, photoDir string) err
 			return fmt.Errorf("テスト画像を書けません (%s): %w", path, err)
 		}
 		id := photo.IDFor(path)
-		if err := gen.Generate(path, id); err != nil {
+		if err := gen.Generate(path, id, 1); err != nil {
 			return fmt.Errorf("サムネイルを作れません (%s): %w", path, err)
 		}
 		takenAt := corpusBase.AddDate(0, 0, -(i / stallPerDay)).

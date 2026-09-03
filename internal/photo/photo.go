@@ -33,7 +33,7 @@ type ThumbSource string
 
 const (
 	ThumbNone   ThumbSource = ""       // サムネイルが無い
-	ThumbFamifo ThumbSource = "famifo" // famifoが生成し、サムネイルキャッシュに置いたもの
+	ThumbFamifo ThumbSource = "famifo" // famifoが生成し、自分の置き場に持っているもの
 	ThumbSyno   ThumbSource = "eadir"  // Synologyが @eaDir に持っているもの。読むだけで書き換えない
 )
 
@@ -96,18 +96,20 @@ func ContentType(name string) string {
 	return "application/octet-stream"
 }
 
-// CachePath は自前で生成したサムネイルのパスを返す。
+// FamifoThumbPath は famifo が自分で生成したサムネイルのパスを返す。
 // 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
-func CachePath(dir, id string) string { return filepath.Join(dir, id[:2], id+".jpg") }
+func FamifoThumbPath(thumbDir, id string) string {
+	return filepath.Join(thumbDir, id[:2], id+".jpg")
+}
 
 // ThumbPath は一覧に出すサムネイルのパスを返す。無ければ ok=false。
 // ok=false のとき、一覧は原本のURLにフォールバックし、/thumb/ エンドポイントは404を返す。
 //
-// cacheDir は -data から来る配置設定で、写真そのものの属性ではないため引数で受ける。
-func ThumbPath(p Photo, cacheDir string) (string, bool) {
+// thumbDir は -data から来る配置設定で、写真そのものの属性ではないため引数で受ける。
+func ThumbPath(p Photo, thumbDir string) (string, bool) {
 	switch p.ThumbSource {
 	case ThumbFamifo:
-		return CachePath(cacheDir, p.ID), true
+		return FamifoThumbPath(thumbDir, p.ID), true
 	case ThumbSyno:
 		return synology.ThumbPath(p.Path), true
 	}

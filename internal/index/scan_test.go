@@ -94,7 +94,7 @@ func TestFullScanRemovesDeletedPhotos(t *testing.T) {
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
 	_, err := f.ix.FullScan(ctx)
 	require.NoError(t, err)
-	thumbPath := f.gen.Path(photo.IDFor(path))
+	thumbPath := f.thumbPath(photo.IDFor(path))
 	require.FileExists(t, thumbPath)
 
 	// アプリ停止中に消されたことを模す
@@ -131,8 +131,8 @@ func TestFullScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
-	thumbA := f.gen.Path(photo.IDFor(pathA))
-	thumbB := f.gen.Path(photo.IDFor(pathB))
+	thumbA := f.thumbPath(photo.IDFor(pathA))
+	thumbB := f.thumbPath(photo.IDFor(pathB))
 	require.FileExists(t, thumbA)
 	require.FileExists(t, thumbB)
 
@@ -178,7 +178,7 @@ func TestFullScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
 	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
 	_, err := f.ix.FullScan(ctx)
 	require.NoError(t, err)
-	thumbGone := f.gen.Path(photo.IDFor(gone))
+	thumbGone := f.thumbPath(photo.IDFor(gone))
 	require.FileExists(t, thumbGone)
 
 	// aliceのドライブが未マウントになった状況を模す：中身だけ消してルートは残す
@@ -206,7 +206,7 @@ func TestFullScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 	require.NoError(t, err)
 
 	// bob を引数から外して起動し直した状況を模す
-	f2 := &Indexer{roots: roots[:1], st: f.st, gen: f.gen, log: f.ix.log}
+	f2 := &Indexer{roots: roots[:1], st: f.st, gen: f.ix.gen, log: f.ix.log}
 
 	stats, err := f2.FullScan(ctx)
 
@@ -215,7 +215,7 @@ func TestFullScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
-	require.NoFileExists(t, f.gen.Path(photo.IDFor(dropped)), "サムネイルも消える")
+	require.NoFileExists(t, f.thumbPath(photo.IDFor(dropped)), "サムネイルも消える")
 }
 
 // ルートのパスごと消えている（ボリュームが外れた等）ときは、そのルートを
@@ -239,7 +239,7 @@ func TestFullScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
 	require.NoError(t, err, "読めないルートがあっても走査全体は失敗しない")
 	require.Equal(t, 1, stats.Indexed, "生きているルートの新しい写真は取り込む")
 	require.Equal(t, 0, stats.Removed, "読めないルートの写真は消さない")
-	require.FileExists(t, f.gen.Path(photo.IDFor(kept)))
+	require.FileExists(t, f.thumbPath(photo.IDFor(kept)))
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 3, n)
