@@ -1,4 +1,4 @@
-package exif
+package exif_test
 
 import (
 	"os"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/index/exif"
 )
 
 func TestReadReturnsTheEXIFDate(t *testing.T) {
@@ -14,7 +15,7 @@ func TestReadReturnsTheEXIFDate(t *testing.T) {
 	when := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
 	path := writeJPEGWithEXIF(t, dir, "a.jpg", when)
 
-	got := Read(path)
+	got := exif.Read(path)
 
 	require.True(t, got.TakenAt.Equal(when), "got=%v", got.TakenAt)
 	// 時差を持たないDateTimeOriginalを imagemeta がUTCとして返すことを固定する。
@@ -29,7 +30,7 @@ func TestReadKeepsTheEXIFOffset(t *testing.T) {
 	path := writeJPEGWithEXIFOffset(t, dir, "a.jpg",
 		time.Date(2023, 8, 4, 12, 0, 0, 0, time.UTC), "+02:00")
 
-	got := Read(path)
+	got := exif.Read(path)
 
 	_, off := got.TakenAt.Zone()
 	require.Equal(t, 2*60*60, off, "時差が書かれていればそれを保つ: got=%v", got.TakenAt)
@@ -40,7 +41,7 @@ func TestReadReturnsZeroDateWithoutEXIF(t *testing.T) {
 	dir := t.TempDir()
 	path := writeJPEGWithoutEXIF(t, dir, "a.jpg")
 
-	got := Read(path)
+	got := exif.Read(path)
 
 	require.True(t, got.TakenAt.IsZero(), "撮影日時が無いことを呼び出し側に伝える")
 	require.Equal(t, uint16(1), got.Orientation, "回転不要")
@@ -51,7 +52,7 @@ func TestReadReturnsTheOrientation(t *testing.T) {
 		t.Run(string(rune('0'+o)), func(t *testing.T) {
 			path := writeJPEGWithOrientation(t, t.TempDir(), "a.jpg", o)
 
-			require.Equal(t, o, Read(path).Orientation)
+			require.Equal(t, o, exif.Read(path).Orientation)
 		})
 	}
 }
@@ -63,7 +64,7 @@ func TestReadFallsBackForUnreadableFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(broken, []byte("GIF89a not really a gif"), 0o644))
 
 	for _, path := range []string{broken, filepath.Join(dir, "nope.jpg")} {
-		got := Read(path)
+		got := exif.Read(path)
 
 		require.True(t, got.TakenAt.IsZero(), "path=%s", path)
 		require.Equal(t, uint16(1), got.Orientation, "path=%s", path)

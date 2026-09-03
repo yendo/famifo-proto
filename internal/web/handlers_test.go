@@ -1,4 +1,4 @@
-package web
+package web_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/web"
 
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
@@ -38,7 +39,7 @@ func newWebFixture(t *testing.T, pageSize int) *webFixture {
 	require.NoError(t, os.MkdirAll(photoDir, 0o755))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv, err := NewServer(st, thumbDir, pageSize, log)
+	srv, err := web.NewServer(st, thumbDir, pageSize, log)
 	require.NoError(t, err)
 	return &webFixture{h: srv.Handler(), st: st, thumbDir: thumbDir, photoDir: photoDir}
 }

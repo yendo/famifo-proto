@@ -1,4 +1,4 @@
-package index
+package index_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/index"
 
 	"github.com/yendo/famifo-proto/internal/photo"
 )
@@ -206,7 +207,8 @@ func TestFullScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 	require.NoError(t, err)
 
 	// bob を引数から外して起動し直した状況を模す
-	f2 := &Indexer{roots: roots[:1], st: f.st, gen: f.ix.gen, log: f.ix.log}
+	f2, err := index.New(roots[:1], f.st, f.thumbDir, 100, f.log)
+	require.NoError(t, err)
 
 	stats, err := f2.FullScan(ctx)
 

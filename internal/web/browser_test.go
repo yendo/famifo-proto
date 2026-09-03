@@ -16,7 +16,7 @@
 //     （実行環境によって結果が変わるとCIで再現できないため）。
 //
 // 実行方法は README.md を参照。
-package web
+package web_test
 
 import (
 	"context"
@@ -42,6 +42,7 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/web"
 
 	"github.com/yendo/famifo-proto/internal/index/thumb"
 	"github.com/yendo/famifo-proto/internal/photo"
@@ -294,7 +295,7 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	webSrv, err := NewServer(st, thumbDir, testPageSize, log)
+	webSrv, err := web.NewServer(st, thumbDir, testPageSize, log)
 	if err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
@@ -1779,7 +1780,7 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 	require.NoError(t, err)
 	require.NoError(t, seedStallCorpus(st, gen, photoDir))
 
-	webSrv, err := NewServer(st, thumbDir, stallPageSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	webSrv, err := web.NewServer(st, thumbDir, stallPageSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 
 	var items, dropped int64

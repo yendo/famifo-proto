@@ -1,4 +1,4 @@
-package thumb
+package thumb_test
 
 import (
 	"bytes"

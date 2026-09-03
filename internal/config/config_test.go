@@ -1,4 +1,4 @@
-package config
+package config_test
 
 import (
 	"io"
@@ -7,12 +7,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/config"
 )
 
 func TestParseUsesDefaults(t *testing.T) {
 	dir := t.TempDir()
 
-	got, err := Parse([]string{"-dir", dir}, io.Discard)
+	got, err := config.Parse([]string{"-dir", dir}, io.Discard)
 
 	require.NoError(t, err)
 	require.Equal(t, []string{dir}, got.PhotoDirs)
@@ -23,7 +24,7 @@ func TestParseUsesDefaults(t *testing.T) {
 func TestParseOverridesEveryFlag(t *testing.T) {
 	dir := t.TempDir()
 
-	got, err := Parse([]string{
+	got, err := config.Parse([]string{
 		"-dir", dir, "-data", "/var/famifo", "-addr", "192.168.1.10:9000",
 	}, io.Discard)
 
@@ -47,7 +48,7 @@ func TestParseRejectsBadInput(t *testing.T) {
 	}
 	for name, args := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, err := Parse(args, io.Discard)
+			_, err := config.Parse(args, io.Discard)
 			require.Error(t, err)
 		})
 	}
@@ -61,13 +62,13 @@ func TestParseAcceptsSiblingDataDir(t *testing.T) {
 
 	// "photos-data" は文字列としては "photos" で始まるが、兄弟ディレクトリであり
 	// 中には無い。プレフィックス比較ではなくパス階層で判定できていることの確認。
-	_, err := Parse([]string{"-dir", dir, "-data", data}, io.Discard)
+	_, err := config.Parse([]string{"-dir", dir, "-data", data}, io.Discard)
 
 	require.NoError(t, err)
 }
 
 func TestDerivedPaths(t *testing.T) {
-	c := Config{DataDir: "/var/famifo"}
+	c := config.Config{DataDir: "/var/famifo"}
 
 	require.Equal(t, "/var/famifo/famifo.db", c.DBPath())
 	require.Equal(t, "/var/famifo/thumbs", c.ThumbDir())
@@ -76,15 +77,15 @@ func TestDerivedPaths(t *testing.T) {
 // -version はバージョンを表示して終わるだけなので、-dir を要求しない。
 // 設定の検証まで進むと「-dir は必須です」で落ちてしまう。
 func TestParseVersionShortCircuitsValidation(t *testing.T) {
-	_, err := Parse([]string{"-version"}, io.Discard)
+	_, err := config.Parse([]string{"-version"}, io.Discard)
 
-	require.ErrorIs(t, err, ErrVersionRequested)
+	require.ErrorIs(t, err, config.ErrVersionRequested)
 }
 
 func TestParseSplitsDirOnTheListSeparator(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 
-	got, err := Parse([]string{"-dir", a + string(filepath.ListSeparator) + b}, io.Discard)
+	got, err := config.Parse([]string{"-dir", a + string(filepath.ListSeparator) + b}, io.Discard)
 
 	require.NoError(t, err)
 	require.Equal(t, []string{a, b}, got.PhotoDirs)
@@ -93,7 +94,7 @@ func TestParseSplitsDirOnTheListSeparator(t *testing.T) {
 func TestParseRejectsDuplicateRoots(t *testing.T) {
 	dir := t.TempDir()
 
-	_, err := Parse([]string{"-dir", dir + string(filepath.ListSeparator) + dir}, io.Discard)
+	_, err := config.Parse([]string{"-dir", dir + string(filepath.ListSeparator) + dir}, io.Discard)
 
 	require.Error(t, err, "同じルートを2回走査しても無駄なだけ")
 }
@@ -104,7 +105,7 @@ func TestParseRejectsNestedRoots(t *testing.T) {
 	inner := filepath.Join(outer, "sub")
 	require.NoError(t, os.MkdirAll(inner, 0o755))
 
-	_, err := Parse([]string{"-dir", outer + string(filepath.ListSeparator) + inner}, io.Discard)
+	_, err := config.Parse([]string{"-dir", outer + string(filepath.ListSeparator) + inner}, io.Discard)
 
 	require.Error(t, err)
 }
@@ -114,7 +115,7 @@ func TestParseRejectsNestedRoots(t *testing.T) {
 func TestParseRejectsDataInsideAnyRoot(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 
-	_, err := Parse([]string{
+	_, err := config.Parse([]string{
 		"-dir", a + string(filepath.ListSeparator) + b,
 		"-data", filepath.Join(b, "famifo-data"),
 	}, io.Discard)
@@ -124,7 +125,7 @@ func TestParseRejectsDataInsideAnyRoot(t *testing.T) {
 
 // ':' を含むパスを渡すと分割で壊れる。なぜそうなったか読めるエラーにする。
 func TestParseExplainsHowDirWasSplit(t *testing.T) {
-	_, err := Parse([]string{"-dir", "/no/such/2024:05:24"}, io.Discard)
+	_, err := config.Parse([]string{"-dir", "/no/such/2024:05:24"}, io.Discard)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "2024",

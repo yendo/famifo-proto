@@ -1,4 +1,4 @@
-package exif
+package exif_test
 
 import (
 	"bytes"

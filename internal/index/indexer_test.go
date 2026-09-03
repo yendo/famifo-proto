@@ -1,4 +1,4 @@
-package index
+package index_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/index"
 
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
@@ -16,10 +17,11 @@ import (
 )
 
 type fixture struct {
-	ix       *Indexer
+	ix       *index.Indexer
 	st       *store.Store
 	thumbDir string
 	root     string
+	log      *slog.Logger
 }
 
 // thumbPath は写真IDに対応するサムネイルのパスを返す。
@@ -37,10 +39,10 @@ func newFixture(t *testing.T) *fixture {
 
 	thumbDir := filepath.Join(base, "thumbs")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix, err := New([]string{root}, st, thumbDir, 100, log)
+	ix, err := index.New([]string{root}, st, thumbDir, 100, log)
 	require.NoError(t, err)
 
-	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: root}
+	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: root, log: log}
 }
 
 // newFixtureRoots は複数のルートを持つ fixture を作る。roots[0] が f.root。
@@ -61,10 +63,10 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 
 	thumbDir := filepath.Join(base, "thumbs")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix, err := New(roots, st, thumbDir, 100, log)
+	ix, err := index.New(roots, st, thumbDir, 100, log)
 	require.NoError(t, err)
 
-	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: roots[0]}, roots
+	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: roots[0], log: log}, roots
 }
 
 func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {

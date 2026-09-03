@@ -1,16 +1,17 @@
-package takenat
+package takenat_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/index/takenat"
 )
 
 var modTime = time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
 
 func TestResolveUsesEXIFWhenPresent(t *testing.T) {
-	got := Resolve(time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC), modTime)
+	got := takenat.Resolve(time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC), modTime)
 
 	// 日付と時刻の見た目で比べる。瞬間で比べると実行環境のタイムゾーンに
 	// 依存し、「EXIFをUTCとして読む」という誤った挙動を固定してしまう。
@@ -30,7 +31,7 @@ func TestResolveAssumesLocalWhenNoOffset(t *testing.T) {
 	t.Cleanup(func() { time.Local = orig })
 
 	// internal/index/exif は時差を持たないEXIF日時をUTCとして返す。
-	got := Resolve(time.Date(2025, 5, 24, 9, 8, 31, 0, time.UTC), modTime)
+	got := takenat.Resolve(time.Date(2025, 5, 24, 9, 8, 31, 0, time.UTC), modTime)
 
 	want := time.Date(2025, 5, 24, 9, 8, 31, 0, time.Local)
 	require.True(t, got.Equal(want),
@@ -48,7 +49,7 @@ func TestResolveKeepsEXIFOffsetWhenPresent(t *testing.T) {
 	// ベルリン(+02:00)で正午に撮った写真
 	berlin := time.Date(2023, 8, 4, 12, 0, 0, 0, time.FixedZone("", 2*60*60))
 
-	got := Resolve(berlin, modTime)
+	got := takenat.Resolve(berlin, modTime)
 
 	_, off := got.Zone()
 	require.Equal(t, 2*60*60, off,
@@ -57,7 +58,7 @@ func TestResolveKeepsEXIFOffsetWhenPresent(t *testing.T) {
 }
 
 func TestResolveFallsBackToModTimeWhenNoEXIFDate(t *testing.T) {
-	got := Resolve(time.Time{}, modTime)
+	got := takenat.Resolve(time.Time{}, modTime)
 
 	require.True(t, got.Equal(modTime))
 }

@@ -1,47 +1,48 @@
-package photo
+package photo_test
 
 import (
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/photo"
 )
 
 func TestIDForIsStableAndDistinct(t *testing.T) {
-	a := IDFor("/photos/a.jpg")
+	a := photo.IDFor("/photos/a.jpg")
 
 	require.Len(t, a, 32)
-	require.Equal(t, a, IDFor("/photos/a.jpg"))
-	require.NotEqual(t, a, IDFor("/photos/b.jpg"))
+	require.Equal(t, a, photo.IDFor("/photos/a.jpg"))
+	require.NotEqual(t, a, photo.IDFor("/photos/b.jpg"))
 }
 
 func TestKindOf(t *testing.T) {
-	tests := map[string]Kind{
-		"a.jpg":              KindRaster,
-		"a.jpeg":             KindRaster,
-		"a.png":              KindRaster,
-		"a.gif":              KindRaster,
-		"a.webp":             KindRaster,
-		"A.JPG":              KindRaster, // 大文字小文字を区別しない
-		"a.heic":             KindOpaque, // デコードせず素のまま配信する
-		"a.HEIF":             KindOpaque,
-		"a.mp4":              KindUnsupported, // 動画は対象外
-		"a.mov":              KindUnsupported,
-		"a.txt":              KindUnsupported,
-		"noext":              KindUnsupported,
-		"/photos/2020/b.png": KindRaster, // フルパスでも拡張子で判定する
+	tests := map[string]photo.Kind{
+		"a.jpg":              photo.KindRaster,
+		"a.jpeg":             photo.KindRaster,
+		"a.png":              photo.KindRaster,
+		"a.gif":              photo.KindRaster,
+		"a.webp":             photo.KindRaster,
+		"A.JPG":              photo.KindRaster, // 大文字小文字を区別しない
+		"a.heic":             photo.KindOpaque, // デコードせず素のまま配信する
+		"a.HEIF":             photo.KindOpaque,
+		"a.mp4":              photo.KindUnsupported, // 動画は対象外
+		"a.mov":              photo.KindUnsupported,
+		"a.txt":              photo.KindUnsupported,
+		"noext":              photo.KindUnsupported,
+		"/photos/2020/b.png": photo.KindRaster, // フルパスでも拡張子で判定する
 	}
 	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, want, KindOf(name))
+			require.Equal(t, want, photo.KindOf(name))
 		})
 	}
 }
 
 func TestIsSupported(t *testing.T) {
-	require.True(t, IsSupported("a.jpg"))
-	require.True(t, IsSupported("a.heic"))
-	require.False(t, IsSupported("a.mp4"))
+	require.True(t, photo.IsSupported("a.jpg"))
+	require.True(t, photo.IsSupported("a.heic"))
+	require.False(t, photo.IsSupported("a.mp4"))
 }
 
 func TestContentType(t *testing.T) {
@@ -57,49 +58,49 @@ func TestContentType(t *testing.T) {
 	}
 	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, want, ContentType(name))
+			require.Equal(t, want, photo.ContentType(name))
 		})
 	}
 }
 
-// testID は32文字のダミーID。IDFor の出力と同じ形（16進32文字）にしてある。
+// testID は32文字のダミーID。photo.IDFor の出力と同じ形（16進32文字）にしてある。
 const testID = "abcdef0123456789abcdef0123456789"
 
 func TestFamifoThumbPathShardsByFirstTwoChars(t *testing.T) {
 	require.Equal(t, filepath.Join("/data/thumbs", "ab", testID+".jpg"),
-		FamifoThumbPath("/data/thumbs", testID))
+		photo.FamifoThumbPath("/data/thumbs", testID))
 }
 
 func TestThumbPathBySource(t *testing.T) {
 	const thumbDir = "/data/thumbs"
 	tests := []struct {
 		name string
-		p    Photo
+		p    photo.Photo
 		want string
 		ok   bool
 	}{
 		{
 			name: "自前で生成したものは自分の置き場から引く",
-			p:    Photo{ID: testID, Path: "/photos/a.jpg", ThumbSource: ThumbFamifo},
+			p:    photo.Photo{ID: testID, Path: "/photos/a.jpg", ThumbSource: photo.ThumbFamifo},
 			want: filepath.Join(thumbDir, "ab", testID+".jpg"),
 			ok:   true,
 		},
 		{
 			name: "借りたものは @eaDir から引く",
-			p:    Photo{ID: testID, Path: "/photos/a.heic", ThumbSource: ThumbSyno},
+			p:    photo.Photo{ID: testID, Path: "/photos/a.heic", ThumbSource: photo.ThumbSyno},
 			want: "/photos/@eaDir/a.heic/SYNOPHOTO_THUMB_M.jpg",
 			ok:   true,
 		},
 		{
 			name: "借りるものも作れるものも無ければ ok=false",
-			p:    Photo{ID: testID, Path: "/photos/a.heic", ThumbSource: ThumbNone},
+			p:    photo.Photo{ID: testID, Path: "/photos/a.heic", ThumbSource: photo.ThumbNone},
 			want: "",
 			ok:   false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := ThumbPath(tt.p, thumbDir)
+			got, ok := photo.ThumbPath(tt.p, thumbDir)
 			require.Equal(t, tt.ok, ok)
 			require.Equal(t, tt.want, got)
 		})
@@ -109,29 +110,29 @@ func TestThumbPathBySource(t *testing.T) {
 func TestHasThumbAgreesWithThumbSource(t *testing.T) {
 	tests := []struct {
 		name string
-		src  ThumbSource
+		src  photo.ThumbSource
 		want bool
 	}{
 		{
 			name: "自前で生成したものはある",
-			src:  ThumbFamifo,
+			src:  photo.ThumbFamifo,
 			want: true,
 		},
 		{
 			name: "借りたものもある",
-			src:  ThumbSyno,
+			src:  photo.ThumbSyno,
 			want: true,
 		},
 		{
 			name: "どちらでもなければ無い",
-			src:  ThumbNone,
+			src:  photo.ThumbNone,
 			want: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := Photo{ID: testID, Path: "/photos/a.jpg", ThumbSource: tt.src}
-			require.Equal(t, tt.want, HasThumb(p))
+			p := photo.Photo{ID: testID, Path: "/photos/a.jpg", ThumbSource: tt.src}
+			require.Equal(t, tt.want, photo.HasThumb(p))
 		})
 	}
 }
@@ -141,54 +142,54 @@ func TestHasThumbAgreesWithThumbSource(t *testing.T) {
 func TestFullPathSwapsInTheXLOnlyForBorrowedOpaquePhotos(t *testing.T) {
 	tests := []struct {
 		name string
-		p    Photo
+		p    photo.Photo
 		want string
 	}{
 		{
 			name: "HEIC + 借りている → SynologyのXL",
-			p:    Photo{Path: "/photos/a.heic", ThumbSource: ThumbSyno},
+			p:    photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbSyno},
 			want: "/photos/@eaDir/a.heic/SYNOPHOTO_THUMB_XL.jpg",
 		},
 		{
 			name: "HEIC + 借りていない → 原本（Safariでしか見えないが他に出せるものが無い）",
-			p:    Photo{Path: "/photos/a.heic", ThumbSource: ThumbNone},
+			p:    photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbNone},
 			want: "/photos/a.heic",
 		},
 		{
 			name: "HEIC + 自前生成 → 原本（HEICは自前生成しないので実際には起きない）",
-			p:    Photo{Path: "/photos/a.heic", ThumbSource: ThumbFamifo},
+			p:    photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbFamifo},
 			want: "/photos/a.heic",
 		},
 		{
 			name: "JPEG + 借りている → 原本（借りるのは一覧用だけ）",
-			p:    Photo{Path: "/photos/a.jpg", ThumbSource: ThumbSyno},
+			p:    photo.Photo{Path: "/photos/a.jpg", ThumbSource: photo.ThumbSyno},
 			want: "/photos/a.jpg",
 		},
 		{
 			name: "JPEG + 自前生成 → 原本",
-			p:    Photo{Path: "/photos/a.jpg", ThumbSource: ThumbFamifo},
+			p:    photo.Photo{Path: "/photos/a.jpg", ThumbSource: photo.ThumbFamifo},
 			want: "/photos/a.jpg",
 		},
 		{
 			name: "JPEG + サムネイル無し → 原本",
-			p:    Photo{Path: "/photos/a.jpg", ThumbSource: ThumbNone},
+			p:    photo.Photo{Path: "/photos/a.jpg", ThumbSource: photo.ThumbNone},
 			want: "/photos/a.jpg",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, FullPath(tt.p))
+			require.Equal(t, tt.want, photo.FullPath(tt.p))
 		})
 	}
 }
 
-// FullPath の戻り値からMIMEが引けることが、ハンドラ側で分岐を持たずに済む根拠。
+// photo.FullPath の戻り値からMIMEが引けることが、ハンドラ側で分岐を持たずに済む根拠。
 func TestContentTypeOfTheBorrowedXLIsJPEG(t *testing.T) {
-	p := Photo{Path: "/photos/a.heic", ThumbSource: ThumbSyno}
-	require.Equal(t, "image/jpeg", ContentType(FullPath(p)))
+	p := photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbSyno}
+	require.Equal(t, "image/jpeg", photo.ContentType(photo.FullPath(p)))
 }
 
 func TestContentTypeOfAnUnborrowedHEICIsHEIC(t *testing.T) {
-	p := Photo{Path: "/photos/a.heic", ThumbSource: ThumbNone}
-	require.Equal(t, "image/heic", ContentType(FullPath(p)))
+	p := photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbNone}
+	require.Equal(t, "image/heic", photo.ContentType(photo.FullPath(p)))
 }

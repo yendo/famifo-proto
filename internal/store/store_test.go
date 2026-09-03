@@ -1,7 +1,8 @@
-package store
+package store_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -10,11 +11,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/store"
+	_ "modernc.org/sqlite" // PRAGMAを直接読むために自前で接続する
 )
 
-func openTestStore(t *testing.T) *Store {
+func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s
@@ -32,12 +35,12 @@ func photoAt(path string, takenAt time.Time) photo.Photo {
 	}
 }
 
-// Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
+// store.Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
 // 他のテストは t.TempDir() を直接使うため、この経路をどれも通らない。
 func TestOpenCreatesTheDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "famifo-data")
 
-	s, err := Open(filepath.Join(dir, "famifo.db"))
+	s, err := store.Open(filepath.Join(dir, "famifo.db"))
 
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -45,10 +48,19 @@ func TestOpenCreatesTheDirectory(t *testing.T) {
 }
 
 func TestOpenEnablesWAL(t *testing.T) {
-	s := openTestStore(t)
+	path := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	// WALはデータベースファイルに記録される永続的な性質なので、Openが張った
+	// 接続ではなく、別に開いた接続から確かめられる。
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer db.Close()
 
 	var mode string
-	require.NoError(t, s.db.QueryRow("PRAGMA journal_mode").Scan(&mode))
+	require.NoError(t, db.QueryRow("PRAGMA journal_mode").Scan(&mode))
 	require.Equal(t, "wal", mode)
 }
 
@@ -92,7 +104,7 @@ func TestGetByIDMissingReturnsErrNotFound(t *testing.T) {
 
 	_, err := s.GetByID(context.Background(), "deadbeef")
 
-	require.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestDeleteByPath(t *testing.T) {
@@ -238,7 +250,7 @@ func TestDayGroupsCountsEachDay(t *testing.T) {
 	got, err := s.DayGroups(ctx)
 
 	require.NoError(t, err)
-	require.Equal(t, []DayGroup{
+	require.Equal(t, []store.DayGroup{
 		{Date: "2022-12-05", Count: 2},
 		{Date: "2022-12-01", Count: 1},
 		{Date: "2021-05-20", Count: 2},

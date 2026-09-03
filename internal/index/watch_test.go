@@ -1,4 +1,4 @@
-package index
+package index_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/index"
 )
 
 const testDebounce = 100 * time.Millisecond
@@ -18,7 +19,7 @@ const testDebounce = 100 * time.Millisecond
 func startWatcher(t *testing.T, f *fixture) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	w, err := NewWatcher(f.ix, log, testDebounce)
+	w, err := index.NewWatcher(f.ix, log, testDebounce)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
