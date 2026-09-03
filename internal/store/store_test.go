@@ -32,6 +32,18 @@ func photoAt(path string, takenAt time.Time) photo.Photo {
 	}
 }
 
+// Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
+// 他のテストは t.TempDir() を直接使うため、この経路をどれも通らない。
+func TestOpenCreatesTheDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "famifo-data")
+
+	s, err := Open(filepath.Join(dir, "famifo.db"))
+
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	require.FileExists(t, filepath.Join(dir, "famifo.db"))
+}
+
 func TestOpenEnablesWAL(t *testing.T) {
 	s := openTestStore(t)
 

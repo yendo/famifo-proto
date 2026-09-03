@@ -125,10 +125,6 @@ func run() error {
 	log.Info("起動", "version", versionString(),
 		"timezone", startupTimezone(time.Now()),
 		"dirs", cfg.PhotoDirs, "data", cfg.DataDir, "addr", cfg.Addr)
-	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
-		return fmt.Errorf("データディレクトリを作れません: %w", err)
-	}
-
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {
 		return err

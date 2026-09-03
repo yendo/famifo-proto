@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -34,9 +35,16 @@ CREATE TABLE IF NOT EXISTS photos (
 CREATE INDEX IF NOT EXISTS idx_photos_order ON photos(taken_at DESC, id DESC);
 `
 
-// Open はDBを開き、スキーマを作成する。
+// Open はDBを開き、スキーマを作成する。親ディレクトリが無ければ作る。
 // WALを有効にしてスキャン中の書き込みと配信中の読み取りを並行させる。
 func Open(dbPath string) (*Store, error) {
+	// SQLiteは親ディレクトリを作らない。無いまま開くと sql.Open は遅延接続なので
+	// 成功し、db.Ping() が "unable to open database file" で落ちる。原因の読めない
+	// エラーになるうえ、呼び出し順への暗黙の依存を残すのでここで作る。
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return nil, fmt.Errorf("DBディレクトリを作れません: %w", err)
+	}
+
 	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
