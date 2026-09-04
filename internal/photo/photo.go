@@ -20,6 +20,15 @@ import (
 	"github.com/yendo/famifo-proto/internal/synology"
 )
 
+// ThumbSource はサムネイルの出どころ。
+type ThumbSource string
+
+const (
+	ThumbNone   ThumbSource = ""       // サムネイルが無い
+	ThumbFamifo ThumbSource = "famifo" // famifoが生成し、自分の置き場に持っているもの
+	ThumbSyno   ThumbSource = "eadir"  // Synologyが @eaDir に持っているもの。読むだけで書き換えない
+)
+
 // Photo はインデックス上の1枚の写真。
 //
 // フィールドは非公開で、組み立ては New（新しく見つけた1枚）と
@@ -36,41 +45,6 @@ type Photo struct {
 	//
 	// 書き換えは AdoptSynoThumb / AdoptFamifoThumb を通す。
 	thumbSource ThumbSource
-}
-
-// ThumbSource はサムネイルの出どころ。
-type ThumbSource string
-
-const (
-	ThumbNone   ThumbSource = ""       // サムネイルが無い
-	ThumbFamifo ThumbSource = "famifo" // famifoが生成し、自分の置き場に持っているもの
-	ThumbSyno   ThumbSource = "eadir"  // Synologyが @eaDir に持っているもの。読むだけで書き換えない
-)
-
-// ID はパスから導出した安定IDを返す。URLに露出させる。
-func (p Photo) ID() string { return p.id }
-
-// Path はディスク上の絶対パスを返す。
-func (p Photo) Path() string { return p.path }
-
-// TakenAt は撮影日時を返す。EXIFに無ければmtime。
-func (p Photo) TakenAt() time.Time { return p.takenAt }
-
-// ModTime はファイルのmtimeを返す。再スキャン時の変更検知に使う。
-func (p Photo) ModTime() time.Time { return p.modTime }
-
-// Size はファイルサイズを返す。
-func (p Photo) Size() int64 { return p.size }
-
-// ThumbSource はサムネイルの出どころを返す。store が永続化するために要る。
-func (p Photo) ThumbSource() ThumbSource { return p.thumbSource }
-
-// IDFor はパスから安定したIDを導出する。
-// URLにファイルシステムのパスを露出させないためと、
-// 未インデックスのパスを配信させないための両方の役割を持つ。
-func IDFor(path string) string {
-	sum := sha256.Sum256([]byte(path))
-	return hex.EncodeToString(sum[:])[:32]
 }
 
 // New はインデックスに載せる1枚を組み立てる。
@@ -107,11 +81,23 @@ func Restore(path string, takenAt, modTime time.Time, size int64, src ThumbSourc
 	}
 }
 
-// FamifoThumbPath は famifo が自分で生成したサムネイルのパスを返す。
-// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
-func FamifoThumbPath(thumbDir, id string) string {
-	return filepath.Join(thumbDir, id[:2], id+".jpg")
-}
+// ID はパスから導出した安定IDを返す。URLに露出させる。
+func (p Photo) ID() string { return p.id }
+
+// Path はディスク上の絶対パスを返す。
+func (p Photo) Path() string { return p.path }
+
+// TakenAt は撮影日時を返す。EXIFに無ければmtime。
+func (p Photo) TakenAt() time.Time { return p.takenAt }
+
+// ModTime はファイルのmtimeを返す。再スキャン時の変更検知に使う。
+func (p Photo) ModTime() time.Time { return p.modTime }
+
+// Size はファイルサイズを返す。
+func (p Photo) Size() int64 { return p.size }
+
+// ThumbSource はサムネイルの出どころを返す。store が永続化するために要る。
+func (p Photo) ThumbSource() ThumbSource { return p.thumbSource }
 
 // ThumbPath は一覧に出すサムネイルのパスを返す。無ければ ok=false。
 // ok=false のとき、一覧は原本のURLにフォールバックし、/thumb/ エンドポイントは404を返す。
@@ -165,4 +151,18 @@ func (p Photo) ContentType() string {
 		return f.mime
 	}
 	return "application/octet-stream"
+}
+
+// IDFor はパスから安定したIDを導出する。
+// URLにファイルシステムのパスを露出させないためと、
+// 未インデックスのパスを配信させないための両方の役割を持つ。
+func IDFor(path string) string {
+	sum := sha256.Sum256([]byte(path))
+	return hex.EncodeToString(sum[:])[:32]
+}
+
+// FamifoThumbPath は famifo が自分で生成したサムネイルのパスを返す。
+// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
+func FamifoThumbPath(thumbDir, id string) string {
+	return filepath.Join(thumbDir, id[:2], id+".jpg")
 }
