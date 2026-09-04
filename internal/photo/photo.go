@@ -27,7 +27,6 @@ type Photo struct {
 	TakenAt time.Time // EXIF撮影日時、無ければmtime
 	ModTime time.Time // ファイルのmtime。再スキャン時の変更検知に使う
 	Size    int64
-	Ext     string // 小文字の拡張子（"." 込み）
 	// ThumbSource はサムネイルの出どころ。消してよいのは自前で作ったものだけなので、
 	// 「あるか」ではなく「どこにあるか」を持つ。
 	ThumbSource ThumbSource
@@ -65,7 +64,6 @@ func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
 		TakenAt: resolveTakenAt(exifTakenAt, fi.ModTime()),
 		ModTime: fi.ModTime(),
 		Size:    fi.Size(),
-		Ext:     ext(path),
 	}
 }
 

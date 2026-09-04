@@ -335,7 +335,7 @@ func seedCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
 			}
 			p := photo.Photo{
 				ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
-				Size: fi.Size(), Ext: ".jpg", ThumbSource: thumbSource,
+				Size: fi.Size(), ThumbSource: thumbSource,
 			}
 			if err := st.Upsert(ctx, p); err != nil {
 				return fmt.Errorf("写真を登録できません (%s): %w", name, err)
@@ -1751,7 +1751,7 @@ func seedStallCorpus(st *store.Store, gen *thumb.Generator, photoDir string) err
 		}
 		p := photo.Photo{
 			ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
-			Size: fi.Size(), Ext: ".jpg", ThumbSource: photo.ThumbFamifo,
+			Size: fi.Size(), ThumbSource: photo.ThumbFamifo,
 		}
 		if err := st.Upsert(ctx, p); err != nil {
 			return fmt.Errorf("写真を登録できません (%s): %w", path, err)

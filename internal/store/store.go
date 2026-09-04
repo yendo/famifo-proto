@@ -29,7 +29,6 @@ CREATE TABLE IF NOT EXISTS photos (
     taken_at  INTEGER NOT NULL,
     mod_time  INTEGER NOT NULL,
     size      INTEGER NOT NULL,
-    ext       TEXT NOT NULL,
     thumb_source TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_photos_order ON photos(taken_at DESC, id DESC);
@@ -64,32 +63,31 @@ func Open(dbPath string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 const upsertSQL = `
-INSERT INTO photos (id, path, taken_at, mod_time, size, ext, thumb_source)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO photos (id, path, taken_at, mod_time, size, thumb_source)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     path      = excluded.path,
     taken_at  = excluded.taken_at,
     mod_time  = excluded.mod_time,
     size      = excluded.size,
-    ext       = excluded.ext,
     thumb_source = excluded.thumb_source`
 
 // Upsert は写真を登録または更新する。
 func (s *Store) Upsert(ctx context.Context, p photo.Photo) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
-		p.ID, p.Path, p.TakenAt.Unix(), p.ModTime.Unix(), p.Size, p.Ext, p.ThumbSource)
+		p.ID, p.Path, p.TakenAt.Unix(), p.ModTime.Unix(), p.Size, p.ThumbSource)
 	if err != nil {
 		return fmt.Errorf("写真を保存できません (%s): %w", p.Path, err)
 	}
 	return nil
 }
 
-const selectCols = `id, path, taken_at, mod_time, size, ext, thumb_source`
+const selectCols = `id, path, taken_at, mod_time, size, thumb_source`
 
 func scanPhoto(row interface{ Scan(...any) error }) (photo.Photo, error) {
 	var p photo.Photo
 	var takenAt, modTime int64
-	if err := row.Scan(&p.ID, &p.Path, &takenAt, &modTime, &p.Size, &p.Ext, &p.ThumbSource); err != nil {
+	if err := row.Scan(&p.ID, &p.Path, &takenAt, &modTime, &p.Size, &p.ThumbSource); err != nil {
 		return photo.Photo{}, err
 	}
 	p.TakenAt = time.Unix(takenAt, 0)

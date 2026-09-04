@@ -30,7 +30,6 @@ func photoAt(path string, takenAt time.Time) photo.Photo {
 		TakenAt:     takenAt,
 		ModTime:     takenAt,
 		Size:        1234,
-		Ext:         ".jpg",
 		ThumbSource: photo.ThumbFamifo,
 	}
 }

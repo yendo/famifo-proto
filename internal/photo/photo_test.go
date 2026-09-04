@@ -209,13 +209,12 @@ func (f fakeFileInfo) Size() int64        { return f.size }
 
 var testModTime = time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
 
-func TestNewDerivesIDAndExtFromThePath(t *testing.T) {
+func TestNewFillsTheFieldsFromThePathAndFileInfo(t *testing.T) {
 	const path = "/photos/A.JPG"
 
 	p := photo.New(path, fakeFileInfo{modTime: testModTime, size: 1234}, time.Time{})
 
 	require.Equal(t, photo.IDFor(path), p.ID, "IDはパスから導く")
-	require.Equal(t, ".jpg", p.Ext, "拡張子は小文字にそろえる")
 	require.Equal(t, path, p.Path)
 	require.Equal(t, int64(1234), p.Size)
 	require.True(t, p.ModTime.Equal(testModTime))

@@ -78,7 +78,6 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path)
-	require.Equal(t, ".jpg", got.Ext)
 	require.Equal(t, photo.ThumbFamifo, got.ThumbSource)
 	require.FileExists(t, f.thumbPath(got.ID))
 }

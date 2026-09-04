@@ -52,7 +52,7 @@ func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, src 
 
 	p := photo.Photo{
 		ID: photo.IDFor(path), Path: path, TakenAt: takenAt, ModTime: takenAt,
-		Size: 10, Ext: filepath.Ext(name), ThumbSource: src,
+		Size: 10, ThumbSource: src,
 	}
 	require.NoError(t, f.st.Upsert(context.Background(), p))
 
