@@ -95,7 +95,7 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 			return // すぐ消された等。何もしない
 		}
 		if !fi.IsDir() {
-			if photo.IsSupported(ev.Name) {
+			if photo.IsSupportedFile(ev.Name) {
 				pending[ev.Name] = time.Now()
 			}
 			return
@@ -108,7 +108,7 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 		w.enqueueTree(ev.Name, pending)
 
 	case ev.Has(fsnotify.Write):
-		if photo.IsSupported(ev.Name) {
+		if photo.IsSupportedFile(ev.Name) {
 			pending[ev.Name] = time.Now()
 		}
 	}
@@ -176,7 +176,7 @@ func (w *Watcher) enqueueTree(root string, pending map[string]time.Time) {
 			}
 			return nil
 		}
-		if !photo.IsSupported(path) {
+		if !photo.IsSupportedFile(path) {
 			return nil
 		}
 		pending[path] = now

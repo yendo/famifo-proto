@@ -46,7 +46,7 @@ func New(roots []string, st *store.Store, thumbDir string, thumbSize int, log *s
 // 自前で作るしかないファイルでサムネイルを作れなかった場合はエラーを返し、
 // DBには登録しない。壊れた画像を登録すると一覧に読み込めない <img> が並ぶため。
 func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
-	if !photo.IsSupported(path) {
+	if !photo.IsSupportedFile(path) {
 		return nil
 	}
 	fi, err := os.Stat(path)
@@ -69,7 +69,7 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	switch {
 	case synology.HasThumb(path):
 		p.ThumbSource = photo.ThumbSyno
-	case photo.IsDecodable(path):
+	case photo.IsDecodableFile(path):
 		if err := ix.gen.Generate(path, p.ID, m.Orientation); err != nil {
 			return err
 		}

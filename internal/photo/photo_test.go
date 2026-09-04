@@ -38,8 +38,8 @@ func TestSupportedAndDecodableByExtension(t *testing.T) {
 	}
 	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, want.supported, photo.IsSupported(name), "IsSupported")
-			require.Equal(t, want.decodable, photo.IsDecodable(name), "IsDecodable")
+			require.Equal(t, want.supported, photo.IsSupportedFile(name), "IsSupportedFile")
+			require.Equal(t, want.decodable, photo.IsDecodableFile(name), "IsDecodableFile")
 		})
 	}
 }
@@ -57,7 +57,8 @@ func TestContentType(t *testing.T) {
 	}
 	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, want, photo.ContentType(name))
+			// 借りていない写真は原本を配信するので、MIMEは拡張子どおりになる。
+			require.Equal(t, want, photo.Photo{Path: "/photos/" + name}.ContentType())
 		})
 	}
 }
@@ -99,7 +100,7 @@ func TestThumbPathBySource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := photo.ThumbPath(tt.p, thumbDir)
+			got, ok := tt.p.ThumbPath(thumbDir)
 			require.Equal(t, tt.ok, ok)
 			require.Equal(t, tt.want, got)
 		})
@@ -131,7 +132,7 @@ func TestHasThumbAgreesWithThumbSource(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := photo.Photo{ID: testID, Path: "/photos/a.jpg", ThumbSource: tt.src}
-			require.Equal(t, tt.want, photo.HasThumb(p))
+			require.Equal(t, tt.want, p.HasThumb())
 		})
 	}
 }
@@ -177,20 +178,20 @@ func TestFullPathSwapsInTheXLOnlyForBorrowedOpaquePhotos(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, photo.FullPath(tt.p))
+			require.Equal(t, tt.want, tt.p.FullPath())
 		})
 	}
 }
 
-// photo.FullPath の戻り値からMIMEが引けることが、ハンドラ側で分岐を持たずに済む根拠。
+// ContentType が FullPath の選択に追随することが、ハンドラ側で分岐を持たずに済む根拠。
 func TestContentTypeOfTheBorrowedXLIsJPEG(t *testing.T) {
 	p := photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbSyno}
-	require.Equal(t, "image/jpeg", photo.ContentType(photo.FullPath(p)))
+	require.Equal(t, "image/jpeg", p.ContentType())
 }
 
 func TestContentTypeOfAnUnborrowedHEICIsHEIC(t *testing.T) {
 	p := photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbNone}
-	require.Equal(t, "image/heic", photo.ContentType(photo.FullPath(p)))
+	require.Equal(t, "image/heic", p.ContentType())
 }
 
 // fakeFileInfo は New が読む ModTime と Size だけを持つ fs.FileInfo。

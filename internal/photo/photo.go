@@ -67,8 +67,9 @@ func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
 	}
 }
 
-// kind は写真ファイルの扱い方を表す。外へ出すのは IsSupported と IsDecodable の
-// 2つの述語だけで、この3分類は答えを組み立てるための内部の都合である。
+// kind は写真ファイルの扱い方を表す。外へ出すのは IsSupportedFile と
+// IsDecodableFile の2つの述語だけで、この3分類は答えを組み立てるための
+// 内部の都合である。
 type kind int
 
 const (
@@ -107,22 +108,14 @@ func ext(name string) string { return strings.ToLower(filepath.Ext(name)) }
 // kindOf はファイル名の拡張子から扱い方を判定する。
 func kindOf(name string) kind { return extKinds[ext(name)] }
 
-// IsSupported はインデックス対象にすべきファイルかを報告する。
-func IsSupported(name string) bool { return kindOf(name) != kindUnsupported }
+// IsSupportedFile はインデックス対象にすべきファイルかを報告する。
+// 判定は拡張子だけに基づくので、ベース名でもフルパスでも渡せる。
+func IsSupportedFile(name string) bool { return kindOf(name) != kindUnsupported }
 
-// IsDecodable は famifo が自分でサムネイルを作れるファイルかを報告する。
+// IsDecodableFile は famifo が自分でサムネイルを作れるファイルかを報告する。
 // 偽のときサムネイルは @eaDir から借りるしかなく、借りられなければ一覧には
 // 原本が出る（HEIC/HEIFが該当する）。
-func IsDecodable(name string) bool { return kindOf(name) == kindRaster }
-
-// ContentType は原本配信時に使うMIMEタイプを返す。
-// HEIC/HEIFはGoの mime パッケージが知らないため自前で持つ。
-func ContentType(name string) string {
-	if t, ok := extTypes[ext(name)]; ok {
-		return t
-	}
-	return "application/octet-stream"
-}
+func IsDecodableFile(name string) bool { return kindOf(name) == kindRaster }
 
 // FamifoThumbPath は famifo が自分で生成したサムネイルのパスを返す。
 // 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
@@ -134,7 +127,7 @@ func FamifoThumbPath(thumbDir, id string) string {
 // ok=false のとき、一覧は原本のURLにフォールバックし、/thumb/ エンドポイントは404を返す。
 //
 // thumbDir は -data から来る配置設定で、写真そのものの属性ではないため引数で受ける。
-func ThumbPath(p Photo, thumbDir string) (string, bool) {
+func (p Photo) ThumbPath(thumbDir string) (string, bool) {
 	switch p.ThumbSource {
 	case ThumbFamifo:
 		return FamifoThumbPath(thumbDir, p.ID), true
@@ -146,7 +139,7 @@ func ThumbPath(p Photo, thumbDir string) (string, bool) {
 
 // HasThumb は一覧に出せるサムネイルがあるかを報告する。
 // パスを組み立てずに判定できるので、一覧の組み立てではこちらを使う。
-func HasThumb(p Photo) bool {
+func (p Photo) HasThumb() bool {
 	return p.ThumbSource == ThumbFamifo || p.ThumbSource == ThumbSyno
 }
 
@@ -155,12 +148,20 @@ func HasThumb(p Photo) bool {
 // HEICはSafari以外のブラウザが表示できない。@eaDir から借りているなら原本ではなく
 // SynologyのXL（長辺1707px）を返す。thumb_source が eadir であればMがあり、MとXLは
 // 同じ生成器が一緒に書くので、XLの存在はそこから導ける。
-//
-// 戻り値がパスだけで済むのは、XLのファイル名が .jpg で終わるためである。
-// 呼び出し側は ContentType(FullPath(p)) でMIMEを引けばよく、分岐を持たなくてよい。
-func FullPath(p Photo) string {
+func (p Photo) FullPath() string {
 	if kindOf(p.Path) == kindOpaque && p.ThumbSource == ThumbSyno {
 		return synology.LargePath(p.Path)
 	}
 	return p.Path
+}
+
+// ContentType は FullPath が返すファイルのMIMEタイプを返す。
+// 借りたXLは .jpg なので、原本がHEICでも image/jpeg になる。
+//
+// HEIC/HEIFはGoの mime パッケージが知らないため自前の表で引く。
+func (p Photo) ContentType() string {
+	if t, ok := extTypes[ext(p.FullPath())]; ok {
+		return t
+	}
+	return "application/octet-stream"
 }

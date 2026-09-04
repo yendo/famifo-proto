@@ -100,7 +100,7 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	path, ok := photo.ThumbPath(p, s.thumbDir)
+	path, ok := p.ThumbPath(s.thumbDir)
 	if !ok {
 		// 借りるものも作れるものも無い写真。原本を使うべき。
 		http.NotFound(w, r)
@@ -115,11 +115,10 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	path := photo.FullPath(p)
 	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
 	// 先に設定しておけばServeContentは上書きしない。
-	w.Header().Set("Content-Type", photo.ContentType(path))
-	http.ServeFile(w, r, path)
+	w.Header().Set("Content-Type", p.ContentType())
+	http.ServeFile(w, r, p.FullPath())
 }
 
 // lookup はURLのIDから写真を引く。
