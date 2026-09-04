@@ -28,8 +28,8 @@ func TestFamifoThumbPathShardsByFirstTwoChars(t *testing.T) {
 
 // restored は保存済みの1枚を模したPhotoを組み立てる。日時とサイズはどのテストも
 // 見ないので固定値でよく、パスと出どころだけを行ごとに変える。
-func restored(path string, src photo.ThumbSource) photo.Photo {
-	return photo.Restore(path, testModTime, testModTime, 0, src)
+func restored(path string, thumbSource photo.ThumbSource) photo.Photo {
+	return photo.Restore(path, testModTime, testModTime, 0, thumbSource)
 }
 
 func TestThumbPathBySource(t *testing.T) {
@@ -69,50 +69,39 @@ func TestThumbPathBySource(t *testing.T) {
 	}
 }
 
-// With* は「どちらを採用したか」を記録する唯一の入口で、HasFamifoThumb が
-// 削除してよいかを答える。値ではなく操作から見て、この対応を固定する。
-func TestWithThumbRecordsWhichThumbIsUsed(t *testing.T) {
-	p := restored("/photos/a.jpg", photo.ThumbNone)
-	require.False(t, p.HasThumb(), "採用前はサムネイルが無い")
-	require.False(t, p.HasFamifoThumb())
-
-	syno := p.WithSynoThumb()
-	require.True(t, syno.HasThumb())
-	require.False(t, syno.HasFamifoThumb(), "借りたものは消してはいけない")
-
-	famifo := p.WithFamifoThumb()
-	require.True(t, famifo.HasThumb())
-	require.True(t, famifo.HasFamifoThumb(), "自前で作ったものは消してよい")
-
-	require.False(t, p.HasThumb(), "元の1枚は書き換わらない")
-}
-
+// HasThumb は「一覧に出せるか」、HasFamifoThumb は「消してよいか」を答える。
+// 借りたものだけが両者で答えが分かれる。
 func TestHasThumbAgreesWithThumbSource(t *testing.T) {
 	tests := []struct {
-		name string
-		src  photo.ThumbSource
-		want bool
+		name        string
+		thumbSource photo.ThumbSource
+		want        bool
+		wantFamifo  bool
 	}{
 		{
-			name: "自前で生成したものはある",
-			src:  photo.ThumbFamifo,
-			want: true,
+			name:        "自前で生成したものはあり、消してよい",
+			thumbSource: photo.ThumbFamifo,
+			want:        true,
+			wantFamifo:  true,
 		},
 		{
-			name: "借りたものもある",
-			src:  photo.ThumbSyno,
-			want: true,
+			name:        "借りたものもあるが、消してはいけない",
+			thumbSource: photo.ThumbSyno,
+			want:        true,
+			wantFamifo:  false,
 		},
 		{
-			name: "どちらでもなければ無い",
-			src:  photo.ThumbNone,
-			want: false,
+			name:        "どちらでもなければ無い",
+			thumbSource: photo.ThumbNone,
+			want:        false,
+			wantFamifo:  false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := restored("/photos/a.jpg", tt.src)
+			p := restored("/photos/a.jpg", tt.thumbSource)
 			require.Equal(t, tt.want, p.HasThumb())
+			require.Equal(t, tt.wantFamifo, p.HasFamifoThumb())
 		})
 	}
 }
@@ -190,7 +179,7 @@ var testModTime = time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
 func TestNewFillsTheFieldsFromThePathAndFileInfo(t *testing.T) {
 	const path = "/photos/A.JPG"
 
-	p := photo.New(path, fakeFileInfo{modTime: testModTime, size: 1234}, time.Time{})
+	p := photo.New(path, fakeFileInfo{modTime: testModTime, size: 1234}, time.Time{}, photo.ThumbNone)
 
 	require.Equal(t, photo.IDFor(path), p.ID(), "IDはパスから導く")
 	require.Equal(t, path, p.Path())

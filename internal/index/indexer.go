@@ -60,12 +60,12 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	// 決まるので、写真1枚につきEXIFのパースは1回で済む。
 	m := exif.Read(path)
 
-	p := photo.New(path, fi, m.TakenAt)
-	p, err = ix.thumbProvider.ResolveSource(p, m.Orientation)
+	thumbSource, err := ix.thumbProvider.ResolveSource(path, m.Orientation)
 	if err != nil {
 		return err
 	}
 
+	p := photo.New(path, fi, m.TakenAt, thumbSource)
 	return ix.st.Upsert(ctx, p)
 }
 

@@ -27,8 +27,8 @@ func photoAt(path string, takenAt time.Time) photo.Photo {
 	return photoWithThumb(path, takenAt, photo.ThumbFamifo)
 }
 
-func photoWithThumb(path string, takenAt time.Time, src photo.ThumbSource) photo.Photo {
-	return photo.Restore(path, takenAt, takenAt, 1234, src)
+func photoWithThumb(path string, takenAt time.Time, thumbSource photo.ThumbSource) photo.Photo {
+	return photo.Restore(path, takenAt, takenAt, 1234, thumbSource)
 }
 
 // store.Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
@@ -326,14 +326,14 @@ func TestUpsertRoundTripsEveryThumbSource(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	for _, src := range []photo.ThumbSource{photo.ThumbNone, photo.ThumbFamifo, photo.ThumbSyno} {
-		t.Run(string(src), func(t *testing.T) {
-			p := photoWithThumb("/photos/"+string(src)+".jpg", time.Unix(1600000000, 0), src)
+	for _, thumbSource := range []photo.ThumbSource{photo.ThumbNone, photo.ThumbFamifo, photo.ThumbSyno} {
+		t.Run(string(thumbSource), func(t *testing.T) {
+			p := photoWithThumb("/photos/"+string(thumbSource)+".jpg", time.Unix(1600000000, 0), thumbSource)
 			require.NoError(t, s.Upsert(ctx, p))
 
 			got, err := s.GetByID(ctx, p.ID())
 			require.NoError(t, err)
-			require.Equal(t, src, got.ThumbSource())
+			require.Equal(t, thumbSource, got.ThumbSource())
 		})
 	}
 }

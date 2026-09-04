@@ -42,9 +42,6 @@ type Photo struct {
 	size    int64
 	// thumbSource はサムネイルの出どころ。「あるか」ではなく「どこにあるか」を持つ。
 	// 出どころによって配信するパスも消してよいかも変わるため。
-	//
-	// 採用の記録は WithSynoThumb / WithFamifoThumb が行う。Photoは不変で、
-	// これらは書き換えるのではなく採用済みの1枚を返す。
 	thumbSource ThumbSource
 }
 
@@ -54,16 +51,17 @@ type Photo struct {
 // exifTakenAt は internal/index/exif が読んだEXIFの撮影日時で、ゼロ値は
 // 「EXIFに無い」ことを表す。
 //
-// ThumbSource は受け取らない。どちらを採用するかは調達を試みた結果であって、
-// 構築の時点ではまだ決まっていない。WithSynoThumb / WithFamifoThumb で
-// 後から記録する（internal/index/thumb の ResolveSource が呼ぶ）。
-func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
+// thumbSource はサムネイルの出どころで、internal/index/thumb の ResolveSource が
+// 調達を試みた結果。調達にはパスと向きしか要らないので、組み立てより先に
+// 決められる。ここで受け取ることで、Photoは全ての値が確定した状態で生まれる。
+func New(path string, fi fs.FileInfo, exifTakenAt time.Time, thumbSource ThumbSource) Photo {
 	return Photo{
-		id:      IDFor(path),
-		path:    path,
-		takenAt: resolveTakenAt(exifTakenAt, fi.ModTime()),
-		modTime: fi.ModTime(),
-		size:    fi.Size(),
+		id:          IDFor(path),
+		path:        path,
+		takenAt:     resolveTakenAt(exifTakenAt, fi.ModTime()),
+		modTime:     fi.ModTime(),
+		size:        fi.Size(),
+		thumbSource: thumbSource,
 	}
 }
 
@@ -71,14 +69,14 @@ func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
 //
 // IDは保存された値ではなくパスから導き直す。導出の規則はこのパッケージにしか
 // なく、インデックスに入っていた値を信じると規則が二重化するため。
-func Restore(path string, takenAt, modTime time.Time, size int64, src ThumbSource) Photo {
+func Restore(path string, takenAt, modTime time.Time, size int64, thumbSource ThumbSource) Photo {
 	return Photo{
 		id:          IDFor(path),
 		path:        path,
 		takenAt:     takenAt,
 		modTime:     modTime,
 		size:        size,
-		thumbSource: src,
+		thumbSource: thumbSource,
 	}
 }
 
@@ -123,12 +121,6 @@ func (p Photo) HasThumb() bool {
 // HasFamifoThumb は famifo が作ったサムネイルを採用しているかを報告する。
 // 消してよいのはこれだけで、@eaDir から借りたものは読むだけ。
 func (p Photo) HasFamifoThumb() bool { return p.thumbSource == ThumbFamifo }
-
-// WithSynoThumb は @eaDir のサムネイルを採用した1枚を返す。読むだけで書き換えない。
-func (p Photo) WithSynoThumb() Photo { p.thumbSource = ThumbSyno; return p }
-
-// WithFamifoThumb は自前で生成し、置き場に収めたサムネイルを採用した1枚を返す。
-func (p Photo) WithFamifoThumb() Photo { p.thumbSource = ThumbFamifo; return p }
 
 // FullPath は拡大表示に配信するファイルのパスを返す。
 //

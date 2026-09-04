@@ -44,16 +44,16 @@ func newWebFixture(t *testing.T, pageSize int) *webFixture {
 	return &webFixture{h: srv.Handler(), st: st, thumbDir: thumbDir, photoDir: photoDir}
 }
 
-// addPhoto は原本ファイルとDB行を用意する。srcに応じてサムネイルも置く。
-func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, src photo.ThumbSource) photo.Photo {
+// addPhoto は原本ファイルとDB行を用意する。出どころに応じてサムネイルも置く。
+func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, thumbSource photo.ThumbSource) photo.Photo {
 	t.Helper()
 	path := filepath.Join(f.photoDir, name)
 	require.NoError(t, os.WriteFile(path, []byte("original-"+name), 0o644))
 
-	p := photo.Restore(path, takenAt, takenAt, 10, src)
+	p := photo.Restore(path, takenAt, takenAt, 10, thumbSource)
 	require.NoError(t, f.st.Upsert(context.Background(), p))
 
-	switch src {
+	switch thumbSource {
 	case photo.ThumbFamifo:
 		writeFileAt(t, photo.FamifoThumbPath(f.thumbDir, p.ID()), "thumb-"+name)
 	case photo.ThumbSyno:

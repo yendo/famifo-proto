@@ -11,7 +11,7 @@ import (
 // newWithEXIFDate は撮影日時だけを変えて1枚を組み立てる。
 func newWithEXIFDate(exifTakenAt time.Time) photo.Photo {
 	return photo.New("/photos/a.jpg",
-		fakeFileInfo{modTime: testModTime, size: 1234}, exifTakenAt)
+		fakeFileInfo{modTime: testModTime, size: 1234}, exifTakenAt, photo.ThumbNone)
 }
 
 func TestNewUsesTheEXIFDateWhenPresent(t *testing.T) {

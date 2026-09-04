@@ -23,12 +23,6 @@ func thumbPathFor(thumbDir, src string) string {
 	return photo.FamifoThumbPath(thumbDir, photo.IDFor(src))
 }
 
-// restored は ResolveSource に渡す1枚を組み立てる。日時とサイズはサムネイルの
-// 調達に関係しないので空でよい。
-func restored(path string) photo.Photo {
-	return photo.Restore(path, time.Time{}, time.Time{}, 0, photo.ThumbNone)
-}
-
 func writeImage(t *testing.T, dir, name string, w, h int) string {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
@@ -60,7 +54,7 @@ func newTestProvider(t *testing.T, size int) (*thumb.Provider, string) {
 // provide は ResolveSource 経由でサムネイルを調達する。一時ディレクトリには
 // @eaDir が無いので、必ず自前で生成する枝に入る。
 func provide(pv *thumb.Provider, srcPath string, orientation uint16) error {
-	_, err := pv.ResolveSource(restored(srcPath), orientation)
+	_, err := pv.ResolveSource(srcPath, orientation)
 	return err
 }
 
@@ -80,11 +74,10 @@ func TestResolveSourcePicksTheThumbSource(t *testing.T) {
 		src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 		writeSynoThumb(t, src)
 
-		p, err := pv.ResolveSource(restored(src), 1)
+		got, err := pv.ResolveSource(src, 1)
 		require.NoError(t, err)
 
-		require.True(t, p.HasThumb())
-		require.False(t, p.HasFamifoThumb(), "借りたものは消してはいけない")
+		require.Equal(t, photo.ThumbSyno, got)
 		require.NoFileExists(t, thumbPathFor(thumbDir, src),
 			"借りられるなら自前では作らない")
 	})
@@ -93,10 +86,10 @@ func TestResolveSourcePicksTheThumbSource(t *testing.T) {
 		pv, thumbDir := newTestProvider(t, 100)
 		src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 
-		p, err := pv.ResolveSource(restored(src), 1)
+		got, err := pv.ResolveSource(src, 1)
 		require.NoError(t, err)
 
-		require.True(t, p.HasFamifoThumb())
+		require.Equal(t, photo.ThumbFamifo, got)
 		require.FileExists(t, thumbPathFor(thumbDir, src))
 	})
 
@@ -105,10 +98,10 @@ func TestResolveSourcePicksTheThumbSource(t *testing.T) {
 		src := filepath.Join(t.TempDir(), "a.heic")
 		require.NoError(t, os.WriteFile(src, []byte("famifoはHEICをデコードしない"), 0o644))
 
-		p, err := pv.ResolveSource(restored(src), 1)
+		got, err := pv.ResolveSource(src, 1)
 		require.NoError(t, err, "デコードを試みないのでエラーにならない")
 
-		require.False(t, p.HasThumb(), "一覧は原本のURLにフォールバックする")
+		require.Equal(t, photo.ThumbNone, got, "一覧は原本のURLにフォールバックする")
 		require.NoFileExists(t, thumbPathFor(thumbDir, src))
 	})
 }
