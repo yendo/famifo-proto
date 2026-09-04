@@ -67,28 +67,29 @@ func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
 	}
 }
 
-// Kind は写真ファイルの扱い方を表す。
-type Kind int
+// kind は写真ファイルの扱い方を表す。外へ出すのは IsSupported と IsDecodable の
+// 2つの述語だけで、この3分類は答えを組み立てるための内部の都合である。
+type kind int
 
 const (
-	// KindUnsupported はインデックス対象外のファイル。
-	KindUnsupported Kind = iota
-	// KindRaster はGoでデコードでき、サムネイルを生成するファイル。
-	KindRaster
-	// KindOpaque はインデックスはするがデコードせず、原本をそのまま配信するファイル。
+	// kindUnsupported はインデックス対象外のファイル。
+	kindUnsupported kind = iota
+	// kindRaster はGoでデコードでき、サムネイルを生成するファイル。
+	kindRaster
+	// kindOpaque はインデックスはするがデコードせず、原本をそのまま配信するファイル。
 	// HEIC/HEIFが該当する。原本はSafari以外では表示できないため、@eaDir から
 	// 借りられる場合に限り、配信時にSynologyのJPEGへ差し替える（FullPath）。
-	KindOpaque
+	kindOpaque
 )
 
-var extKinds = map[string]Kind{
-	".jpg":  KindRaster,
-	".jpeg": KindRaster,
-	".png":  KindRaster,
-	".gif":  KindRaster,
-	".webp": KindRaster,
-	".heic": KindOpaque,
-	".heif": KindOpaque,
+var extKinds = map[string]kind{
+	".jpg":  kindRaster,
+	".jpeg": kindRaster,
+	".png":  kindRaster,
+	".gif":  kindRaster,
+	".webp": kindRaster,
+	".heic": kindOpaque,
+	".heif": kindOpaque,
 }
 
 var extTypes = map[string]string{
@@ -103,11 +104,16 @@ var extTypes = map[string]string{
 
 func ext(name string) string { return strings.ToLower(filepath.Ext(name)) }
 
-// KindOf はファイル名の拡張子から扱い方を判定する。
-func KindOf(name string) Kind { return extKinds[ext(name)] }
+// kindOf はファイル名の拡張子から扱い方を判定する。
+func kindOf(name string) kind { return extKinds[ext(name)] }
 
 // IsSupported はインデックス対象にすべきファイルかを報告する。
-func IsSupported(name string) bool { return KindOf(name) != KindUnsupported }
+func IsSupported(name string) bool { return kindOf(name) != kindUnsupported }
+
+// IsDecodable は famifo が自分でサムネイルを作れるファイルかを報告する。
+// 偽のときサムネイルは @eaDir から借りるしかなく、借りられなければ一覧には
+// 原本が出る（HEIC/HEIFが該当する）。
+func IsDecodable(name string) bool { return kindOf(name) == kindRaster }
 
 // ContentType は原本配信時に使うMIMEタイプを返す。
 // HEIC/HEIFはGoの mime パッケージが知らないため自前で持つ。
@@ -153,7 +159,7 @@ func HasThumb(p Photo) bool {
 // 戻り値がパスだけで済むのは、XLのファイル名が .jpg で終わるためである。
 // 呼び出し側は ContentType(FullPath(p)) でMIMEを引けばよく、分岐を持たなくてよい。
 func FullPath(p Photo) string {
-	if KindOf(p.Path) == KindOpaque && p.ThumbSource == ThumbSyno {
+	if kindOf(p.Path) == kindOpaque && p.ThumbSource == ThumbSyno {
 		return synology.LargePath(p.Path)
 	}
 	return p.Path

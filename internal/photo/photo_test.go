@@ -18,33 +18,30 @@ func TestIDForIsStableAndDistinct(t *testing.T) {
 	require.NotEqual(t, a, photo.IDFor("/photos/b.jpg"))
 }
 
-func TestKindOf(t *testing.T) {
-	tests := map[string]photo.Kind{
-		"a.jpg":              photo.KindRaster,
-		"a.jpeg":             photo.KindRaster,
-		"a.png":              photo.KindRaster,
-		"a.gif":              photo.KindRaster,
-		"a.webp":             photo.KindRaster,
-		"A.JPG":              photo.KindRaster, // 大文字小文字を区別しない
-		"a.heic":             photo.KindOpaque, // デコードせず素のまま配信する
-		"a.HEIF":             photo.KindOpaque,
-		"a.mp4":              photo.KindUnsupported, // 動画は対象外
-		"a.mov":              photo.KindUnsupported,
-		"a.txt":              photo.KindUnsupported,
-		"noext":              photo.KindUnsupported,
-		"/photos/2020/b.png": photo.KindRaster, // フルパスでも拡張子で判定する
+// 拡張子ごとに2つの問いへの答えを固定する。「インデックスに載せるか」と
+// 「自前でサムネイルを作れるか」は独立で、HEICだけが載せるが作れない側に来る。
+func TestSupportedAndDecodableByExtension(t *testing.T) {
+	tests := map[string]struct{ supported, decodable bool }{
+		"a.jpg":              {true, true},
+		"a.jpeg":             {true, true},
+		"a.png":              {true, true},
+		"a.gif":              {true, true},
+		"a.webp":             {true, true},
+		"A.JPG":              {true, true},  // 大文字小文字を区別しない
+		"a.heic":             {true, false}, // 載せるが、デコードは @eaDir 頼み
+		"a.HEIF":             {true, false},
+		"a.mp4":              {false, false}, // 動画は対象外
+		"a.mov":              {false, false},
+		"a.txt":              {false, false},
+		"noext":              {false, false},
+		"/photos/2020/b.png": {true, true}, // フルパスでも拡張子で判定する
 	}
 	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, want, photo.KindOf(name))
+			require.Equal(t, want.supported, photo.IsSupported(name), "IsSupported")
+			require.Equal(t, want.decodable, photo.IsDecodable(name), "IsDecodable")
 		})
 	}
-}
-
-func TestIsSupported(t *testing.T) {
-	require.True(t, photo.IsSupported("a.jpg"))
-	require.True(t, photo.IsSupported("a.heic"))
-	require.False(t, photo.IsSupported("a.mp4"))
 }
 
 func TestContentType(t *testing.T) {

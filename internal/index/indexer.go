@@ -43,11 +43,10 @@ func New(roots []string, st *store.Store, thumbDir string, thumbSize int, log *s
 // IndexFile は1ファイルをインデックスに反映する。
 //
 // 対象外の拡張子とディレクトリは黙って無視する（エラーではない）。
-// 自前で作るしかないKindRasterでサムネイルを作れなかった場合はエラーを返し、
+// 自前で作るしかないファイルでサムネイルを作れなかった場合はエラーを返し、
 // DBには登録しない。壊れた画像を登録すると一覧に読み込めない <img> が並ぶため。
 func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
-	kind := photo.KindOf(path)
-	if kind == photo.KindUnsupported {
+	if !photo.IsSupported(path) {
 		return nil
 	}
 	fi, err := os.Stat(path)
@@ -70,7 +69,7 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	switch {
 	case synology.HasThumb(path):
 		p.ThumbSource = photo.ThumbSyno
-	case kind == photo.KindRaster:
+	case photo.IsDecodable(path):
 		if err := ix.gen.Generate(path, p.ID, m.Orientation); err != nil {
 			return err
 		}
