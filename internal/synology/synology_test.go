@@ -10,7 +10,7 @@ import (
 )
 
 // writeFile は親ディレクトリごとファイルを書く。
-// synology.HasThumb は中身を見ず、通常ファイルかつサイズが0でないことだけを見るので、
+// synology.HasThumbM は中身を見ず、通常ファイルかつサイズが0でないことだけを見るので、
 // 画像として妥当である必要はない。
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
@@ -18,49 +18,49 @@ func writeFile(t *testing.T, path, body string) {
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 }
 
-func TestThumbPathPointsAtTheMediumThumbnail(t *testing.T) {
+func TestThumbMPathPointsAtTheMediumThumbnail(t *testing.T) {
 	require.Equal(t,
 		"/photos/2026-08-16/@eaDir/IMG_0428.HEIC/SYNOPHOTO_THUMB_M.jpg",
-		synology.ThumbPath("/photos/2026-08-16/IMG_0428.HEIC"))
+		synology.ThumbMPath("/photos/2026-08-16/IMG_0428.HEIC"))
 }
 
-func TestLargePathPointsAtTheXLThumbnail(t *testing.T) {
+func TestThumbXLPathPointsAtTheXLThumbnail(t *testing.T) {
 	require.Equal(t,
 		"/photos/2026-08-16/@eaDir/IMG_0428.HEIC/SYNOPHOTO_THUMB_XL.jpg",
-		synology.LargePath("/photos/2026-08-16/IMG_0428.HEIC"))
+		synology.ThumbXLPath("/photos/2026-08-16/IMG_0428.HEIC"))
 }
 
-func TestHasThumbFindsTheThumbnailSynologyLeftBehind(t *testing.T) {
+func TestHasThumbMFindsTheThumbnailSynologyLeftBehind(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "a.heic")
 	writeFile(t, src, "original") // 中身は問わない。存在だけを見る
-	writeFile(t, synology.ThumbPath(src), "borrowed")
+	writeFile(t, synology.ThumbMPath(src), "borrowed")
 
-	require.True(t, synology.HasThumb(src))
+	require.True(t, synology.HasThumbM(src))
 }
 
-func TestHasThumbIsFalseWithoutEaDir(t *testing.T) {
+func TestHasThumbMIsFalseWithoutEaDir(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "a.jpg")
 	writeFile(t, src, "original")
 
-	require.False(t, synology.HasThumb(src))
+	require.False(t, synology.HasThumbM(src))
 }
 
 // DSM 7.3 はHEICをデコードできず、0バイトの .fail を置く。.jpg は作られない。
-func TestHasThumbIsFalseWhenOnlyAFailMarkerIsThere(t *testing.T) {
+func TestHasThumbMIsFalseWhenOnlyAFailMarkerIsThere(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "a.heic")
 	writeFile(t, src, "original")
-	writeFile(t, filepath.Join(filepath.Dir(synology.ThumbPath(src)), "SYNOPHOTO_THUMB_M.fail"), "")
+	writeFile(t, filepath.Join(filepath.Dir(synology.ThumbMPath(src)), "SYNOPHOTO_THUMB_M.fail"), "")
 
-	require.False(t, synology.HasThumb(src))
+	require.False(t, synology.HasThumbM(src))
 }
 
 // 手で消したあとに0バイトの .jpg が残るような状況。配信すると壊れた <img> になる。
-func TestHasThumbIsFalseForAnEmptyThumbnail(t *testing.T) {
+func TestHasThumbMIsFalseForAnEmptyThumbnail(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "a.heic")
 	writeFile(t, src, "original")
-	writeFile(t, synology.ThumbPath(src), "")
+	writeFile(t, synology.ThumbMPath(src), "")
 
-	require.False(t, synology.HasThumb(src))
+	require.False(t, synology.HasThumbM(src))
 }
 
 func TestIsManagedDirCoversSynologysOwnDirectories(t *testing.T) {

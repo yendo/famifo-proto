@@ -108,7 +108,7 @@ func (p Photo) ThumbPath(thumbDir string) (string, bool) {
 	case ThumbFamifo:
 		return FamifoThumbPath(thumbDir, p.id), true
 	case ThumbSyno:
-		return synology.ThumbPath(p.path), true
+		return synology.ThumbMPath(p.path), true
 	}
 	return "", false
 }
@@ -131,7 +131,7 @@ func (p Photo) HasFamifoThumb() bool { return p.thumbSource == ThumbFamifo }
 func (p Photo) FullPath() string {
 	f, supported := supportedExts[ext(p.path)]
 	if supported && !f.decodable && p.thumbSource == ThumbSyno {
-		return synology.LargePath(p.path)
+		return synology.ThumbXLPath(p.path)
 	}
 	return p.path
 }

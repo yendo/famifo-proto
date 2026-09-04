@@ -61,7 +61,7 @@ func provide(pv *thumb.Provider, srcPath string, orientation uint16) error {
 // writeSynoThumb は srcPath の隣に、Synologyが作った体のサムネイルを置く。
 func writeSynoThumb(t *testing.T, srcPath string) {
 	t.Helper()
-	out := synology.ThumbPath(srcPath)
+	out := synology.ThumbMPath(srcPath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(out), 0o755))
 	require.NoError(t, os.WriteFile(out, []byte("eadir thumb"), 0o644))
 }
