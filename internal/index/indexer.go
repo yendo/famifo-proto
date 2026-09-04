@@ -2,7 +2,7 @@
 // 起動時のフルスキャンとfsnotifyによる追従の両方をここで担う。
 //
 // 1枚を取り込む手順のうち、重いものはサブパッケージに置く。
-// exif がEXIFを読み、thumb がサムネイルを作る。どちらも取り込み時にしか
+// exif がEXIFを読み、thumb がサムネイルを調達する。どちらも取り込み時にしか
 // 使わないので、internal/photo と横並びにはしない。
 package index
 
@@ -16,28 +16,27 @@ import (
 	"github.com/yendo/famifo-proto/internal/index/thumb"
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
-	"github.com/yendo/famifo-proto/internal/synology"
 )
 
 // Indexer は1ファイル単位でインデックスを更新する。
 type Indexer struct {
-	roots []string
-	st    *store.Store
-	gen   *thumb.Generator
-	log   *slog.Logger
+	roots         []string
+	st            *store.Store
+	thumbProvider *thumb.Provider
+	log           *slog.Logger
 }
 
 // New はIndexerを作る。rootsは写真を収集するルートディレクトリ、
 // thumbDir は生成したサムネイルの置き場所、thumbSize は長辺の最大ピクセル数。
 //
-// サムネイル生成器はここで組み立てる。呼び出し側にとってサムネイルは
+// サムネイルの供給者はここで組み立てる。呼び出し側にとってサムネイルは
 // インデックス作成の副産物であって、単体で持ち回る道具ではない。
 func New(roots []string, st *store.Store, thumbDir string, thumbSize int, log *slog.Logger) (*Indexer, error) {
-	gen, err := thumb.NewGenerator(thumbDir, thumbSize)
+	thumbProvider, err := thumb.NewProvider(thumbDir, thumbSize)
 	if err != nil {
 		return nil, err
 	}
-	return &Indexer{roots: roots, st: st, gen: gen, log: log}, nil
+	return &Indexer{roots: roots, st: st, thumbProvider: thumbProvider, log: log}, nil
 }
 
 // IndexFile は1ファイルをインデックスに反映する。
@@ -62,18 +61,8 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	m := exif.Read(path)
 
 	p := photo.New(path, fi, m.TakenAt)
-
-	// Synologyが作ったサムネイルがあれば借りる。デコードもリサイズもせずに済み、
-	// famifoがデコードできないHEICも一覧に出せるようになる。@eaDir は読むだけで、
-	// 書き込みも削除もしない。
-	switch {
-	case synology.HasThumb(path):
-		p.ThumbSource = photo.ThumbSyno
-	case photo.IsDecodableFile(path):
-		if err := ix.gen.Generate(path, p.ID, m.Orientation); err != nil {
-			return err
-		}
-		p.ThumbSource = photo.ThumbFamifo
+	if err := ix.thumbProvider.ResolveSource(&p, m.Orientation); err != nil {
+		return err
 	}
 
 	return ix.st.Upsert(ctx, p)
@@ -89,8 +78,8 @@ func (ix *Indexer) RemoveFile(ctx context.Context, path string) error {
 	if !ok {
 		return nil
 	}
-	if p.ThumbSource == photo.ThumbFamifo {
-		if err := ix.gen.Remove(p.ID); err != nil {
+	if p.HasFamifoThumb() {
+		if err := ix.thumbProvider.Remove(p.ID); err != nil {
 			// DBからは消えているので、サムネイルの消し残しは致命的ではない
 			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID, "err", err)
 		}
@@ -108,10 +97,10 @@ func (ix *Indexer) RemoveTree(ctx context.Context, dir string) error {
 		return err
 	}
 	for _, p := range photos {
-		if p.ThumbSource != photo.ThumbFamifo {
+		if !p.HasFamifoThumb() {
 			continue
 		}
-		if err := ix.gen.Remove(p.ID); err != nil {
+		if err := ix.thumbProvider.Remove(p.ID); err != nil {
 			// DBからは消えているので、サムネイルの消し残しは致命的ではない
 			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID, "err", err)
 		}

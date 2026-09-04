@@ -1,7 +1,8 @@
-// Package thumb は一覧表示用のサムネイルを生成する。出力は常にJPEG。
+// Package thumb は一覧表示用のサムネイルを調達する。借りられるものは借り、
+// 借りられないものだけ自前で生成する。自前の出力は常にJPEG。
 //
-// 生成にHEICは来ない（自前ではデコードしない方針）。Synologyが @eaDir に持つ
-// サムネイルを借りる経路は internal/synology が扱う。
+// 生成にHEICは来ない（自前ではデコードしない方針）。@eaDir のパスの組み立てと
+// 存在確認は internal/synology が持ち、ここはそれを使って選ぶだけである。
 package thumb
 
 import (
@@ -18,6 +19,7 @@ import (
 	_ "image/png" // image.Decode にPNGを登録する
 
 	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/synology"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // image.Decode にWebPを登録する（デコードのみ）
 )
@@ -25,27 +27,52 @@ import (
 // jpegQuality はサムネイルの画質。一覧表示に十分で、かつ十分軽い値。
 const jpegQuality = 82
 
-// Generator は自前で生成したサムネイルの置き場を管理する。
-type Generator struct {
+// Provider は一覧用のサムネイルを供給する。自前の置き場を所有し、借りられる
+// ものは @eaDir から借り、借りられないものだけ生成する。
+type Provider struct {
 	dir  string
 	size int // 長辺の最大ピクセル数
 }
 
-// NewGenerator は置き場のディレクトリを用意してGeneratorを返す。
-func NewGenerator(dir string, size int) (*Generator, error) {
+// NewProvider は置き場のディレクトリを用意してProviderを返す。
+func NewProvider(dir string, size int) (*Provider, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("サムネイルディレクトリを作れません: %w", err)
 	}
-	return &Generator{dir: dir, size: size}, nil
+	return &Provider{dir: dir, size: size}, nil
 }
 
 // path はサムネイルの絶対パスを返す。
 //
-// 置き場所の規則そのものは photo.FamifoThumbPath が持つ。配信側はGeneratorを
+// 置き場所の規則そのものは photo.FamifoThumbPath が持つ。配信側はProviderを
 // 持たずに同じパスを引く必要があるため、規則の在り処はここではなく photo である。
-func (g *Generator) path(id string) string { return photo.FamifoThumbPath(g.dir, id) }
+func (pv *Provider) path(id string) string { return photo.FamifoThumbPath(pv.dir, id) }
 
-// Generate は srcPath の画像からサムネイルを作る。
+// ResolveSource は写真1枚のサムネイルの出どころを確定させ、pに記録する。
+//
+// Synologyが作ったものがあれば借りる。デコードもリサイズもせずに済み、famifoが
+// デコードできないHEICも一覧に出せるようになる。@eaDir は読むだけで、書き込みも
+// 削除もしない。
+//
+// 借りられず自前でも作れない写真（サムネイルの無いHEIC等）は出どころが無いまま
+// 返る。一覧は原本のURLにフォールバックする。
+//
+// 生成に失敗した場合はエラーを返す。インデックスに載せるかどうかは呼び出し側の
+// 判断で、ここでは出どころを記録しない。
+func (pv *Provider) ResolveSource(p *photo.Photo, orientation uint16) error {
+	switch {
+	case synology.HasThumb(p.Path):
+		p.AdoptSynoThumb()
+	case photo.IsDecodableFile(p.Path):
+		if err := pv.generate(p.Path, p.ID, orientation); err != nil {
+			return err
+		}
+		p.AdoptFamifoThumb()
+	}
+	return nil
+}
+
+// generate は srcPath の画像からサムネイルを作る。
 // デコードできないファイルはエラーを返し、サムネイルは何も残さない。
 //
 // orientation は internal/index/exif が読んだEXIFの向き。image.Decode はEXIFを見ずに
@@ -55,14 +82,14 @@ func (g *Generator) path(id string) string { return photo.FamifoThumbPath(g.dir,
 // 既にサムネイルがあり、元の写真より新しければ何もしない。DBを作り直すたびに
 // 全件を作り直すと4,495枚で37分（NASなら数時間）かかるが、その大半は中身の
 // 変わらないサムネイルの再生成である。
-func (g *Generator) Generate(srcPath, id string, orientation uint16) error {
+func (pv *Provider) generate(srcPath, id string, orientation uint16) error {
 	f, err := os.Open(srcPath)
 	if err != nil {
 		return fmt.Errorf("画像を開けません: %w", err)
 	}
 	defer f.Close()
 
-	if fi, err := f.Stat(); err == nil && g.isFresh(id, fi.ModTime()) {
+	if fi, err := f.Stat(); err == nil && pv.isFresh(id, fi.ModTime()) {
 		return nil
 	}
 
@@ -71,7 +98,7 @@ func (g *Generator) Generate(srcPath, id string, orientation uint16) error {
 		return fmt.Errorf("画像をデコードできません: %w", err)
 	}
 
-	out := g.path(id)
+	out := pv.path(id)
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return fmt.Errorf("サムネイルの保存先を作れません: %w", err)
 	}
@@ -86,7 +113,7 @@ func (g *Generator) Generate(srcPath, id string, orientation uint16) error {
 
 	// 縮小してから回転する。長辺基準の縮小なので順序で結果の寸法は変わらないが、
 	// 4032x3024ではなく480x360を回すぶん安く済む。
-	dst := applyOrientation(scaleToFit(src, g.size), orientation)
+	dst := applyOrientation(scaleToFit(src, pv.size), orientation)
 	if err := jpeg.Encode(tmp, dst, &jpeg.Options{Quality: jpegQuality}); err != nil {
 		tmp.Close()
 		return fmt.Errorf("サムネイルを書き出せません: %w", err)
@@ -104,8 +131,8 @@ func (g *Generator) Generate(srcPath, id string, orientation uint16) error {
 //
 // 出力は一時ファイルへ書いてからrenameしているので、中途半端な内容が
 // 残っていることはない。存在して新しければ、そのまま使ってよい。
-func (g *Generator) isFresh(id string, srcModTime time.Time) bool {
-	fi, err := os.Stat(g.path(id))
+func (pv *Provider) isFresh(id string, srcModTime time.Time) bool {
+	fi, err := os.Stat(pv.path(id))
 	if err != nil || !fi.Mode().IsRegular() {
 		return false
 	}
@@ -113,8 +140,8 @@ func (g *Generator) isFresh(id string, srcModTime time.Time) bool {
 }
 
 // Remove はサムネイルを削除する。存在しない場合はエラーにしない。
-func (g *Generator) Remove(id string) error {
-	if err := os.Remove(g.path(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+func (pv *Provider) Remove(id string) error {
+	if err := os.Remove(pv.path(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("サムネイルを削除できません: %w", err)
 	}
 	return nil

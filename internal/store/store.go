@@ -109,7 +109,7 @@ func (s *Store) GetByID(ctx context.Context, id string) (photo.Photo, error) {
 }
 
 // DeleteByPath はパスで写真を削除し、削除した行を返す。
-// 呼び出し側はサムネイルを消すかどうかの判断に ThumbSource を使う。
+// 呼び出し側はサムネイルを消すかどうかを HasFamifoThumb で判断する。
 // 該当が無い場合は ok=false を返し、エラーにはしない。
 func (s *Store) DeleteByPath(ctx context.Context, path string) (photo.Photo, bool, error) {
 	row := s.db.QueryRowContext(ctx,
