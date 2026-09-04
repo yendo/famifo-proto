@@ -71,55 +71,42 @@ func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
 	}
 }
 
-// kind は写真ファイルの扱い方を表す。外へ出すのは IsSupportedFile と
-// IsDecodableFile の2つの述語だけで、この3分類は答えを組み立てるための
-// 内部の都合である。
-type kind int
-
-const (
-	// kindUnsupported はインデックス対象外のファイル。
-	kindUnsupported kind = iota
-	// kindRaster はGoでデコードでき、サムネイルを生成するファイル。
-	kindRaster
-	// kindOpaque はインデックスはするがデコードせず、原本をそのまま配信するファイル。
-	// HEIC/HEIFが該当する。原本はSafari以外では表示できないため、@eaDir から
-	// 借りられる場合に限り、配信時にSynologyのJPEGへ差し替える（FullPath）。
-	kindOpaque
-)
-
-var extKinds = map[string]kind{
-	".jpg":  kindRaster,
-	".jpeg": kindRaster,
-	".png":  kindRaster,
-	".gif":  kindRaster,
-	".webp": kindRaster,
-	".heic": kindOpaque,
-	".heif": kindOpaque,
+// format は対応する拡張子1つ分の扱い。
+type format struct {
+	mime      string // 原本を配信するときのMIMEタイプ
+	decodable bool   // famifoが自分でデコードしてサムネイルを作れるか
 }
 
-var extTypes = map[string]string{
-	".jpg":  "image/jpeg",
-	".jpeg": "image/jpeg",
-	".png":  "image/png",
-	".gif":  "image/gif",
-	".webp": "image/webp",
-	".heic": "image/heic",
-	".heif": "image/heif",
+// supportedExts はインデックス対象にする拡張子。ここに無い拡張子は対象外である。
+// 対応形式を増やすのはこの表に1行足すことであり、分類とMIMEが片方だけ増える
+// ことがないよう1つにまとめてある。
+//
+// HEIC/HEIFが decodable=false なのは、載せるが自前ではデコードしないため。原本は
+// Safari以外では表示できないので、@eaDir から借りられる場合に限り、配信時に
+// SynologyのJPEGへ差し替える（FullPath）。
+var supportedExts = map[string]format{
+	".jpg":  {"image/jpeg", true},
+	".jpeg": {"image/jpeg", true},
+	".png":  {"image/png", true},
+	".gif":  {"image/gif", true},
+	".webp": {"image/webp", true},
+	".heic": {"image/heic", false},
+	".heif": {"image/heif", false},
 }
 
 func ext(name string) string { return strings.ToLower(filepath.Ext(name)) }
 
-// kindOf はファイル名の拡張子から扱い方を判定する。
-func kindOf(name string) kind { return extKinds[ext(name)] }
-
 // IsSupportedFile はインデックス対象にすべきファイルかを報告する。
 // 判定は拡張子だけに基づくので、ベース名でもフルパスでも渡せる。
-func IsSupportedFile(name string) bool { return kindOf(name) != kindUnsupported }
+func IsSupportedFile(name string) bool {
+	_, ok := supportedExts[ext(name)]
+	return ok
+}
 
 // IsDecodableFile は famifo が自分でサムネイルを作れるファイルかを報告する。
 // 偽のときサムネイルは @eaDir から借りるしかなく、借りられなければ一覧には
-// 原本が出る（HEIC/HEIFが該当する）。
-func IsDecodableFile(name string) bool { return kindOf(name) == kindRaster }
+// 原本が出る（HEIC/HEIFが該当する）。対象外のファイルも偽になる。
+func IsDecodableFile(name string) bool { return supportedExts[ext(name)].decodable }
 
 // FamifoThumbPath は famifo が自分で生成したサムネイルのパスを返す。
 // 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
@@ -163,7 +150,8 @@ func (p *Photo) AdoptFamifoThumb() { p.ThumbSource = ThumbFamifo }
 // SynologyのXL（長辺1707px）を返す。thumb_source が eadir であればMがあり、MとXLは
 // 同じ生成器が一緒に書くので、XLの存在はそこから導ける。
 func (p Photo) FullPath() string {
-	if kindOf(p.Path) == kindOpaque && p.ThumbSource == ThumbSyno {
+	f, supported := supportedExts[ext(p.Path)]
+	if supported && !f.decodable && p.ThumbSource == ThumbSyno {
 		return synology.LargePath(p.Path)
 	}
 	return p.Path
@@ -174,8 +162,8 @@ func (p Photo) FullPath() string {
 //
 // HEIC/HEIFはGoの mime パッケージが知らないため自前の表で引く。
 func (p Photo) ContentType() string {
-	if t, ok := extTypes[ext(p.FullPath())]; ok {
-		return t
+	if f, ok := supportedExts[ext(p.FullPath())]; ok {
+		return f.mime
 	}
 	return "application/octet-stream"
 }
