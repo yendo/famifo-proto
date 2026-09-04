@@ -48,7 +48,7 @@ func NewProvider(dir string, size int) (*Provider, error) {
 // 持たずに同じパスを引く必要があるため、規則の在り処はここではなく photo である。
 func (pv *Provider) path(id string) string { return photo.FamifoThumbPath(pv.dir, id) }
 
-// ResolveSource は写真1枚のサムネイルの出どころを確定させ、pに記録する。
+// ResolveSource は写真1枚のサムネイルの出どころを確定させ、記録した1枚を返す。
 //
 // Synologyが作ったものがあれば借りる。デコードもリサイズもせずに済み、famifoが
 // デコードできないHEICも一覧に出せるようになる。@eaDir は読むだけで、書き込みも
@@ -58,18 +58,18 @@ func (pv *Provider) path(id string) string { return photo.FamifoThumbPath(pv.dir
 // 返る。一覧は原本のURLにフォールバックする。
 //
 // 生成に失敗した場合はエラーを返す。インデックスに載せるかどうかは呼び出し側の
-// 判断で、ここでは出どころを記録しない。
-func (pv *Provider) ResolveSource(p *photo.Photo, orientation uint16) error {
+// 判断で、出どころを記録しないまま渡された1枚を返す。
+func (pv *Provider) ResolveSource(p photo.Photo, orientation uint16) (photo.Photo, error) {
 	switch {
 	case synology.HasThumb(p.Path()):
-		p.AdoptSynoThumb()
+		return p.WithSynoThumb(), nil
 	case photo.IsDecodableFile(p.Path()):
 		if err := pv.generate(p.Path(), p.ID(), orientation); err != nil {
-			return err
+			return p, err
 		}
-		p.AdoptFamifoThumb()
+		return p.WithFamifoThumb(), nil
 	}
-	return nil
+	return p, nil
 }
 
 // generate は srcPath の画像からサムネイルを作る。

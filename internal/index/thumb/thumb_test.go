@@ -60,8 +60,8 @@ func newTestProvider(t *testing.T, size int) (*thumb.Provider, string) {
 // provide は ResolveSource 経由でサムネイルを調達する。一時ディレクトリには
 // @eaDir が無いので、必ず自前で生成する枝に入る。
 func provide(pv *thumb.Provider, srcPath string, orientation uint16) error {
-	p := restored(srcPath)
-	return pv.ResolveSource(&p, orientation)
+	_, err := pv.ResolveSource(restored(srcPath), orientation)
+	return err
 }
 
 // writeSynoThumb は srcPath の隣に、Synologyが作った体のサムネイルを置く。
@@ -80,8 +80,8 @@ func TestResolveSourcePicksTheThumbSource(t *testing.T) {
 		src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 		writeSynoThumb(t, src)
 
-		p := restored(src)
-		require.NoError(t, pv.ResolveSource(&p, 1))
+		p, err := pv.ResolveSource(restored(src), 1)
+		require.NoError(t, err)
 
 		require.True(t, p.HasThumb())
 		require.False(t, p.HasFamifoThumb(), "借りたものは消してはいけない")
@@ -93,8 +93,8 @@ func TestResolveSourcePicksTheThumbSource(t *testing.T) {
 		pv, thumbDir := newTestProvider(t, 100)
 		src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 
-		p := restored(src)
-		require.NoError(t, pv.ResolveSource(&p, 1))
+		p, err := pv.ResolveSource(restored(src), 1)
+		require.NoError(t, err)
 
 		require.True(t, p.HasFamifoThumb())
 		require.FileExists(t, thumbPathFor(thumbDir, src))
@@ -105,8 +105,8 @@ func TestResolveSourcePicksTheThumbSource(t *testing.T) {
 		src := filepath.Join(t.TempDir(), "a.heic")
 		require.NoError(t, os.WriteFile(src, []byte("famifoはHEICをデコードしない"), 0o644))
 
-		p := restored(src)
-		require.NoError(t, pv.ResolveSource(&p, 1), "デコードを試みないのでエラーにならない")
+		p, err := pv.ResolveSource(restored(src), 1)
+		require.NoError(t, err, "デコードを試みないのでエラーにならない")
 
 		require.False(t, p.HasThumb(), "一覧は原本のURLにフォールバックする")
 		require.NoFileExists(t, thumbPathFor(thumbDir, src))

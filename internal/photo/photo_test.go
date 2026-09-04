@@ -69,20 +69,22 @@ func TestThumbPathBySource(t *testing.T) {
 	}
 }
 
-// Adopt* は「どちらを採用したか」を記録する唯一の入口で、HasFamifoThumb が
+// With* は「どちらを採用したか」を記録する唯一の入口で、HasFamifoThumb が
 // 削除してよいかを答える。値ではなく操作から見て、この対応を固定する。
-func TestAdoptRecordsWhichThumbIsUsed(t *testing.T) {
+func TestWithThumbRecordsWhichThumbIsUsed(t *testing.T) {
 	p := restored("/photos/a.jpg", photo.ThumbNone)
 	require.False(t, p.HasThumb(), "採用前はサムネイルが無い")
 	require.False(t, p.HasFamifoThumb())
 
-	p.AdoptSynoThumb()
-	require.True(t, p.HasThumb())
-	require.False(t, p.HasFamifoThumb(), "借りたものは消してはいけない")
+	syno := p.WithSynoThumb()
+	require.True(t, syno.HasThumb())
+	require.False(t, syno.HasFamifoThumb(), "借りたものは消してはいけない")
 
-	p.AdoptFamifoThumb()
-	require.True(t, p.HasThumb())
-	require.True(t, p.HasFamifoThumb(), "自前で作ったものは消してよい")
+	famifo := p.WithFamifoThumb()
+	require.True(t, famifo.HasThumb())
+	require.True(t, famifo.HasFamifoThumb(), "自前で作ったものは消してよい")
+
+	require.False(t, p.HasThumb(), "元の1枚は書き換わらない")
 }
 
 func TestHasThumbAgreesWithThumbSource(t *testing.T) {

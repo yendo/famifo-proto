@@ -61,7 +61,8 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	m := exif.Read(path)
 
 	p := photo.New(path, fi, m.TakenAt)
-	if err := ix.thumbProvider.ResolveSource(&p, m.Orientation); err != nil {
+	p, err = ix.thumbProvider.ResolveSource(p, m.Orientation)
+	if err != nil {
 		return err
 	}
 

@@ -43,7 +43,8 @@ type Photo struct {
 	// thumbSource はサムネイルの出どころ。「あるか」ではなく「どこにあるか」を持つ。
 	// 出どころによって配信するパスも消してよいかも変わるため。
 	//
-	// 書き換えは AdoptSynoThumb / AdoptFamifoThumb を通す。
+	// 採用の記録は WithSynoThumb / WithFamifoThumb が行う。Photoは不変で、
+	// これらは書き換えるのではなく採用済みの1枚を返す。
 	thumbSource ThumbSource
 }
 
@@ -54,7 +55,7 @@ type Photo struct {
 // 「EXIFに無い」ことを表す。
 //
 // ThumbSource は受け取らない。どちらを採用するかは調達を試みた結果であって、
-// 構築の時点ではまだ決まっていない。AdoptSynoThumb / AdoptFamifoThumb で
+// 構築の時点ではまだ決まっていない。WithSynoThumb / WithFamifoThumb で
 // 後から記録する（internal/index/thumb の ResolveSource が呼ぶ）。
 func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
 	return Photo{
@@ -123,11 +124,11 @@ func (p Photo) HasThumb() bool {
 // 消してよいのはこれだけで、@eaDir から借りたものは読むだけ。
 func (p Photo) HasFamifoThumb() bool { return p.thumbSource == ThumbFamifo }
 
-// AdoptSynoThumb は @eaDir のサムネイルを採用する。読むだけで書き換えない。
-func (p *Photo) AdoptSynoThumb() { p.thumbSource = ThumbSyno }
+// WithSynoThumb は @eaDir のサムネイルを採用した1枚を返す。読むだけで書き換えない。
+func (p Photo) WithSynoThumb() Photo { p.thumbSource = ThumbSyno; return p }
 
-// AdoptFamifoThumb は自前で生成し、置き場に収めたサムネイルを採用する。
-func (p *Photo) AdoptFamifoThumb() { p.thumbSource = ThumbFamifo }
+// WithFamifoThumb は自前で生成し、置き場に収めたサムネイルを採用した1枚を返す。
+func (p Photo) WithFamifoThumb() Photo { p.thumbSource = ThumbFamifo; return p }
 
 // FullPath は拡大表示に配信するファイルのパスを返す。
 //
