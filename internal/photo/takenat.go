@@ -1,19 +1,13 @@
-// Package takenat は写真の「撮影日時」を決める。
-// EXIFの撮影日時があればそれを、無ければファイルのmtimeを使う。
-//
-// EXIFの読み取りそのものは internal/index/exif が担う。ここにあるのは、
-// 読み取れた値をどう解釈し、無いときに何で代替するかという方針だけである。
-package takenat
+package photo
 
 import "time"
 
-// Resolve は写真の撮影日時を返す。
+// resolveTakenAt は写真の撮影日時を決める。
 //
-// exifTakenAt は internal/index/exif が読んだ撮影日時で、ゼロ値は「EXIFに無い」ことを
-// 表す。撮影日時が取れないファイル（スクリーンショット、GIF、WebP、EXIFを
-// 削ぎ落とされた画像）は普通に存在し、それらを一覧から落とさないために
-// 必ずmodTimeで代替する。
-func Resolve(exifTakenAt, modTime time.Time) time.Time {
+// 撮影日時が取れないファイル（スクリーンショット、GIF、WebP、EXIFを削ぎ落と
+// された画像）は普通に存在し、それらを一覧から落とさないために必ずmodTimeで
+// 代替する。
+func resolveTakenAt(exifTakenAt, modTime time.Time) time.Time {
 	if exifTakenAt.IsZero() {
 		return modTime
 	}

@@ -1,5 +1,9 @@
 // Package photo は写真1枚について答えられることをまとめる。
-// インデックス上の型、拡張子による分類、安定ID、そして配信する画像ファイルのパス。
+// インデックス上の型、拡張子による分類、安定ID、撮影日時の決め方（takenat.go）、
+// そして配信する画像ファイルのパス。
+//
+// パスから導けるフィールドの規則はすべてここにある。組み立ては New を通す。
+// 呼び出し側が同じ式を書き直すと規則が二重化するため。
 //
 // 分類は拡張子のみに基づき、ファイルの中身は読まない
 // （fsnotifyの大量イベントを軽く捌くため）。
@@ -8,6 +12,7 @@ package photo
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"time"
@@ -43,6 +48,25 @@ const (
 func IDFor(path string) string {
 	sum := sha256.Sum256([]byte(path))
 	return hex.EncodeToString(sum[:])[:32]
+}
+
+// New はインデックスに載せる1枚を組み立てる。
+// ID・拡張子・撮影日時はパスとファイル情報から導く。
+//
+// exifTakenAt は internal/index/exif が読んだEXIFの撮影日時で、ゼロ値は
+// 「EXIFに無い」ことを表す。
+//
+// ThumbSource は受け取らない。借りるか作るかの判定にはIDが要るため構築の
+// あとにしか決まらず、呼び出し側が後から入れる。
+func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
+	return Photo{
+		ID:      IDFor(path),
+		Path:    path,
+		TakenAt: resolveTakenAt(exifTakenAt, fi.ModTime()),
+		ModTime: fi.ModTime(),
+		Size:    fi.Size(),
+		Ext:     ext(path),
+	}
 }
 
 // Kind は写真ファイルの扱い方を表す。

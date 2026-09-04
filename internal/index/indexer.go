@@ -2,8 +2,8 @@
 // 起動時のフルスキャンとfsnotifyによる追従の両方をここで担う。
 //
 // 1枚を取り込む手順のうち、重いものはサブパッケージに置く。
-// exif がEXIFを読み、takenat が撮影日時を決め、thumb がサムネイルを作る。
-// いずれも取り込み時にしか使わないので、internal/photo と横並びにはしない。
+// exif がEXIFを読み、thumb がサムネイルを作る。どちらも取り込み時にしか
+// 使わないので、internal/photo と横並びにはしない。
 package index
 
 import (
@@ -11,11 +11,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/yendo/famifo-proto/internal/index/exif"
-	"github.com/yendo/famifo-proto/internal/index/takenat"
 	"github.com/yendo/famifo-proto/internal/index/thumb"
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
@@ -65,14 +62,7 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	// 決まるので、写真1枚につきEXIFのパースは1回で済む。
 	m := exif.Read(path)
 
-	p := photo.Photo{
-		ID:      photo.IDFor(path),
-		Path:    path,
-		ModTime: fi.ModTime(),
-		Size:    fi.Size(),
-		Ext:     strings.ToLower(filepath.Ext(path)),
-		TakenAt: takenat.Resolve(m.TakenAt, fi.ModTime()),
-	}
+	p := photo.New(path, fi, m.TakenAt)
 
 	// Synologyが作ったサムネイルがあれば借りる。デコードもリサイズもせずに済み、
 	// famifoがデコードできないHEICも一覧に出せるようになる。@eaDir は読むだけで、

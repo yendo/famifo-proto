@@ -19,7 +19,7 @@ import (
 type Meta struct {
 	// TakenAt はEXIFの撮影日時。持たない写真ではゼロ値。
 	// 時差を持たない値をどう解釈するかは方針の問題なので、ここでは組み直さず
-	// imagemeta が返したまま渡す（internal/index/takenat が決める）。
+	// imagemeta が返したまま渡す（photo.New が決める）。
 	TakenAt time.Time
 	// Orientation は表示時の向き。1..8以外だった場合は回転不要の1にする。
 	Orientation uint16
