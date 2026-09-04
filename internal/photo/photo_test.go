@@ -107,6 +107,22 @@ func TestThumbPathBySource(t *testing.T) {
 	}
 }
 
+// Adopt* は「どちらを採用したか」を記録する唯一の入口で、HasFamifoThumb が
+// 削除してよいかを答える。値ではなく操作から見て、この対応を固定する。
+func TestAdoptRecordsWhichThumbIsUsed(t *testing.T) {
+	p := photo.Photo{ID: testID, Path: "/photos/a.jpg"}
+	require.False(t, p.HasThumb(), "採用前はサムネイルが無い")
+	require.False(t, p.HasFamifoThumb())
+
+	p.AdoptSynoThumb()
+	require.True(t, p.HasThumb())
+	require.False(t, p.HasFamifoThumb(), "借りたものは消してはいけない")
+
+	p.AdoptFamifoThumb()
+	require.True(t, p.HasThumb())
+	require.True(t, p.HasFamifoThumb(), "自前で作ったものは消してよい")
+}
+
 func TestHasThumbAgreesWithThumbSource(t *testing.T) {
 	tests := []struct {
 		name string

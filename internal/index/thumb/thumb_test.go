@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/index/thumb"
 	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/synology"
 )
 
 const testID = "abcdef0123456789abcdef0123456789"
@@ -38,6 +39,14 @@ func writeImage(t *testing.T, dir, name string, w, h int) string {
 // newTestProvider は Provider と、その置き場のディレクトリを返す。
 // サムネイルの位置を答えるのは photo.FamifoThumbPath なので、テストもそこから
 // 引けるようにディレクトリを持ち回る。
+func newTestProvider(t *testing.T, size int) (*thumb.Provider, string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "thumbs")
+	pv, err := thumb.NewProvider(dir, size)
+	require.NoError(t, err)
+	return pv, dir
+}
+
 // provide は ResolveSource 経由でサムネイルを調達する。一時ディレクトリには
 // @eaDir が無いので、必ず自前で生成する枝に入る。
 func provide(pv *thumb.Provider, srcPath string, orientation uint16) error {
@@ -45,12 +54,53 @@ func provide(pv *thumb.Provider, srcPath string, orientation uint16) error {
 	return pv.ResolveSource(&p, orientation)
 }
 
-func newTestProvider(t *testing.T, size int) (*thumb.Provider, string) {
+// writeSynoThumb は srcPath の隣に、Synologyが作った体のサムネイルを置く。
+func writeSynoThumb(t *testing.T, srcPath string) {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "thumbs")
-	pv, err := thumb.NewProvider(dir, size)
-	require.NoError(t, err)
-	return pv, dir
+	out := synology.ThumbPath(srcPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(out), 0o755))
+	require.NoError(t, os.WriteFile(out, []byte("eadir thumb"), 0o644))
+}
+
+// ResolveSource の3つの結末を押さえる。借りられるなら借り、借りられず自前で
+// 作れるなら作り、どちらも駄目なら出どころが無いまま返る。
+func TestResolveSourcePicksTheThumbSource(t *testing.T) {
+	t.Run("借りられるなら @eaDir から借りる", func(t *testing.T) {
+		pv, thumbDir := newTestProvider(t, 100)
+		src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
+		writeSynoThumb(t, src)
+
+		p := photo.Photo{ID: testID, Path: src}
+		require.NoError(t, pv.ResolveSource(&p, 1))
+
+		require.True(t, p.HasThumb())
+		require.False(t, p.HasFamifoThumb(), "借りたものは消してはいけない")
+		require.NoFileExists(t, photo.FamifoThumbPath(thumbDir, testID),
+			"借りられるなら自前では作らない")
+	})
+
+	t.Run("借りられなければ自前で作る", func(t *testing.T) {
+		pv, thumbDir := newTestProvider(t, 100)
+		src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
+
+		p := photo.Photo{ID: testID, Path: src}
+		require.NoError(t, pv.ResolveSource(&p, 1))
+
+		require.True(t, p.HasFamifoThumb())
+		require.FileExists(t, photo.FamifoThumbPath(thumbDir, testID))
+	})
+
+	t.Run("HEICは借りられなければ出どころが無い", func(t *testing.T) {
+		pv, thumbDir := newTestProvider(t, 100)
+		src := filepath.Join(t.TempDir(), "a.heic")
+		require.NoError(t, os.WriteFile(src, []byte("famifoはHEICをデコードしない"), 0o644))
+
+		p := photo.Photo{ID: testID, Path: src}
+		require.NoError(t, pv.ResolveSource(&p, 1), "デコードを試みないのでエラーにならない")
+
+		require.False(t, p.HasThumb(), "一覧は原本のURLにフォールバックする")
+		require.NoFileExists(t, photo.FamifoThumbPath(thumbDir, testID))
+	})
 }
 
 func decodeThumb(t *testing.T, path string) image.Config {
