@@ -50,15 +50,12 @@ func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, src 
 	path := filepath.Join(f.photoDir, name)
 	require.NoError(t, os.WriteFile(path, []byte("original-"+name), 0o644))
 
-	p := photo.Photo{
-		ID: photo.IDFor(path), Path: path, TakenAt: takenAt, ModTime: takenAt,
-		Size: 10, ThumbSource: src,
-	}
+	p := photo.Restore(path, takenAt, takenAt, 10, src)
 	require.NoError(t, f.st.Upsert(context.Background(), p))
 
 	switch src {
 	case photo.ThumbFamifo:
-		writeFileAt(t, photo.FamifoThumbPath(f.thumbDir, p.ID), "thumb-"+name)
+		writeFileAt(t, photo.FamifoThumbPath(f.thumbDir, p.ID()), "thumb-"+name)
 	case photo.ThumbSyno:
 		writeFileAt(t, synology.ThumbPath(path), "eadir-"+name)
 		writeFileAt(t, synology.LargePath(path), "eadir-xl-"+name)
@@ -84,7 +81,7 @@ func TestServeThumb(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
 
-	rec := do(t, f.h, "/thumb/"+p.ID)
+	rec := do(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "thumb-a.jpg", rec.Body.String())
@@ -102,7 +99,7 @@ func TestServeThumbNotFoundWhenPhotoHasNone(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbNone)
 
-	rec := do(t, f.h, "/thumb/"+p.ID)
+	rec := do(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
@@ -111,7 +108,7 @@ func TestServeOriginal(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
 
-	rec := do(t, f.h, "/photo/"+p.ID)
+	rec := do(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String())
@@ -122,7 +119,7 @@ func TestServeOriginalSetsHEICContentType(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbNone)
 
-	rec := do(t, f.h, "/photo/"+p.ID)
+	rec := do(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.heic", rec.Body.String(),
@@ -158,7 +155,7 @@ func TestServeThumbFromEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbSyno)
 
-	rec := do(t, f.h, "/thumb/"+p.ID)
+	rec := do(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-a.heic", rec.Body.String())
@@ -168,7 +165,7 @@ func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbSyno)
 
-	rec := do(t, f.h, "/photo/"+p.ID)
+	rec := do(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-xl-a.heic", rec.Body.String(),
@@ -181,7 +178,7 @@ func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbSyno)
 
-	rec := do(t, f.h, "/photo/"+p.ID)
+	rec := do(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String(),

@@ -61,10 +61,10 @@ func (pv *Provider) path(id string) string { return photo.FamifoThumbPath(pv.dir
 // 判断で、ここでは出どころを記録しない。
 func (pv *Provider) ResolveSource(p *photo.Photo, orientation uint16) error {
 	switch {
-	case synology.HasThumb(p.Path):
+	case synology.HasThumb(p.Path()):
 		p.AdoptSynoThumb()
-	case photo.IsDecodableFile(p.Path):
-		if err := pv.generate(p.Path, p.ID, orientation); err != nil {
+	case photo.IsDecodableFile(p.Path()):
+		if err := pv.generate(p.Path(), p.ID(), orientation); err != nil {
 			return err
 		}
 		p.AdoptFamifoThumb()

@@ -47,13 +47,13 @@ func (s *Server) buildRange(r *http.Request, offset, limit int) (itemsView, erro
 	v := itemsView{Photos: make([]photoView, 0, len(photos))}
 	for _, p := range photos {
 		pv := photoView{
-			ID:       p.ID,
-			FullURL:  "/photo/" + p.ID,
-			ThumbURL: "/photo/" + p.ID,
-			Date:     p.TakenAt.Format("2006-01-02"),
+			ID:       p.ID(),
+			FullURL:  "/photo/" + p.ID(),
+			ThumbURL: "/photo/" + p.ID(),
+			Date:     p.TakenAt().Format("2006-01-02"),
 		}
 		if p.HasThumb() {
-			pv.ThumbURL = "/thumb/" + p.ID
+			pv.ThumbURL = "/thumb/" + p.ID()
 		}
 		v.Photos = append(v.Photos, pv)
 	}

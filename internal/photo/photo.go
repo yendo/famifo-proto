@@ -3,7 +3,7 @@
 // （photo.go）、対応する画像形式（imageformat.go）、撮影日時の決め方
 // （takenat.go）。
 //
-// パスから導ける値の規則はここにしかない。組み立ては New を通す。
+// パスから導ける値の規則はここにしかない。組み立ては New と Restore を通す。
 // 呼び出し側が同じ式を書き直すと規則が二重化するため。
 //
 // 分類は拡張子のみに基づき、ファイルの中身は読まない
@@ -21,18 +21,21 @@ import (
 )
 
 // Photo はインデックス上の1枚の写真。
+//
+// フィールドは非公開で、組み立ては New（新しく見つけた1枚）と
+// Restore（インデックスからの復元）だけを通る。パスから導ける値の規則を
+// このパッケージの外で組み直せないようにするため。
 type Photo struct {
-	ID      string    // パスから導出した安定ID。URLに露出させる
-	Path    string    // ディスク上の絶対パス
-	TakenAt time.Time // EXIF撮影日時、無ければmtime
-	ModTime time.Time // ファイルのmtime。再スキャン時の変更検知に使う
-	Size    int64
-	// ThumbSource はサムネイルの出どころ。「あるか」ではなく「どこにあるか」を持つ。
+	id      string    // パスから導出した安定ID。URLに露出させる
+	path    string    // ディスク上の絶対パス
+	takenAt time.Time // EXIF撮影日時、無ければmtime
+	modTime time.Time // ファイルのmtime。再スキャン時の変更検知に使う
+	size    int64
+	// thumbSource はサムネイルの出どころ。「あるか」ではなく「どこにあるか」を持つ。
 	// 出どころによって配信するパスも消してよいかも変わるため。
 	//
-	// 書き換えは AdoptSynoThumb / AdoptFamifoThumb を通す。公開しているのは
-	// store が永続化するためで、外から直接代入する場所ではない。
-	ThumbSource ThumbSource
+	// 書き換えは AdoptSynoThumb / AdoptFamifoThumb を通す。
+	thumbSource ThumbSource
 }
 
 // ThumbSource はサムネイルの出どころ。
@@ -43,6 +46,24 @@ const (
 	ThumbFamifo ThumbSource = "famifo" // famifoが生成し、自分の置き場に持っているもの
 	ThumbSyno   ThumbSource = "eadir"  // Synologyが @eaDir に持っているもの。読むだけで書き換えない
 )
+
+// ID はパスから導出した安定IDを返す。URLに露出させる。
+func (p Photo) ID() string { return p.id }
+
+// Path はディスク上の絶対パスを返す。
+func (p Photo) Path() string { return p.path }
+
+// TakenAt は撮影日時を返す。EXIFに無ければmtime。
+func (p Photo) TakenAt() time.Time { return p.takenAt }
+
+// ModTime はファイルのmtimeを返す。再スキャン時の変更検知に使う。
+func (p Photo) ModTime() time.Time { return p.modTime }
+
+// Size はファイルサイズを返す。
+func (p Photo) Size() int64 { return p.size }
+
+// ThumbSource はサムネイルの出どころを返す。store が永続化するために要る。
+func (p Photo) ThumbSource() ThumbSource { return p.thumbSource }
 
 // IDFor はパスから安定したIDを導出する。
 // URLにファイルシステムのパスを露出させないためと、
@@ -63,11 +84,26 @@ func IDFor(path string) string {
 // 後から記録する（internal/index/thumb の ResolveSource が呼ぶ）。
 func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
 	return Photo{
-		ID:      IDFor(path),
-		Path:    path,
-		TakenAt: resolveTakenAt(exifTakenAt, fi.ModTime()),
-		ModTime: fi.ModTime(),
-		Size:    fi.Size(),
+		id:      IDFor(path),
+		path:    path,
+		takenAt: resolveTakenAt(exifTakenAt, fi.ModTime()),
+		modTime: fi.ModTime(),
+		size:    fi.Size(),
+	}
+}
+
+// Restore はインデックスに保存済みの1枚を組み立て直す。store が読み出しに使う。
+//
+// IDは保存された値ではなくパスから導き直す。導出の規則はこのパッケージにしか
+// なく、インデックスに入っていた値を信じると規則が二重化するため。
+func Restore(path string, takenAt, modTime time.Time, size int64, src ThumbSource) Photo {
+	return Photo{
+		id:          IDFor(path),
+		path:        path,
+		takenAt:     takenAt,
+		modTime:     modTime,
+		size:        size,
+		thumbSource: src,
 	}
 }
 
@@ -82,11 +118,11 @@ func FamifoThumbPath(thumbDir, id string) string {
 //
 // thumbDir は -data から来る配置設定で、写真そのものの属性ではないため引数で受ける。
 func (p Photo) ThumbPath(thumbDir string) (string, bool) {
-	switch p.ThumbSource {
+	switch p.thumbSource {
 	case ThumbFamifo:
-		return FamifoThumbPath(thumbDir, p.ID), true
+		return FamifoThumbPath(thumbDir, p.id), true
 	case ThumbSyno:
-		return synology.ThumbPath(p.Path), true
+		return synology.ThumbPath(p.path), true
 	}
 	return "", false
 }
@@ -94,18 +130,18 @@ func (p Photo) ThumbPath(thumbDir string) (string, bool) {
 // HasThumb は一覧に出せるサムネイルがあるかを報告する。
 // パスを組み立てずに判定できるので、一覧の組み立てではこちらを使う。
 func (p Photo) HasThumb() bool {
-	return p.ThumbSource == ThumbFamifo || p.ThumbSource == ThumbSyno
+	return p.thumbSource == ThumbFamifo || p.thumbSource == ThumbSyno
 }
 
 // HasFamifoThumb は famifo が作ったサムネイルを採用しているかを報告する。
 // 消してよいのはこれだけで、@eaDir から借りたものは読むだけ。
-func (p Photo) HasFamifoThumb() bool { return p.ThumbSource == ThumbFamifo }
+func (p Photo) HasFamifoThumb() bool { return p.thumbSource == ThumbFamifo }
 
 // AdoptSynoThumb は @eaDir のサムネイルを採用する。読むだけで書き換えない。
-func (p *Photo) AdoptSynoThumb() { p.ThumbSource = ThumbSyno }
+func (p *Photo) AdoptSynoThumb() { p.thumbSource = ThumbSyno }
 
 // AdoptFamifoThumb は自前で生成し、置き場に収めたサムネイルを採用する。
-func (p *Photo) AdoptFamifoThumb() { p.ThumbSource = ThumbFamifo }
+func (p *Photo) AdoptFamifoThumb() { p.thumbSource = ThumbFamifo }
 
 // FullPath は拡大表示に配信するファイルのパスを返す。
 //
@@ -113,11 +149,11 @@ func (p *Photo) AdoptFamifoThumb() { p.ThumbSource = ThumbFamifo }
 // SynologyのXL（長辺1707px）を返す。thumb_source が eadir であればMがあり、MとXLは
 // 同じ生成器が一緒に書くので、XLの存在はそこから導ける。
 func (p Photo) FullPath() string {
-	f, supported := supportedExts[ext(p.Path)]
-	if supported && !f.decodable && p.ThumbSource == ThumbSyno {
-		return synology.LargePath(p.Path)
+	f, supported := supportedExts[ext(p.path)]
+	if supported && !f.decodable && p.thumbSource == ThumbSyno {
+		return synology.LargePath(p.path)
 	}
-	return p.Path
+	return p.path
 }
 
 // ContentType は FullPath が返すファイルのMIMEタイプを返す。

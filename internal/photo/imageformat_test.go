@@ -47,7 +47,7 @@ func TestContentType(t *testing.T) {
 	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
 			// 借りていない写真は原本を配信するので、MIMEは拡張子どおりになる。
-			require.Equal(t, want, photo.Photo{Path: "/photos/" + name}.ContentType())
+			require.Equal(t, want, restored("/photos/"+name, photo.ThumbNone).ContentType())
 		})
 	}
 }

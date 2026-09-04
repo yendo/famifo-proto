@@ -79,9 +79,9 @@ func (ix *Indexer) RemoveFile(ctx context.Context, path string) error {
 		return nil
 	}
 	if p.HasFamifoThumb() {
-		if err := ix.thumbProvider.Remove(p.ID); err != nil {
+		if err := ix.thumbProvider.Remove(p.ID()); err != nil {
 			// DBからは消えているので、サムネイルの消し残しは致命的ではない
-			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID, "err", err)
+			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID(), "err", err)
 		}
 	}
 	return nil
@@ -100,9 +100,9 @@ func (ix *Indexer) RemoveTree(ctx context.Context, dir string) error {
 		if !p.HasFamifoThumb() {
 			continue
 		}
-		if err := ix.thumbProvider.Remove(p.ID); err != nil {
+		if err := ix.thumbProvider.Remove(p.ID()); err != nil {
 			// DBからは消えているので、サムネイルの消し残しは致命的ではない
-			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID, "err", err)
+			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID(), "err", err)
 		}
 	}
 	return nil

@@ -75,24 +75,24 @@ ON CONFLICT(id) DO UPDATE SET
 // Upsert は写真を登録または更新する。
 func (s *Store) Upsert(ctx context.Context, p photo.Photo) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
-		p.ID, p.Path, p.TakenAt.Unix(), p.ModTime.Unix(), p.Size, p.ThumbSource)
+		p.ID(), p.Path(), p.TakenAt().Unix(), p.ModTime().Unix(), p.Size(), p.ThumbSource())
 	if err != nil {
-		return fmt.Errorf("写真を保存できません (%s): %w", p.Path, err)
+		return fmt.Errorf("写真を保存できません (%s): %w", p.Path(), err)
 	}
 	return nil
 }
 
-const selectCols = `id, path, taken_at, mod_time, size, thumb_source`
+// idは読まない。パスから導ける値なので、復元は photo.Restore に任せる。
+const selectCols = `path, taken_at, mod_time, size, thumb_source`
 
 func scanPhoto(row interface{ Scan(...any) error }) (photo.Photo, error) {
-	var p photo.Photo
-	var takenAt, modTime int64
-	if err := row.Scan(&p.ID, &p.Path, &takenAt, &modTime, &p.Size, &p.ThumbSource); err != nil {
+	var path string
+	var takenAt, modTime, size int64
+	var src photo.ThumbSource
+	if err := row.Scan(&path, &takenAt, &modTime, &size, &src); err != nil {
 		return photo.Photo{}, err
 	}
-	p.TakenAt = time.Unix(takenAt, 0)
-	p.ModTime = time.Unix(modTime, 0)
-	return p, nil
+	return photo.Restore(path, time.Unix(takenAt, 0), time.Unix(modTime, 0), size, src), nil
 }
 
 // GetByID はIDで写真を引く。見つからない場合は ErrNotFound を返す。

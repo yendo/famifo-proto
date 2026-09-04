@@ -26,8 +26,15 @@ func TestFamifoThumbPathShardsByFirstTwoChars(t *testing.T) {
 		photo.FamifoThumbPath("/data/thumbs", testID))
 }
 
+// restored は保存済みの1枚を模したPhotoを組み立てる。日時とサイズはどのテストも
+// 見ないので固定値でよく、パスと出どころだけを行ごとに変える。
+func restored(path string, src photo.ThumbSource) photo.Photo {
+	return photo.Restore(path, testModTime, testModTime, 0, src)
+}
+
 func TestThumbPathBySource(t *testing.T) {
 	const thumbDir = "/data/thumbs"
+	jpgID := photo.IDFor("/photos/a.jpg")
 	tests := []struct {
 		name string
 		p    photo.Photo
@@ -36,19 +43,19 @@ func TestThumbPathBySource(t *testing.T) {
 	}{
 		{
 			name: "自前で生成したものは自分の置き場から引く",
-			p:    photo.Photo{ID: testID, Path: "/photos/a.jpg", ThumbSource: photo.ThumbFamifo},
-			want: filepath.Join(thumbDir, "ab", testID+".jpg"),
+			p:    restored("/photos/a.jpg", photo.ThumbFamifo),
+			want: filepath.Join(thumbDir, jpgID[:2], jpgID+".jpg"),
 			ok:   true,
 		},
 		{
 			name: "借りたものは @eaDir から引く",
-			p:    photo.Photo{ID: testID, Path: "/photos/a.heic", ThumbSource: photo.ThumbSyno},
+			p:    restored("/photos/a.heic", photo.ThumbSyno),
 			want: "/photos/@eaDir/a.heic/SYNOPHOTO_THUMB_M.jpg",
 			ok:   true,
 		},
 		{
 			name: "借りるものも作れるものも無ければ ok=false",
-			p:    photo.Photo{ID: testID, Path: "/photos/a.heic", ThumbSource: photo.ThumbNone},
+			p:    restored("/photos/a.heic", photo.ThumbNone),
 			want: "",
 			ok:   false,
 		},
@@ -65,7 +72,7 @@ func TestThumbPathBySource(t *testing.T) {
 // Adopt* は「どちらを採用したか」を記録する唯一の入口で、HasFamifoThumb が
 // 削除してよいかを答える。値ではなく操作から見て、この対応を固定する。
 func TestAdoptRecordsWhichThumbIsUsed(t *testing.T) {
-	p := photo.Photo{ID: testID, Path: "/photos/a.jpg"}
+	p := restored("/photos/a.jpg", photo.ThumbNone)
 	require.False(t, p.HasThumb(), "採用前はサムネイルが無い")
 	require.False(t, p.HasFamifoThumb())
 
@@ -102,7 +109,7 @@ func TestHasThumbAgreesWithThumbSource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := photo.Photo{ID: testID, Path: "/photos/a.jpg", ThumbSource: tt.src}
+			p := restored("/photos/a.jpg", tt.src)
 			require.Equal(t, tt.want, p.HasThumb())
 		})
 	}
@@ -118,32 +125,32 @@ func TestFullPathSwapsInTheXLOnlyForBorrowedOpaquePhotos(t *testing.T) {
 	}{
 		{
 			name: "HEIC + 借りている → SynologyのXL",
-			p:    photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbSyno},
+			p:    restored("/photos/a.heic", photo.ThumbSyno),
 			want: "/photos/@eaDir/a.heic/SYNOPHOTO_THUMB_XL.jpg",
 		},
 		{
 			name: "HEIC + 借りていない → 原本（Safariでしか見えないが他に出せるものが無い）",
-			p:    photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbNone},
+			p:    restored("/photos/a.heic", photo.ThumbNone),
 			want: "/photos/a.heic",
 		},
 		{
 			name: "HEIC + 自前生成 → 原本（HEICは自前生成しないので実際には起きない）",
-			p:    photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbFamifo},
+			p:    restored("/photos/a.heic", photo.ThumbFamifo),
 			want: "/photos/a.heic",
 		},
 		{
 			name: "JPEG + 借りている → 原本（借りるのは一覧用だけ）",
-			p:    photo.Photo{Path: "/photos/a.jpg", ThumbSource: photo.ThumbSyno},
+			p:    restored("/photos/a.jpg", photo.ThumbSyno),
 			want: "/photos/a.jpg",
 		},
 		{
 			name: "JPEG + 自前生成 → 原本",
-			p:    photo.Photo{Path: "/photos/a.jpg", ThumbSource: photo.ThumbFamifo},
+			p:    restored("/photos/a.jpg", photo.ThumbFamifo),
 			want: "/photos/a.jpg",
 		},
 		{
 			name: "JPEG + サムネイル無し → 原本",
-			p:    photo.Photo{Path: "/photos/a.jpg", ThumbSource: photo.ThumbNone},
+			p:    restored("/photos/a.jpg", photo.ThumbNone),
 			want: "/photos/a.jpg",
 		},
 	}
@@ -156,12 +163,12 @@ func TestFullPathSwapsInTheXLOnlyForBorrowedOpaquePhotos(t *testing.T) {
 
 // ContentType が FullPath の選択に追随することが、ハンドラ側で分岐を持たずに済む根拠。
 func TestContentTypeOfTheBorrowedXLIsJPEG(t *testing.T) {
-	p := photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbSyno}
+	p := restored("/photos/a.heic", photo.ThumbSyno)
 	require.Equal(t, "image/jpeg", p.ContentType())
 }
 
 func TestContentTypeOfAnUnborrowedHEICIsHEIC(t *testing.T) {
-	p := photo.Photo{Path: "/photos/a.heic", ThumbSource: photo.ThumbNone}
+	p := restored("/photos/a.heic", photo.ThumbNone)
 	require.Equal(t, "image/heic", p.ContentType())
 }
 
@@ -183,8 +190,8 @@ func TestNewFillsTheFieldsFromThePathAndFileInfo(t *testing.T) {
 
 	p := photo.New(path, fakeFileInfo{modTime: testModTime, size: 1234}, time.Time{})
 
-	require.Equal(t, photo.IDFor(path), p.ID, "IDはパスから導く")
-	require.Equal(t, path, p.Path)
-	require.Equal(t, int64(1234), p.Size)
-	require.True(t, p.ModTime.Equal(testModTime))
+	require.Equal(t, photo.IDFor(path), p.ID(), "IDはパスから導く")
+	require.Equal(t, path, p.Path())
+	require.Equal(t, int64(1234), p.Size())
+	require.True(t, p.ModTime().Equal(testModTime))
 }

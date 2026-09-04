@@ -24,14 +24,11 @@ func openTestStore(t *testing.T) *store.Store {
 }
 
 func photoAt(path string, takenAt time.Time) photo.Photo {
-	return photo.Photo{
-		ID:          photo.IDFor(path),
-		Path:        path,
-		TakenAt:     takenAt,
-		ModTime:     takenAt,
-		Size:        1234,
-		ThumbSource: photo.ThumbFamifo,
-	}
+	return photoWithThumb(path, takenAt, photo.ThumbFamifo)
+}
+
+func photoWithThumb(path string, takenAt time.Time, src photo.ThumbSource) photo.Photo {
+	return photo.Restore(path, takenAt, takenAt, 1234, src)
 }
 
 // store.Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
@@ -69,13 +66,13 @@ func TestUpsertThenGetByID(t *testing.T) {
 	want := photoAt("/photos/a.jpg", time.Unix(1600000000, 0))
 
 	require.NoError(t, s.Upsert(ctx, want))
-	got, err := s.GetByID(ctx, want.ID)
+	got, err := s.GetByID(ctx, want.ID())
 
 	require.NoError(t, err)
-	require.Equal(t, want.Path, got.Path)
-	require.Equal(t, want.TakenAt.Unix(), got.TakenAt.Unix())
-	require.Equal(t, want.Size, got.Size)
-	require.Equal(t, photo.ThumbFamifo, got.ThumbSource)
+	require.Equal(t, want.Path(), got.Path())
+	require.Equal(t, want.TakenAt().Unix(), got.TakenAt().Unix())
+	require.Equal(t, want.Size(), got.Size())
+	require.Equal(t, photo.ThumbFamifo, got.ThumbSource())
 }
 
 func TestUpsertReplacesExistingRow(t *testing.T) {
@@ -84,14 +81,13 @@ func TestUpsertReplacesExistingRow(t *testing.T) {
 	p := photoAt("/photos/a.jpg", time.Unix(1600000000, 0))
 	require.NoError(t, s.Upsert(ctx, p))
 
-	p.TakenAt = time.Unix(1700000000, 0)
-	p.ThumbSource = photo.ThumbNone
+	p = photoWithThumb(p.Path(), time.Unix(1700000000, 0), photo.ThumbNone)
 	require.NoError(t, s.Upsert(ctx, p))
 
-	got, err := s.GetByID(ctx, p.ID)
+	got, err := s.GetByID(ctx, p.ID())
 	require.NoError(t, err)
-	require.Equal(t, int64(1700000000), got.TakenAt.Unix())
-	require.Equal(t, photo.ThumbNone, got.ThumbSource)
+	require.Equal(t, int64(1700000000), got.TakenAt().Unix())
+	require.Equal(t, photo.ThumbNone, got.ThumbSource())
 
 	n, err := s.Count(ctx)
 	require.NoError(t, err)
@@ -112,13 +108,13 @@ func TestDeleteByPath(t *testing.T) {
 	p := photoAt("/photos/a.jpg", time.Unix(1600000000, 0))
 	require.NoError(t, s.Upsert(ctx, p))
 
-	got, ok, err := s.DeleteByPath(ctx, p.Path)
+	got, ok, err := s.DeleteByPath(ctx, p.Path())
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, p.ID, got.ID)
-	require.Equal(t, photo.ThumbFamifo, got.ThumbSource) // サムネイル削除の判断に使う
+	require.Equal(t, p.ID(), got.ID())
+	require.Equal(t, photo.ThumbFamifo, got.ThumbSource()) // サムネイル削除の判断に使う
 
-	_, ok, err = s.DeleteByPath(ctx, p.Path)
+	_, ok, err = s.DeleteByPath(ctx, p.Path())
 	require.NoError(t, err)
 	require.False(t, ok, "2回目の削除は見つからないと報告する")
 }
@@ -135,7 +131,7 @@ func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, deleted, 1, "album2 まで巻き込んではいけない")
-	require.Equal(t, a.Path, deleted[0].Path)
+	require.Equal(t, a.Path(), deleted[0].Path())
 
 	n, err := s.Count(ctx)
 	require.NoError(t, err)
@@ -145,8 +141,8 @@ func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
 func TestAllPaths(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
-	p := photoAt("/photos/a.jpg", time.Unix(1600000000, 0))
-	p.ModTime = time.Unix(1650000000, 0)
+	p := photo.Restore("/photos/a.jpg",
+		time.Unix(1600000000, 0), time.Unix(1650000000, 0), 1234, photo.ThumbFamifo)
 	require.NoError(t, s.Upsert(ctx, p))
 
 	got, err := s.AllPaths(ctx)
@@ -167,8 +163,8 @@ func TestListRangeReturnsRequestedWindow(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, got, 2)
-	require.Equal(t, "/photos/d.jpg", got[0].Path)
-	require.Equal(t, "/photos/c.jpg", got[1].Path)
+	require.Equal(t, "/photos/d.jpg", got[0].Path())
+	require.Equal(t, "/photos/c.jpg", got[1].Path())
 }
 
 func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
@@ -195,7 +191,7 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 		page, err := s.ListRange(ctx, i, 1)
 		require.NoError(t, err)
 		require.Len(t, page, 1)
-		seen = append(seen, page[0].Path)
+		seen = append(seen, page[0].Path())
 	}
 
 	require.Equal(t, want, seen)
@@ -319,7 +315,7 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 	offset := 0
 	for _, g := range groups {
 		for k := 0; k < g.Count; k++ {
-			require.Equal(t, g.Date, all[offset].TakenAt.Format("2006-01-02"),
+			require.Equal(t, g.Date, all[offset].TakenAt().Format("2006-01-02"),
 				"offset=%d の写真は %s のはず", offset, g.Date)
 			offset++
 		}
@@ -332,13 +328,12 @@ func TestUpsertRoundTripsEveryThumbSource(t *testing.T) {
 
 	for _, src := range []photo.ThumbSource{photo.ThumbNone, photo.ThumbFamifo, photo.ThumbSyno} {
 		t.Run(string(src), func(t *testing.T) {
-			p := photoAt("/photos/"+string(src)+".jpg", time.Unix(1600000000, 0))
-			p.ThumbSource = src
+			p := photoWithThumb("/photos/"+string(src)+".jpg", time.Unix(1600000000, 0), src)
 			require.NoError(t, s.Upsert(ctx, p))
 
-			got, err := s.GetByID(ctx, p.ID)
+			got, err := s.GetByID(ctx, p.ID())
 			require.NoError(t, err)
-			require.Equal(t, src, got.ThumbSource)
+			require.Equal(t, src, got.ThumbSource())
 		})
 	}
 }
