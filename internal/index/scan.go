@@ -55,7 +55,7 @@ func (ix *Indexer) FullScan(ctx context.Context) (Stats, error) {
 				}
 				return nil
 			}
-			if !photo.IsSupported(path) {
+			if !photo.IsSupportedFile(path) {
 				return nil
 			}
 			found[root]++

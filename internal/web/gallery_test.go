@@ -22,8 +22,8 @@ func TestGalleryRendersTiles(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
 	body := rec.Body.String()
-	require.Contains(t, body, `src="/thumb/`+p.ID+`"`)
-	require.Contains(t, body, `data-full="/photo/`+p.ID+`"`)
+	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`)
+	require.Contains(t, body, `data-full="/photo/`+p.ID()+`"`)
 }
 
 func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
@@ -65,9 +65,9 @@ func TestGalleryUsesOriginalAsThumbForHEIC(t *testing.T) {
 
 	body := do(t, f.h, "/").Body.String()
 
-	require.Contains(t, body, `src="/photo/`+p.ID+`"`,
+	require.Contains(t, body, `src="/photo/`+p.ID()+`"`,
 		"サムネイルが無いフォーマットは原本を直接使う")
-	require.NotContains(t, body, "/thumb/"+p.ID)
+	require.NotContains(t, body, "/thumb/"+p.ID())
 }
 
 func TestGalleryOrdersNewestFirst(t *testing.T) {
@@ -77,7 +77,7 @@ func TestGalleryOrdersNewestFirst(t *testing.T) {
 
 	body := do(t, f.h, "/").Body.String()
 
-	require.Less(t, strings.Index(body, recent.ID), strings.Index(body, old.ID),
+	require.Less(t, strings.Index(body, recent.ID()), strings.Index(body, old.ID()),
 		"撮影日時の新しい順に並べる")
 }
 
@@ -86,7 +86,7 @@ func TestItemsReturnsFragmentOnly(t *testing.T) {
 	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
 	last := f.addPhoto(t, "b.jpg", time.Unix(1700000000, 0), photo.ThumbFamifo)
 
-	rec := do(t, f.h, "/items?t=1700000000&id="+last.ID)
+	rec := do(t, f.h, "/items?t=1700000000&id="+last.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
@@ -100,7 +100,7 @@ func TestItemsReturnsRequestedWindow(t *testing.T) {
 	var ids []string
 	for i := range 5 {
 		p := f.addPhoto(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), photo.ThumbFamifo)
-		ids = append(ids, p.ID)
+		ids = append(ids, p.ID())
 	}
 
 	body := do(t, f.h, "/items?offset=1&limit=2").Body.String()
@@ -142,7 +142,7 @@ func TestItemsDefaultsToFirstWindow(t *testing.T) {
 
 	body := do(t, f.h, "/items").Body.String()
 
-	require.Contains(t, body, p.ID)
+	require.Contains(t, body, p.ID())
 }
 
 // embeddedDayGroups は初回HTMLに埋め込まれた日ごとの表を取り出す。
@@ -232,6 +232,6 @@ func TestGalleryUsesTheBorrowedThumbForHEIC(t *testing.T) {
 
 	body := do(t, f.h, "/").Body.String()
 
-	require.Contains(t, body, `src="/thumb/`+p.ID+`"`,
+	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`,
 		"@eaDir から借りられるHEICはサムネイルを使う")
 }

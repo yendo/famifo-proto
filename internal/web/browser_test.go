@@ -44,7 +44,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/web"
 
-	"github.com/yendo/famifo-proto/internal/index/thumb"
+	"github.com/yendo/famifo-proto/internal/index"
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
 )
@@ -283,13 +283,7 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 		return tempDir, nil, nil, err
 	}
 
-	gen, err := thumb.NewGenerator(thumbDir, 480)
-	if err != nil {
-		st.Close()
-		return tempDir, nil, nil, err
-	}
-
-	if err := seedCorpus(st, gen, photoDir); err != nil {
+	if err := seedCorpus(st, photoDir, thumbDir); err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
 	}
@@ -309,41 +303,47 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 // ユーザーの実ライブラリを読むと実行環境ごとに結果が変わりCIで再現できない
 // ため、写真は常にこの場で作る。1日の中では撮影時刻を1分ずつ古くするので、
 // 通し番号iがそのままギャラリー上の並び順(新しい順)に対応する。
-func seedCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
-	ctx := context.Background()
-
+func seedCorpus(st *store.Store, photoDir, thumbDir string) error {
 	i := 0
 	for d, count := range testDayCounts {
 		for k := 0; k < count; k++ {
 			name := fmt.Sprintf("p%04d.jpg", i)
 			path := filepath.Join(photoDir, name)
-			if err := writeTestJPEG(path, i); err != nil {
-				return fmt.Errorf("テスト画像を書けません (%s): %w", name, err)
-			}
-
-			id := photo.IDFor(path)
-			thumbSource := photo.ThumbFamifo
-			if gen.Generate(path, id, 1) != nil {
-				thumbSource = photo.ThumbNone
-			}
-
 			// 分単位で戻す。最大30枚なので日をまたがない。
 			takenAt := corpusBase.AddDate(0, 0, -d).Add(-time.Duration(k) * time.Minute)
-			fi, statErr := os.Stat(path)
-			if statErr != nil {
-				return fmt.Errorf("テスト画像を統計できません (%s): %w", name, statErr)
-			}
-			p := photo.Photo{
-				ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
-				Size: fi.Size(), Ext: ".jpg", ThumbSource: thumbSource,
-			}
-			if err := st.Upsert(ctx, p); err != nil {
-				return fmt.Errorf("写真を登録できません (%s): %w", name, err)
+			if err := writeTestPhoto(path, i, takenAt); err != nil {
+				return err
 			}
 			i++
 		}
 	}
+	if _, err := indexAll(st, photoDir, thumbDir); err != nil {
+		return err
+	}
 	return nil
+}
+
+// writeTestPhoto はテスト画像を書き、撮影日時をmtimeに焼く。
+// テスト画像はEXIFを持たないので、取り込み時の撮影日時はmtimeから決まる。
+func writeTestPhoto(path string, i int, takenAt time.Time) error {
+	if err := writeTestJPEG(path, i); err != nil {
+		return fmt.Errorf("テスト画像を書けません (%s): %w", path, err)
+	}
+	if err := os.Chtimes(path, takenAt, takenAt); err != nil {
+		return fmt.Errorf("テスト画像の日時を設定できません (%s): %w", path, err)
+	}
+	return nil
+}
+
+// indexAll は本番と同じ取り込み経路でコーパスをインデックスに載せる。
+// 手でPhotoを組むと、Photoの構造が変わるたびにブラウザテストが巻き添えになる。
+func indexAll(st *store.Store, photoDir, thumbDir string) (index.Stats, error) {
+	ix, err := index.New([]string{photoDir}, st, thumbDir, 480,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		return index.Stats{}, err
+	}
+	return ix.FullScan(context.Background())
 }
 
 // writeTestJPEG はi番目の写真用に、色だけが違う小さな正方形JPEGを作る。
@@ -1732,30 +1732,22 @@ const (
 )
 
 // seedStallCorpus は stallPhotoCount 枚を stallPerDay 枚ずつの日に分けて登録する。
-func seedStallCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
-	ctx := context.Background()
+func seedStallCorpus(st *store.Store, photoDir, thumbDir string) error {
 	for i := 0; i < stallPhotoCount; i++ {
 		path := filepath.Join(photoDir, fmt.Sprintf("s%05d.jpg", i))
-		if err := writeTestJPEG(path, i); err != nil {
-			return fmt.Errorf("テスト画像を書けません (%s): %w", path, err)
-		}
-		id := photo.IDFor(path)
-		if err := gen.Generate(path, id, 1); err != nil {
-			return fmt.Errorf("サムネイルを作れません (%s): %w", path, err)
-		}
 		takenAt := corpusBase.AddDate(0, 0, -(i / stallPerDay)).
 			Add(-time.Duration(i%stallPerDay) * time.Minute)
-		fi, err := os.Stat(path)
-		if err != nil {
+		if err := writeTestPhoto(path, i, takenAt); err != nil {
 			return err
 		}
-		p := photo.Photo{
-			ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
-			Size: fi.Size(), Ext: ".jpg", ThumbSource: photo.ThumbFamifo,
-		}
-		if err := st.Upsert(ctx, p); err != nil {
-			return fmt.Errorf("写真を登録できません (%s): %w", path, err)
-		}
+	}
+	stats, err := indexAll(st, photoDir, thumbDir)
+	if err != nil {
+		return err
+	}
+	// 滞留の再現には全件が載っている必要がある。1枚でも欠けると本数が変わる。
+	if stats.Indexed != stallPhotoCount {
+		return fmt.Errorf("取り込めた枚数が足りません: %d/%d", stats.Indexed, stallPhotoCount)
 	}
 	return nil
 }
@@ -1776,9 +1768,7 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	gen, err := thumb.NewGenerator(thumbDir, 480)
-	require.NoError(t, err)
-	require.NoError(t, seedStallCorpus(st, gen, photoDir))
+	require.NoError(t, seedStallCorpus(st, photoDir, thumbDir))
 
 	webSrv, err := web.NewServer(st, thumbDir, stallPageSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)

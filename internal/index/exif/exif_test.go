@@ -19,7 +19,7 @@ func TestReadReturnsTheEXIFDate(t *testing.T) {
 
 	require.True(t, got.TakenAt.Equal(when), "got=%v", got.TakenAt)
 	// 時差を持たないDateTimeOriginalを imagemeta がUTCとして返すことを固定する。
-	// internal/index/takenat はこの Location が time.UTC そのものかどうかで、
+	// photo.New はこの Location が time.UTC そのものかどうかで、
 	// 撮影地の時刻として読み直すかを判別している。
 	require.Equal(t, time.UTC, got.TakenAt.Location())
 }
