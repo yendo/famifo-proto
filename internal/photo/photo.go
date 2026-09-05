@@ -13,6 +13,7 @@ package photo
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"time"
@@ -106,7 +107,7 @@ func (p Photo) ThumbSource() ThumbSource { return p.thumbSource }
 func (p Photo) ThumbPath(thumbDir string) (string, bool) {
 	switch p.thumbSource {
 	case ThumbFamifo:
-		return FamifoThumbPath(thumbDir, p.id), true
+		return FamifoThumbPath(thumbDir, p.id, p.modTime), true
 	case ThumbSyno:
 		return synology.ThumbMPath(p.path), true
 	}
@@ -155,8 +156,23 @@ func IDFor(path string) string {
 	return hex.EncodeToString(sum[:])[:32]
 }
 
-// FamifoThumbPath は famifo が自分で生成したサムネイルのパスを返す。
+// FamifoThumbDir は famifo が生成したサムネイルを置くディレクトリを返す。
 // 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
-func FamifoThumbPath(thumbDir, id string) string {
-	return filepath.Join(thumbDir, id[:2], id+".jpg")
+func FamifoThumbDir(thumbDir, id string) string {
+	return filepath.Join(thumbDir, id[:2])
+}
+
+// FamifoThumbPath は famifo が自分で生成したサムネイルのパスを返す。
+//
+// 名前に元画像の版（mtimeのUnix秒）を含める。写真が差し替われば別のファイルに
+// なるので、鮮度の判定が「サムネイルのほうが新しいか」という順序の比較ではなく
+// 「その版の名前があるか」という一致の確認で済む。mtimeは前にしか進むとは
+// 限らず（cp -p や rsync -t でバックアップから戻すと過去へ動く）、順序で
+// 判定すると作り直しを見送ってしまうため。
+//
+// 秒に丸めるのは、DBが mod_time を Unix 秒で持っているのに合わせるためと、
+// ファイルシステムによって時刻の粒度が違うのを避けるため。
+func FamifoThumbPath(thumbDir, id string, modTime time.Time) string {
+	return filepath.Join(FamifoThumbDir(thumbDir, id),
+		fmt.Sprintf("%s-%d.jpg", id, modTime.Unix()))
 }

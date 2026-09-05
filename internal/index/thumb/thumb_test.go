@@ -17,10 +17,13 @@ import (
 	"github.com/yendo/famifo-proto/internal/synology"
 )
 
-// thumbPathFor は src のサムネイルが置かれるパスを返す。IDはパスから導かれる
-// ので、テスト側も同じ規則で引き当てる。
-func thumbPathFor(thumbDir, src string) string {
-	return photo.FamifoThumbPath(thumbDir, photo.IDFor(src))
+// thumbPathFor は src のサムネイルが置かれるパスを返す。IDと版はどちらも
+// srcから導かれるので、テスト側も同じ規則で引き当てる。
+func thumbPathFor(t *testing.T, thumbDir, src string) string {
+	t.Helper()
+	fi, err := os.Stat(src)
+	require.NoError(t, err)
+	return photo.FamifoThumbPath(thumbDir, photo.IDFor(src), fi.ModTime())
 }
 
 func writeImage(t *testing.T, dir, name string, w, h int) string {
@@ -78,7 +81,7 @@ func TestResolveSourcePicksTheThumbSource(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Equal(t, photo.ThumbSyno, got)
-		require.NoFileExists(t, thumbPathFor(thumbDir, src),
+		require.NoFileExists(t, thumbPathFor(t, thumbDir, src),
 			"借りられるなら自前では作らない")
 	})
 
@@ -90,7 +93,7 @@ func TestResolveSourcePicksTheThumbSource(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Equal(t, photo.ThumbFamifo, got)
-		require.FileExists(t, thumbPathFor(thumbDir, src))
+		require.FileExists(t, thumbPathFor(t, thumbDir, src))
 	})
 
 	t.Run("HEICは借りられなければ出どころが無い", func(t *testing.T) {
@@ -102,7 +105,7 @@ func TestResolveSourcePicksTheThumbSource(t *testing.T) {
 		require.NoError(t, err, "デコードを試みないのでエラーにならない")
 
 		require.Equal(t, photo.ThumbNone, got, "一覧は原本のURLにフォールバックする")
-		require.NoFileExists(t, thumbPathFor(thumbDir, src))
+		require.NoFileExists(t, thumbPathFor(t, thumbDir, src))
 	})
 }
 
@@ -123,7 +126,7 @@ func TestGenerateScalesLandscapeByLongEdge(t *testing.T) {
 
 	require.NoError(t, provide(pv, src, 1))
 
-	cfg := decodeThumb(t, thumbPathFor(thumbDir, src))
+	cfg := decodeThumb(t, thumbPathFor(t, thumbDir, src))
 	require.Equal(t, 100, cfg.Width)
 	require.Equal(t, 50, cfg.Height, "アスペクト比を保つ")
 }
@@ -134,7 +137,7 @@ func TestGenerateScalesPortraitByLongEdge(t *testing.T) {
 
 	require.NoError(t, provide(pv, src, 1))
 
-	cfg := decodeThumb(t, thumbPathFor(thumbDir, src))
+	cfg := decodeThumb(t, thumbPathFor(t, thumbDir, src))
 	require.Equal(t, 50, cfg.Width)
 	require.Equal(t, 100, cfg.Height)
 }
@@ -145,7 +148,7 @@ func TestGenerateDoesNotUpscale(t *testing.T) {
 
 	require.NoError(t, provide(pv, src, 1))
 
-	cfg := decodeThumb(t, thumbPathFor(thumbDir, src))
+	cfg := decodeThumb(t, thumbPathFor(t, thumbDir, src))
 	require.Equal(t, 40, cfg.Width)
 	require.Equal(t, 20, cfg.Height)
 }
@@ -159,7 +162,7 @@ func TestGenerateAcceptsPNGAndGIF(t *testing.T) {
 
 			require.NoError(t, provide(pv, src, 1))
 
-			require.Equal(t, 100, decodeThumb(t, thumbPathFor(thumbDir, src)).Width)
+			require.Equal(t, 100, decodeThumb(t, thumbPathFor(t, thumbDir, src)).Width)
 		})
 	}
 }
@@ -172,7 +175,7 @@ func TestGenerateFailsOnUndecodableFile(t *testing.T) {
 	err := provide(pv, src, 1)
 
 	require.Error(t, err)
-	require.NoFileExists(t, thumbPathFor(thumbDir, src), "失敗時に中途半端なファイルを残さない")
+	require.NoFileExists(t, thumbPathFor(t, thumbDir, src), "失敗時に中途半端なファイルを残さない")
 }
 
 func TestGenerateFailsOnMissingFile(t *testing.T) {
@@ -188,7 +191,7 @@ func TestRemove(t *testing.T) {
 
 	require.NoError(t, pv.Remove(photo.IDFor(src)))
 
-	require.NoFileExists(t, thumbPathFor(thumbDir, src))
+	require.NoFileExists(t, thumbPathFor(t, thumbDir, src))
 	require.NoError(t, pv.Remove(photo.IDFor(src)), "存在しないサムネイルの削除はエラーにしない")
 }
 
@@ -231,7 +234,7 @@ func TestGenerateAppliesOrientation(t *testing.T) {
 
 			require.NoError(t, provide(pv, src, tt.orientation))
 
-			img := decodeThumbImage(t, thumbPathFor(thumbDir, src))
+			img := decodeThumbImage(t, thumbPathFor(t, thumbDir, src))
 			b := img.Bounds()
 			require.Equalf(t, tt.wantW, b.Dx(),
 				"Orientation=%d のサムネイルの幅。縦横が入れ替わっていない疑い（実際 %dx%d）",
@@ -280,15 +283,13 @@ func TestGenerateSkipsWhenTheThumbnailIsUpToDate(t *testing.T) {
 	src := writeImage(t, dir, "a.jpg", 400, 200)
 	require.NoError(t, provide(pv, src, 1))
 
-	// 中身を見分けられる印を置き、元ファイルより新しくする
+	// 中身を見分けられる印を置く。版が同じなら中身は問わず、そのまま使う。
 	marker := []byte("not a real thumbnail")
-	require.NoError(t, os.WriteFile(thumbPathFor(thumbDir, src), marker, 0o644))
-	future := time.Now().Add(time.Hour)
-	require.NoError(t, os.Chtimes(thumbPathFor(thumbDir, src), future, future))
+	require.NoError(t, os.WriteFile(thumbPathFor(t, thumbDir, src), marker, 0o644))
 
 	require.NoError(t, provide(pv, src, 1))
 
-	got, err := os.ReadFile(thumbPathFor(thumbDir, src))
+	got, err := os.ReadFile(thumbPathFor(t, thumbDir, src))
 	require.NoError(t, err)
 	require.Equal(t, marker, got, "元ファイルが変わっていなければ作り直さない")
 }
@@ -299,7 +300,7 @@ func TestGenerateRebuildsWhenTheSourceIsNewer(t *testing.T) {
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.jpg", 400, 200)
 	require.NoError(t, provide(pv, src, 1))
-	require.NoError(t, os.WriteFile(thumbPathFor(thumbDir, src), []byte("stale"), 0o644))
+	require.NoError(t, os.WriteFile(thumbPathFor(t, thumbDir, src), []byte("stale"), 0o644))
 
 	// 元ファイルをサムネイルより新しくする
 	future := time.Now().Add(time.Hour)
@@ -307,6 +308,82 @@ func TestGenerateRebuildsWhenTheSourceIsNewer(t *testing.T) {
 
 	require.NoError(t, provide(pv, src, 1))
 
-	cfg := decodeThumb(t, thumbPathFor(thumbDir, src))
+	cfg := decodeThumb(t, thumbPathFor(t, thumbDir, src))
 	require.Equal(t, 100, cfg.Width, "元が新しければ作り直す")
+}
+
+// mtimeは前にしか進まないとは限らない。cp -p や rsync -t でバックアップから
+// 写真を戻すと過去へ動く。順序で鮮度を判定すると「サムネイルのほうが新しい」
+// ままなので作り直しを見送り、一覧に古い画像が残り続ける。
+func TestGenerateRebuildsWhenTheSourceMtimeMovesBackwards(t *testing.T) {
+	pv, thumbDir := newTestProvider(t, 100)
+	dir := t.TempDir()
+	src := writeImage(t, dir, "a.jpg", 400, 200)
+	require.NoError(t, provide(pv, src, 1))
+
+	// 縦横を入れ替えた写真に差し替えたうえで、mtimeを過去へ動かす
+	src = writeImage(t, dir, "a.jpg", 200, 400)
+	past := time.Now().Add(-24 * time.Hour)
+	require.NoError(t, os.Chtimes(src, past, past))
+
+	require.NoError(t, provide(pv, src, 1))
+
+	cfg := decodeThumb(t, thumbPathFor(t, thumbDir, src))
+	require.Equal(t, 50, cfg.Width, "mtimeが過去に戻っても作り直す")
+	require.Equal(t, 100, cfg.Height)
+}
+
+// 版を名前に持つので、写真が差し替わると古い版がそのまま残る。
+// 新しい版を置いたあとに掃く。
+func TestResolveSourceRemovesOlderVersions(t *testing.T) {
+	pv, thumbDir := newTestProvider(t, 100)
+	dir := t.TempDir()
+	src := writeImage(t, dir, "a.jpg", 400, 200)
+	require.NoError(t, provide(pv, src, 1))
+	older := thumbPathFor(t, thumbDir, src)
+
+	src = writeImage(t, dir, "a.jpg", 200, 400)
+	future := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(src, future, future))
+	require.NoError(t, provide(pv, src, 1))
+
+	require.FileExists(t, thumbPathFor(t, thumbDir, src), "新しい版は残る")
+	require.NoFileExists(t, older, "古い版は片づける")
+}
+
+// 生成に失敗しても古い版は消さない。新しいものができるまでの控えとして
+// 働いており、先に消すと一覧のタイルが割れる。
+func TestResolveSourceKeepsTheOlderVersionWhenGenerationFails(t *testing.T) {
+	pv, thumbDir := newTestProvider(t, 100)
+	dir := t.TempDir()
+	src := writeImage(t, dir, "a.jpg", 400, 200)
+	require.NoError(t, provide(pv, src, 1))
+	older := thumbPathFor(t, thumbDir, src)
+
+	// コピー途中の壊れたファイルを掴んだ状況を模す
+	require.NoError(t, os.WriteFile(src, []byte("this is not an image"), 0o644))
+	future := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(src, future, future))
+
+	require.Error(t, provide(pv, src, 1))
+
+	require.FileExists(t, older, "失敗したときは古い版を残す")
+}
+
+// Synologyのバックグラウンド索引が後からサムネイルを作ると、出どころが
+// 借りるほうへ切り替わる。自前で作ったものは用済みになる。
+func TestResolveSourceRemovesTheOwnThumbWhenSwitchingToEaDir(t *testing.T) {
+	pv, thumbDir := newTestProvider(t, 100)
+	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
+	require.NoError(t, provide(pv, src, 1))
+	own := thumbPathFor(t, thumbDir, src)
+	require.FileExists(t, own)
+
+	writeSynoThumb(t, src)
+
+	got, err := pv.ResolveSource(src, 1)
+	require.NoError(t, err)
+
+	require.Equal(t, photo.ThumbSyno, got)
+	require.NoFileExists(t, own, "借りるほうへ切り替わったら自前のものは消す")
 }

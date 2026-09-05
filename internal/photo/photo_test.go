@@ -1,6 +1,7 @@
 package photo_test
 
 import (
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"testing"
@@ -22,8 +23,18 @@ func TestIDForIsStableAndDistinct(t *testing.T) {
 const testID = "abcdef0123456789abcdef0123456789"
 
 func TestFamifoThumbPathShardsByFirstTwoChars(t *testing.T) {
-	require.Equal(t, filepath.Join("/data/thumbs", "ab", testID+".jpg"),
-		photo.FamifoThumbPath("/data/thumbs", testID))
+	require.Equal(t, filepath.Join("/data/thumbs", "ab", testID+"-1700000000.jpg"),
+		photo.FamifoThumbPath("/data/thumbs", testID, time.Unix(1700000000, 0)))
+}
+
+// 名前に元画像の版が入るので、写真が差し替われば別のファイルを指す。
+// 鮮度を「サムネイルのほうが新しいか」で測らずに済ませるための土台。
+func TestFamifoThumbPathVariesWithTheSourceVersion(t *testing.T) {
+	before := photo.FamifoThumbPath("/data/thumbs", testID, time.Unix(1700000000, 0))
+	after := photo.FamifoThumbPath("/data/thumbs", testID, time.Unix(1600000000, 0))
+
+	require.NotEqual(t, before, after, "版が違えば別の名前になる")
+	require.Equal(t, filepath.Dir(before), filepath.Dir(after), "置き場は同じ")
 }
 
 // restored は保存済みの1枚を模したPhotoを組み立てる。日時とサイズはどのテストも
@@ -44,8 +55,9 @@ func TestThumbPathBySource(t *testing.T) {
 		{
 			name: "自前で生成したものは自分の置き場から引く",
 			p:    restored("/photos/a.jpg", photo.ThumbFamifo),
-			want: filepath.Join(thumbDir, jpgID[:2], jpgID+".jpg"),
-			ok:   true,
+			want: filepath.Join(thumbDir, jpgID[:2],
+				fmt.Sprintf("%s-%d.jpg", jpgID, testModTime.Unix())),
+			ok: true,
 		},
 		{
 			name: "借りたものは @eaDir から引く",

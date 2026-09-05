@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "image/gif" // image.Decode にGIFを登録する
@@ -42,11 +43,13 @@ func NewProvider(dir string, size int) (*Provider, error) {
 	return &Provider{dir: dir, size: size}, nil
 }
 
-// path はサムネイルの絶対パスを返す。
+// path は元画像の版に対応するサムネイルの絶対パスを返す。
 //
 // 置き場所の規則そのものは photo.FamifoThumbPath が持つ。配信側はProviderを
 // 持たずに同じパスを引く必要があるため、規則の在り処はここではなく photo である。
-func (pv *Provider) path(id string) string { return photo.FamifoThumbPath(pv.dir, id) }
+func (pv *Provider) path(id string, srcModTime time.Time) string {
+	return photo.FamifoThumbPath(pv.dir, id, srcModTime)
+}
 
 // ResolveSource は写真1枚のサムネイルの出どころを確定させて返す。
 //
@@ -60,15 +63,23 @@ func (pv *Provider) path(id string) string { return photo.FamifoThumbPath(pv.dir
 // 生成に失敗した場合はエラーを返す。インデックスに載せるかどうかは呼び出し側の
 // 判断で、ここでは出どころを決めない。
 func (pv *Provider) ResolveSource(path string, orientation uint16) (photo.ThumbSource, error) {
+	id := photo.IDFor(path)
 	switch {
 	case synology.HasThumbM(path):
+		// 借りるほうへ切り替わったら、自前で作ったものは用済みになる。
+		pv.sweepQuietly(id, "")
 		return photo.ThumbSyno, nil
 	case photo.IsDecodableFile(path):
-		if err := pv.generate(path, photo.IDFor(path), orientation); err != nil {
+		out, err := pv.generate(path, id, orientation)
+		if err != nil {
+			// 失敗しても古い版は消さない。新しいのができるまでの控えとして
+			// 働いており、先に消すと一覧のタイルが割れるため。
 			return photo.ThumbNone, err
 		}
+		pv.sweepQuietly(id, out)
 		return photo.ThumbFamifo, nil
 	}
+	pv.sweepQuietly(id, "")
 	return photo.ThumbNone, nil
 }
 
@@ -79,35 +90,43 @@ func (pv *Provider) ResolveSource(path string, orientation uint16) (photo.ThumbS
 // 生の画素を返し、jpeg.Encode はEXIFを書き出さないため、ここで適用しないと
 // 向きの情報はサムネイルから完全に失われる。1..8以外は回転不要として扱う。
 //
-// 既にサムネイルがあり、元の写真より新しければ何もしない。DBを作り直すたびに
-// 全件を作り直すと4,495枚で37分（NASなら数時間）かかるが、その大半は中身の
-// 変わらないサムネイルの再生成である。
-func (pv *Provider) generate(srcPath, id string, orientation uint16) error {
+// その版のサムネイルが既にあれば何もしない。DBを作り直すたびに全件を作り直すと
+// 4,495枚で37分（NASなら数時間）かかるが、その大半は中身の変わらないサムネイルの
+// 再生成である。
+//
+// 作った（または既にあった）サムネイルのパスを返す。呼び出し側が、それ以外の版を
+// 掃除するために使う。
+func (pv *Provider) generate(srcPath, id string, orientation uint16) (string, error) {
 	f, err := os.Open(srcPath)
 	if err != nil {
-		return fmt.Errorf("画像を開けません: %w", err)
+		return "", fmt.Errorf("画像を開けません: %w", err)
 	}
 	defer f.Close()
 
-	if fi, err := f.Stat(); err == nil && pv.isFresh(id, fi.ModTime()) {
-		return nil
+	// 出力の名前に元画像の版が入るので、mtimeが取れないと置き場所が決まらない。
+	fi, err := f.Stat()
+	if err != nil {
+		return "", fmt.Errorf("画像のファイル情報を取得できません: %w", err)
+	}
+	out := pv.path(id, fi.ModTime())
+	if isRegularFile(out) {
+		return out, nil
 	}
 
 	src, _, err := image.Decode(f)
 	if err != nil {
-		return fmt.Errorf("画像をデコードできません: %w", err)
+		return "", fmt.Errorf("画像をデコードできません: %w", err)
 	}
 
-	out := pv.path(id)
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return fmt.Errorf("サムネイルの保存先を作れません: %w", err)
+		return "", fmt.Errorf("サムネイルの保存先を作れません: %w", err)
 	}
 
 	// 一時ファイルに書いてからrenameする。生成途中のファイルをHTTPハンドラが
 	// 掴んでしまわないようにするため。
 	tmp, err := os.CreateTemp(filepath.Dir(out), ".tmp-*")
 	if err != nil {
-		return fmt.Errorf("一時ファイルを作れません: %w", err)
+		return "", fmt.Errorf("一時ファイルを作れません: %w", err)
 	}
 	defer os.Remove(tmp.Name()) // renameが成功していれば消す対象は無い
 
@@ -116,36 +135,62 @@ func (pv *Provider) generate(srcPath, id string, orientation uint16) error {
 	dst := applyOrientation(scaleToFit(src, pv.size), orientation)
 	if err := jpeg.Encode(tmp, dst, &jpeg.Options{Quality: jpegQuality}); err != nil {
 		tmp.Close()
-		return fmt.Errorf("サムネイルを書き出せません: %w", err)
+		return "", fmt.Errorf("サムネイルを書き出せません: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("一時ファイルを閉じられません: %w", err)
+		return "", fmt.Errorf("一時ファイルを閉じられません: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), out); err != nil {
-		return fmt.Errorf("サムネイルを配置できません: %w", err)
+		return "", fmt.Errorf("サムネイルを配置できません: %w", err)
 	}
-	return nil
+	return out, nil
 }
 
-// isFresh は既存のサムネイルが元の写真より新しいかを返す。
+// isRegularFile はそのパスに通常ファイルがあるかを返す。
 //
-// 出力は一時ファイルへ書いてからrenameしているので、中途半端な内容が
-// 残っていることはない。存在して新しければ、そのまま使ってよい。
-func (pv *Provider) isFresh(id string, srcModTime time.Time) bool {
-	fi, err := os.Stat(pv.path(id))
-	if err != nil || !fi.Mode().IsRegular() {
-		return false
-	}
-	return fi.ModTime().After(srcModTime)
+// 名前に元画像の版が入っているので、存在すればその版から作られたものである。
+// 「元より新しいか」を確かめる必要はない。出力は一時ファイルへ書いてから
+// renameしているため、中途半端な内容が残っていることもない。
+func isRegularFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
 }
 
-// Remove はサムネイルを削除する。存在しない場合はエラーにしない。
-func (pv *Provider) Remove(id string) error {
-	if err := os.Remove(pv.path(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("サムネイルを削除できません: %w", err)
+// Remove は id のサムネイルを版によらず全て削除する。
+// 存在しない場合はエラーにしない。
+func (pv *Provider) Remove(id string) error { return pv.sweep(id, "") }
+
+// sweep は id のサムネイルのうち keep 以外を削除する。keep が空なら全て消す。
+//
+// 同じ写真の古い版はここでまとめて片づく。前回の異常終了で取り残されたものも
+// 同時に回収する。版を持たない旧形式（<id>.jpg）も接頭辞で拾えるようにしてある。
+func (pv *Provider) sweep(id, keep string) error {
+	dir := photo.FamifoThumbDir(pv.dir, id)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("サムネイルの置き場を読めません: %w", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), id) {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		if path == keep {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("古いサムネイルを削除できません: %w", err)
+		}
 	}
 	return nil
 }
+
+// sweepQuietly は掃除の失敗を握りつぶす。消し残しは表示にも正しさにも影響せず、
+// 数KBのファイルが残るだけなので、これで取り込み全体を失敗させる価値がない。
+func (pv *Provider) sweepQuietly(id, keep string) { _ = pv.sweep(id, keep) }
 
 // scaleToFit は長辺が max 以下になるよう縮小する。元より大きくは引き伸ばさない。
 func scaleToFit(src image.Image, max int) image.Image {

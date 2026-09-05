@@ -9,8 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/index"
-
-	"github.com/yendo/famifo-proto/internal/photo"
 )
 
 func TestFullScanIndexesNestedPhotos(t *testing.T) {
@@ -95,7 +93,7 @@ func TestFullScanRemovesDeletedPhotos(t *testing.T) {
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
 	_, err := f.ix.FullScan(ctx)
 	require.NoError(t, err)
-	thumbPath := f.thumbPath(photo.IDFor(path))
+	thumbPath := f.thumbPath(t, path)
 	require.FileExists(t, thumbPath)
 
 	// アプリ停止中に消されたことを模す
@@ -132,8 +130,8 @@ func TestFullScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
-	thumbA := f.thumbPath(photo.IDFor(pathA))
-	thumbB := f.thumbPath(photo.IDFor(pathB))
+	thumbA := f.thumbPath(t, pathA)
+	thumbB := f.thumbPath(t, pathB)
 	require.FileExists(t, thumbA)
 	require.FileExists(t, thumbB)
 
@@ -179,7 +177,7 @@ func TestFullScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
 	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
 	_, err := f.ix.FullScan(ctx)
 	require.NoError(t, err)
-	thumbGone := f.thumbPath(photo.IDFor(gone))
+	thumbGone := f.thumbPath(t, gone)
 	require.FileExists(t, thumbGone)
 
 	// aliceのドライブが未マウントになった状況を模す：中身だけ消してルートは残す
@@ -217,7 +215,7 @@ func TestFullScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
-	require.NoFileExists(t, f.thumbPath(photo.IDFor(dropped)), "サムネイルも消える")
+	require.NoFileExists(t, f.thumbPath(t, dropped), "サムネイルも消える")
 }
 
 // ルートのパスごと消えている（ボリュームが外れた等）ときは、そのルートを
@@ -241,7 +239,7 @@ func TestFullScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
 	require.NoError(t, err, "読めないルートがあっても走査全体は失敗しない")
 	require.Equal(t, 1, stats.Indexed, "生きているルートの新しい写真は取り込む")
 	require.Equal(t, 0, stats.Removed, "読めないルートの写真は消さない")
-	require.FileExists(t, f.thumbPath(photo.IDFor(kept)))
+	require.FileExists(t, f.thumbPath(t, kept))
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 3, n)
