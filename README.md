@@ -61,6 +61,10 @@ every one of them.
 | `-addr` | `:8080` | HTTP listen address |
 | `-version` | | Print the build version and exit |
 
+The version comes from the build itself: a tagged build reports the tag, any
+other build reports a pseudo-version carrying the commit, and uncommitted
+changes add `+dirty`.
+
 ### Timezone
 
 Photos are grouped by the day they were taken, which depends on the machine's local timezone.
@@ -69,7 +73,7 @@ zoneinfo — a bare container, for instance. Without it the process falls back t
 those photos under the wrong day. The startup log prints the zone it resolved:
 
 ```
-msg=起動 version="a4272a5b (2026-08-26T14:27:20Z)" timezone=JST+09:00 dirs=[/photos] ...
+msg=起動 version="v0.1.0" timezone=JST+09:00 dirs=[/photos] ...
 ```
 
 Check that line before letting a first index run to completion; rebuilding one costs hours.

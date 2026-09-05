@@ -3,7 +3,6 @@ package main
 import (
 	"go/parser"
 	"go/token"
-	"runtime/debug"
 	"testing"
 	"time"
 
@@ -34,42 +33,23 @@ func TestEmbedsTimezoneDatabase(t *testing.T) {
 			"タイムゾーンデータベースをバイナリに埋め込むこと")
 }
 
-func TestFormatVersionPrefersTheOverride(t *testing.T) {
-	// リリースビルドでは -ldflags で版番号を埋める。VCS情報より優先する。
-	got := formatVersion("v1.2.3", []debug.BuildSetting{
-		{Key: "vcs.revision", Value: "0123456789abcdef"},
-	})
+// go build は .git からタグとコミットを読んで版を埋める。埋まった値を
+// そのまま見せる。組み立て直すと桁数や書式が経路ごとにずれる。
+func TestFormatVersionPassesThroughTheStampedVersion(t *testing.T) {
+	require.Equal(t, "v0.1.0", formatVersion("v0.1.0"))
 
-	require.Equal(t, "v1.2.3", got)
+	// タグから進んだコミットは擬似バージョンになる。未コミットの変更が
+	// 混ざっていれば +dirty が付き、手元のどのコミットとも一致しない
+	// バイナリを見分けられる。
+	require.Equal(t, "v0.1.1-0.20260905095503-153d347e4f14+dirty",
+		formatVersion("v0.1.1-0.20260905095503-153d347e4f14+dirty"))
 }
 
-func TestFormatVersionUsesTheEmbeddedRevision(t *testing.T) {
-	// 素の go build ではフラグを付けなくてもVCS情報が埋まる。
-	got := formatVersion("", []debug.BuildSetting{
-		{Key: "vcs.revision", Value: "0123456789abcdef"},
-		{Key: "vcs.time", Value: "2026-08-26T11:50:11Z"},
-		{Key: "vcs.modified", Value: "false"},
-	})
-
-	require.Equal(t, "01234567 (2026-08-26T11:50:11Z)", got)
-}
-
-// 未コミットの変更が混ざったバイナリを見分けられないと、NASに置いたものが
-// 手元のどのコミットとも一致しない、という事故に気づけない。
-func TestFormatVersionMarksADirtyTree(t *testing.T) {
-	got := formatVersion("", []debug.BuildSetting{
-		{Key: "vcs.revision", Value: "0123456789abcdef"},
-		{Key: "vcs.modified", Value: "true"},
-	})
-
-	require.Contains(t, got, "dirty")
-}
-
-func TestFormatVersionFallsBackWhenNothingIsEmbedded(t *testing.T) {
-	// .git の無い場所でビルドするとVCS情報が付かない（Dockerのマルチステージ等）。
-	got := formatVersion("", nil)
-
-	require.Equal(t, "unknown", got)
+// .git の無い場所でビルドすると版は "(devel)" になる。そのまま出しても
+// 読み手には何も伝わらないので unknown に落とす。
+func TestFormatVersionFallsBackWhenNothingIsStamped(t *testing.T) {
+	require.Equal(t, "unknown", formatVersion("(devel)"))
+	require.Equal(t, "unknown", formatVersion(""))
 }
 
 // TZを渡し忘れたコンテナは黙ってUTCで動き、そのまま本番のインデックスを
