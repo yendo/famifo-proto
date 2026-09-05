@@ -1,7 +1,8 @@
-package store
+package store_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -9,41 +10,57 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/store"
+	_ "modernc.org/sqlite" // PRAGMAを直接読むために自前で接続する
 )
 
-func openTestStore(t *testing.T) *Store {
+func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s
 }
 
-func photoAt(path string, takenAt time.Time) Photo {
-	return Photo{
-		ID:          IDFor(path),
+func photoAt(path string, takenAt time.Time) photo.Photo {
+	return photo.Photo{
+		ID:          photo.IDFor(path),
 		Path:        path,
 		TakenAt:     takenAt,
 		ModTime:     takenAt,
 		Size:        1234,
 		Ext:         ".jpg",
-		ThumbSource: ThumbFamifo,
+		ThumbSource: photo.ThumbFamifo,
 	}
 }
 
-func TestIDForIsStableAndDistinct(t *testing.T) {
-	a := IDFor("/photos/a.jpg")
+// store.Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
+// 他のテストは t.TempDir() を直接使うため、この経路をどれも通らない。
+func TestOpenCreatesTheDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "famifo-data")
 
-	require.Len(t, a, 32)
-	require.Equal(t, a, IDFor("/photos/a.jpg"))
-	require.NotEqual(t, a, IDFor("/photos/b.jpg"))
+	s, err := store.Open(filepath.Join(dir, "famifo.db"))
+
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	require.FileExists(t, filepath.Join(dir, "famifo.db"))
 }
 
 func TestOpenEnablesWAL(t *testing.T) {
-	s := openTestStore(t)
+	path := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	// WALはデータベースファイルに記録される永続的な性質なので、Openが張った
+	// 接続ではなく、別に開いた接続から確かめられる。
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer db.Close()
 
 	var mode string
-	require.NoError(t, s.db.QueryRow("PRAGMA journal_mode").Scan(&mode))
+	require.NoError(t, db.QueryRow("PRAGMA journal_mode").Scan(&mode))
 	require.Equal(t, "wal", mode)
 }
 
@@ -59,7 +76,7 @@ func TestUpsertThenGetByID(t *testing.T) {
 	require.Equal(t, want.Path, got.Path)
 	require.Equal(t, want.TakenAt.Unix(), got.TakenAt.Unix())
 	require.Equal(t, want.Size, got.Size)
-	require.Equal(t, ThumbFamifo, got.ThumbSource)
+	require.Equal(t, photo.ThumbFamifo, got.ThumbSource)
 }
 
 func TestUpsertReplacesExistingRow(t *testing.T) {
@@ -69,13 +86,13 @@ func TestUpsertReplacesExistingRow(t *testing.T) {
 	require.NoError(t, s.Upsert(ctx, p))
 
 	p.TakenAt = time.Unix(1700000000, 0)
-	p.ThumbSource = ThumbNone
+	p.ThumbSource = photo.ThumbNone
 	require.NoError(t, s.Upsert(ctx, p))
 
 	got, err := s.GetByID(ctx, p.ID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1700000000), got.TakenAt.Unix())
-	require.Equal(t, ThumbNone, got.ThumbSource)
+	require.Equal(t, photo.ThumbNone, got.ThumbSource)
 
 	n, err := s.Count(ctx)
 	require.NoError(t, err)
@@ -87,7 +104,7 @@ func TestGetByIDMissingReturnsErrNotFound(t *testing.T) {
 
 	_, err := s.GetByID(context.Background(), "deadbeef")
 
-	require.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestDeleteByPath(t *testing.T) {
@@ -100,7 +117,7 @@ func TestDeleteByPath(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, p.ID, got.ID)
-	require.Equal(t, ThumbFamifo, got.ThumbSource) // サムネイル削除の判断に使う
+	require.Equal(t, photo.ThumbFamifo, got.ThumbSource) // サムネイル削除の判断に使う
 
 	_, ok, err = s.DeleteByPath(ctx, p.Path)
 	require.NoError(t, err)
@@ -172,7 +189,7 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 	// テストで句の削除だけを検出することは原理的にできない。
 	paths := []string{"/photos/a.jpg", "/photos/b.jpg", "/photos/c.jpg"}
 	want := append([]string(nil), paths...)
-	sort.Slice(want, func(i, j int) bool { return IDFor(want[i]) > IDFor(want[j]) })
+	sort.Slice(want, func(i, j int) bool { return photo.IDFor(want[i]) > photo.IDFor(want[j]) })
 
 	var seen []string
 	for i := range 3 {
@@ -233,7 +250,7 @@ func TestDayGroupsCountsEachDay(t *testing.T) {
 	got, err := s.DayGroups(ctx)
 
 	require.NoError(t, err)
-	require.Equal(t, []DayGroup{
+	require.Equal(t, []store.DayGroup{
 		{Date: "2022-12-05", Count: 2},
 		{Date: "2022-12-01", Count: 1},
 		{Date: "2021-05-20", Count: 2},
@@ -314,7 +331,7 @@ func TestUpsertRoundTripsEveryThumbSource(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	for _, src := range []ThumbSource{ThumbNone, ThumbFamifo, ThumbSyno} {
+	for _, src := range []photo.ThumbSource{photo.ThumbNone, photo.ThumbFamifo, photo.ThumbSyno} {
 		t.Run(string(src), func(t *testing.T) {
 			p := photoAt("/photos/"+string(src)+".jpg", time.Unix(1600000000, 0))
 			p.ThumbSource = src

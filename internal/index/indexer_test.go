@@ -1,4 +1,4 @@
-package index
+package index_test
 
 import (
 	"context"
@@ -9,17 +9,23 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/index"
 
+	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
-	"github.com/yendo/famifo-proto/internal/thumb"
+	"github.com/yendo/famifo-proto/internal/synology"
 )
 
 type fixture struct {
-	ix   *Indexer
-	st   *store.Store
-	gen  *thumb.Generator
-	root string
+	ix       *index.Indexer
+	st       *store.Store
+	thumbDir string
+	root     string
+	log      *slog.Logger
 }
+
+// thumbPath は写真IDに対応するサムネイルのパスを返す。
+func (f *fixture) thumbPath(id string) string { return photo.FamifoThumbPath(f.thumbDir, id) }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
@@ -31,11 +37,12 @@ func newFixture(t *testing.T) *fixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	gen, err := thumb.NewGenerator(filepath.Join(base, "thumbs"), 100)
+	thumbDir := filepath.Join(base, "thumbs")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ix, err := index.New([]string{root}, st, thumbDir, 100, log)
 	require.NoError(t, err)
 
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return &fixture{ix: New([]string{root}, st, gen, log), st: st, gen: gen, root: root}
+	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: root, log: log}
 }
 
 // newFixtureRoots は複数のルートを持つ fixture を作る。roots[0] が f.root。
@@ -54,11 +61,12 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	gen, err := thumb.NewGenerator(filepath.Join(base, "thumbs"), 100)
+	thumbDir := filepath.Join(base, "thumbs")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ix, err := index.New(roots, st, thumbDir, 100, log)
 	require.NoError(t, err)
 
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return &fixture{ix: New(roots, st, gen, log), st: st, gen: gen, root: roots[0]}, roots
+	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: roots[0], log: log}, roots
 }
 
 func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
@@ -67,12 +75,27 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path)
 	require.Equal(t, ".jpg", got.Ext)
-	require.Equal(t, store.ThumbFamifo, got.ThumbSource)
-	require.FileExists(t, f.gen.Path(got.ID))
+	require.Equal(t, photo.ThumbFamifo, got.ThumbSource)
+	require.FileExists(t, f.thumbPath(got.ID))
+}
+
+// TestIndexFileAppliesTheEXIFOrientationToTheThumbnail はEXIFから読んだ向きが
+// サムネイル生成まで届いていることを確かめる。読み取り(internal/index/exif)と
+// 適用(internal/index/thumb)は別パッケージなので、繋ぎ違えても双方のテストは通る。
+func TestIndexFileAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
+	f := newFixture(t)
+	// 縮小されない小ささにして、向きの適用が寸法にそのまま出るようにする。
+	path := writeJPEGWithOrientation(t, f.root, "a.jpg", 16, 8, 6)
+
+	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+
+	cfg := decodeThumbConfig(t, f.thumbPath(photo.IDFor(path)))
+	require.Equal(t, 8, cfg.Width, "Orientation=6 なら縦横が入れ替わる")
+	require.Equal(t, 16, cfg.Height)
 }
 
 func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
@@ -83,10 +106,10 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, store.ThumbNone, got.ThumbSource, "HEICはデコードできない")
-	require.NoFileExists(t, f.gen.Path(got.ID))
+	require.Equal(t, photo.ThumbNone, got.ThumbSource, "HEICはデコードできない")
+	require.NoFileExists(t, f.thumbPath(got.ID))
 }
 
 func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
@@ -131,7 +154,7 @@ func TestRemoveFileDeletesRowAndThumb(t *testing.T) {
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
 	require.NoError(t, f.ix.IndexFile(ctx, path))
-	thumbPath := f.gen.Path(store.IDFor(path))
+	thumbPath := f.thumbPath(photo.IDFor(path))
 	require.FileExists(t, thumbPath)
 
 	require.NoError(t, f.ix.RemoveFile(ctx, path))
@@ -151,7 +174,7 @@ func TestRemoveFileIsQuietForUnknownPath(t *testing.T) {
 // writeSynoThumb は srcPath の写真用のサムネイルを @eaDir に置く。
 func writeSynoThumb(t *testing.T, srcPath string) string {
 	t.Helper()
-	out := thumb.SynoThumbPath(srcPath)
+	out := synology.ThumbPath(srcPath)
 	writeTestJPEG(t, filepath.Dir(out), filepath.Base(out), 20, 10)
 	return out
 }
@@ -163,10 +186,10 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, store.ThumbSyno, got.ThumbSource)
-	require.NoFileExists(t, f.gen.Path(got.ID), "借りられるなら自前では作らない")
+	require.Equal(t, photo.ThumbSyno, got.ThumbSource)
+	require.NoFileExists(t, f.thumbPath(got.ID), "借りられるなら自前では作らない")
 }
 
 // HEICはGoでデコードできないが、Synologyのサムネイルがあれば一覧に出せる。
@@ -178,9 +201,9 @@ func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, store.ThumbSyno, got.ThumbSource)
+	require.Equal(t, photo.ThumbSyno, got.ThumbSource)
 }
 
 // DSM 7.3 がHEICのデコードに失敗すると .fail だけが残る。famifoも作れないので
@@ -189,15 +212,15 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 	f := newFixture(t)
 	path := filepath.Join(f.root, "a.heic")
 	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
-	fail := filepath.Join(filepath.Dir(thumb.SynoThumbPath(path)), "SYNOPHOTO_THUMB_M.fail")
+	fail := filepath.Join(filepath.Dir(synology.ThumbPath(path)), "SYNOPHOTO_THUMB_M.fail")
 	require.NoError(t, os.MkdirAll(filepath.Dir(fail), 0o755))
 	require.NoError(t, os.WriteFile(fail, nil, 0o644))
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), store.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, store.ThumbNone, got.ThumbSource)
+	require.Equal(t, photo.ThumbNone, got.ThumbSource)
 }
 
 // famifoはSynology Photosの領域に書き込まない。消しもしない。

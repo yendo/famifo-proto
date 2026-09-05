@@ -1,4 +1,4 @@
-package web
+package web_test
 
 import (
 	"encoding/json"
@@ -10,12 +10,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/yendo/famifo-proto/internal/store"
+	"github.com/yendo/famifo-proto/internal/photo"
 )
 
 func TestGalleryRendersTiles(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), store.ThumbFamifo)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
 
 	rec := do(t, f.h, "/")
 
@@ -29,7 +29,7 @@ func TestGalleryRendersTiles(t *testing.T) {
 func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
 	f := newWebFixture(t, 60)
 	for i := range 3 {
-		f.addPhoto(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), store.ThumbFamifo)
+		f.addPhoto(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), photo.ThumbFamifo)
 	}
 
 	body := do(t, f.h, "/").Body.String()
@@ -42,7 +42,7 @@ func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
 
 func TestGalleryDropsHtmx(t *testing.T) {
 	f := newWebFixture(t, 60)
-	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), store.ThumbFamifo)
+	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
 
 	body := do(t, f.h, "/").Body.String()
 
@@ -61,7 +61,7 @@ func TestGalleryEmptyLibrary(t *testing.T) {
 
 func TestGalleryUsesOriginalAsThumbForHEIC(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), store.ThumbNone)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbNone)
 
 	body := do(t, f.h, "/").Body.String()
 
@@ -72,8 +72,8 @@ func TestGalleryUsesOriginalAsThumbForHEIC(t *testing.T) {
 
 func TestGalleryOrdersNewestFirst(t *testing.T) {
 	f := newWebFixture(t, 10)
-	old := f.addPhoto(t, "old.jpg", time.Unix(1600000000, 0), store.ThumbFamifo)
-	recent := f.addPhoto(t, "new.jpg", time.Unix(1700000000, 0), store.ThumbFamifo)
+	old := f.addPhoto(t, "old.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
+	recent := f.addPhoto(t, "new.jpg", time.Unix(1700000000, 0), photo.ThumbFamifo)
 
 	body := do(t, f.h, "/").Body.String()
 
@@ -83,8 +83,8 @@ func TestGalleryOrdersNewestFirst(t *testing.T) {
 
 func TestItemsReturnsFragmentOnly(t *testing.T) {
 	f := newWebFixture(t, 1)
-	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), store.ThumbFamifo)
-	last := f.addPhoto(t, "b.jpg", time.Unix(1700000000, 0), store.ThumbFamifo)
+	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
+	last := f.addPhoto(t, "b.jpg", time.Unix(1700000000, 0), photo.ThumbFamifo)
 
 	rec := do(t, f.h, "/items?t=1700000000&id="+last.ID)
 
@@ -99,7 +99,7 @@ func TestItemsReturnsRequestedWindow(t *testing.T) {
 	f := newWebFixture(t, 60)
 	var ids []string
 	for i := range 5 {
-		p := f.addPhoto(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), store.ThumbFamifo)
+		p := f.addPhoto(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), photo.ThumbFamifo)
 		ids = append(ids, p.ID)
 	}
 
@@ -114,7 +114,7 @@ func TestItemsReturnsRequestedWindow(t *testing.T) {
 
 func TestItemsHasNoSentinel(t *testing.T) {
 	f := newWebFixture(t, 60)
-	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), store.ThumbFamifo)
+	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
 
 	body := do(t, f.h, "/items?offset=0&limit=1").Body.String()
 
@@ -138,7 +138,7 @@ func TestItemsRejectsBadOffset(t *testing.T) {
 
 func TestItemsDefaultsToFirstWindow(t *testing.T) {
 	f := newWebFixture(t, 60)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), store.ThumbFamifo)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
 
 	body := do(t, f.h, "/items").Body.String()
 
@@ -169,9 +169,9 @@ func embeddedDayGroups(t *testing.T, body string) []struct {
 func TestGalleryEmbedsDayGroups(t *testing.T) {
 	f := newWebFixture(t, 60)
 	// 新しい順に: 2026-02-08 が2枚、2026-02-03 が1枚
-	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 18, 0, 0, 0, time.Local), store.ThumbFamifo)
-	f.addPhoto(t, "b.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), store.ThumbFamifo)
-	f.addPhoto(t, "c.jpg", time.Date(2026, 2, 3, 10, 0, 0, 0, time.Local), store.ThumbFamifo)
+	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 18, 0, 0, 0, time.Local), photo.ThumbFamifo)
+	f.addPhoto(t, "b.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), photo.ThumbFamifo)
+	f.addPhoto(t, "c.jpg", time.Date(2026, 2, 3, 10, 0, 0, 0, time.Local), photo.ThumbFamifo)
 
 	got := embeddedDayGroups(t, do(t, f.h, "/").Body.String())
 
@@ -192,7 +192,7 @@ func TestGalleryEmbedsEmptyDayGroupsForEmptyLibrary(t *testing.T) {
 
 func TestDatesEndpointIsGone(t *testing.T) {
 	f := newWebFixture(t, 60)
-	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), store.ThumbFamifo)
+	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), photo.ThumbFamifo)
 
 	rec := do(t, f.h, "/dates")
 
@@ -208,7 +208,7 @@ func TestItemsTagsEachTileWithLocalDate(t *testing.T) {
 	t.Cleanup(func() { time.Local = orig })
 
 	// ローカルで2月8日の未明。UTCに直すと2月7日になる時刻。
-	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 0, 30, 0, 0, time.Local), store.ThumbFamifo)
+	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 0, 30, 0, 0, time.Local), photo.ThumbFamifo)
 
 	body := do(t, f.h, "/items?offset=0&limit=60").Body.String()
 
@@ -218,7 +218,7 @@ func TestItemsTagsEachTileWithLocalDate(t *testing.T) {
 
 func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
 	f := newWebFixture(t, 60)
-	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local), store.ThumbFamifo)
+	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local), photo.ThumbFamifo)
 
 	body := do(t, f.h, "/").Body.String()
 
@@ -228,7 +228,7 @@ func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
 
 func TestGalleryUsesTheBorrowedThumbForHEIC(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), store.ThumbSyno)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbSyno)
 
 	body := do(t, f.h, "/").Body.String()
 

@@ -4,50 +4,20 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/yendo/famifo-proto/internal/photo"
 	_ "modernc.org/sqlite" // pure Goのsqliteドライバ。cgo不要。
 )
 
 // ErrNotFound は該当する写真が無いことを表す。
 var ErrNotFound = errors.New("photo not found")
-
-// Photo はインデックス上の1枚の写真。
-type Photo struct {
-	ID      string    // パスから導出した安定ID。URLに露出させる
-	Path    string    // ディスク上の絶対パス
-	TakenAt time.Time // EXIF撮影日時、無ければmtime
-	ModTime time.Time // ファイルのmtime。再スキャン時の変更検知に使う
-	Size    int64
-	Ext     string // 小文字の拡張子（"." 込み）
-	// ThumbSource はサムネイルの出どころ。消してよいのは自前で作ったものだけなので、
-	// 「あるか」ではなく「どこにあるか」を持つ。
-	ThumbSource ThumbSource
-}
-
-// ThumbSource はサムネイルの出どころ。
-type ThumbSource string
-
-const (
-	ThumbNone   ThumbSource = ""       // サムネイルが無い
-	ThumbFamifo ThumbSource = "famifo" // famifoが生成し、サムネイルキャッシュに置いたもの
-	ThumbSyno   ThumbSource = "eadir"  // Synologyが @eaDir に持っているもの。読むだけで書き換えない
-)
-
-// IDFor はパスから安定したIDを導出する。
-// URLにファイルシステムのパスを露出させないためと、
-// 未インデックスのパスを配信させないための両方の役割を持つ。
-func IDFor(path string) string {
-	sum := sha256.Sum256([]byte(path))
-	return hex.EncodeToString(sum[:])[:32]
-}
 
 // Store はSQLiteインデックスへのアクセスを提供する。
 type Store struct{ db *sql.DB }
@@ -65,9 +35,16 @@ CREATE TABLE IF NOT EXISTS photos (
 CREATE INDEX IF NOT EXISTS idx_photos_order ON photos(taken_at DESC, id DESC);
 `
 
-// Open はDBを開き、スキーマを作成する。
+// Open はDBを開き、スキーマを作成する。親ディレクトリが無ければ作る。
 // WALを有効にしてスキャン中の書き込みと配信中の読み取りを並行させる。
 func Open(dbPath string) (*Store, error) {
+	// SQLiteは親ディレクトリを作らない。無いまま開くと sql.Open は遅延接続なので
+	// 成功し、db.Ping() が "unable to open database file" で落ちる。原因の読めない
+	// エラーになるうえ、呼び出し順への暗黙の依存を残すのでここで作る。
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return nil, fmt.Errorf("DBディレクトリを作れません: %w", err)
+	}
+
 	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -98,7 +75,7 @@ ON CONFLICT(id) DO UPDATE SET
     thumb_source = excluded.thumb_source`
 
 // Upsert は写真を登録または更新する。
-func (s *Store) Upsert(ctx context.Context, p Photo) error {
+func (s *Store) Upsert(ctx context.Context, p photo.Photo) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
 		p.ID, p.Path, p.TakenAt.Unix(), p.ModTime.Unix(), p.Size, p.Ext, p.ThumbSource)
 	if err != nil {
@@ -109,11 +86,11 @@ func (s *Store) Upsert(ctx context.Context, p Photo) error {
 
 const selectCols = `id, path, taken_at, mod_time, size, ext, thumb_source`
 
-func scanPhoto(row interface{ Scan(...any) error }) (Photo, error) {
-	var p Photo
+func scanPhoto(row interface{ Scan(...any) error }) (photo.Photo, error) {
+	var p photo.Photo
 	var takenAt, modTime int64
 	if err := row.Scan(&p.ID, &p.Path, &takenAt, &modTime, &p.Size, &p.Ext, &p.ThumbSource); err != nil {
-		return Photo{}, err
+		return photo.Photo{}, err
 	}
 	p.TakenAt = time.Unix(takenAt, 0)
 	p.ModTime = time.Unix(modTime, 0)
@@ -121,14 +98,14 @@ func scanPhoto(row interface{ Scan(...any) error }) (Photo, error) {
 }
 
 // GetByID はIDで写真を引く。見つからない場合は ErrNotFound を返す。
-func (s *Store) GetByID(ctx context.Context, id string) (Photo, error) {
+func (s *Store) GetByID(ctx context.Context, id string) (photo.Photo, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+selectCols+` FROM photos WHERE id = ?`, id)
 	p, err := scanPhoto(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Photo{}, ErrNotFound
+		return photo.Photo{}, ErrNotFound
 	}
 	if err != nil {
-		return Photo{}, fmt.Errorf("写真を取得できません: %w", err)
+		return photo.Photo{}, fmt.Errorf("写真を取得できません: %w", err)
 	}
 	return p, nil
 }
@@ -136,15 +113,15 @@ func (s *Store) GetByID(ctx context.Context, id string) (Photo, error) {
 // DeleteByPath はパスで写真を削除し、削除した行を返す。
 // 呼び出し側はサムネイルを消すかどうかの判断に ThumbSource を使う。
 // 該当が無い場合は ok=false を返し、エラーにはしない。
-func (s *Store) DeleteByPath(ctx context.Context, path string) (Photo, bool, error) {
+func (s *Store) DeleteByPath(ctx context.Context, path string) (photo.Photo, bool, error) {
 	row := s.db.QueryRowContext(ctx,
 		`DELETE FROM photos WHERE path = ? RETURNING `+selectCols, path)
 	p, err := scanPhoto(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Photo{}, false, nil
+		return photo.Photo{}, false, nil
 	}
 	if err != nil {
-		return Photo{}, false, fmt.Errorf("写真を削除できません (%s): %w", path, err)
+		return photo.Photo{}, false, fmt.Errorf("写真を削除できません (%s): %w", path, err)
 	}
 	return p, true, nil
 }
@@ -152,7 +129,7 @@ func (s *Store) DeleteByPath(ctx context.Context, path string) (Photo, bool, err
 // DeleteByPathPrefix はディレクトリ配下の写真をまとめて削除し、削除した行を返す。
 // prefixにセパレータを1つ補ってから前方一致させるため、"album" が
 // "album2" のような兄弟ディレクトリを巻き込むことはない。
-func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]Photo, error) {
+func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]photo.Photo, error) {
 	dirPrefix := prefix
 	if !strings.HasSuffix(dirPrefix, string(filepath.Separator)) {
 		dirPrefix += string(filepath.Separator)
@@ -168,7 +145,7 @@ func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]Photo,
 	}
 	defer rows.Close()
 
-	var out []Photo
+	var out []photo.Photo
 	for rows.Next() {
 		p, err := scanPhoto(rows)
 		if err != nil {
@@ -183,7 +160,7 @@ var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // ListRange は撮影日時の新しい順で offset 番目から limit 件を返す。
 // 仮想スクロールは任意の位置へ飛ぶため、カーソルではなくオフセットで引く。
-func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]Photo, error) {
+func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]photo.Photo, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("offset は0以上で指定してください: %d", offset)
 	}
@@ -200,7 +177,7 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]Photo, erro
 	}
 	defer rows.Close()
 
-	var out []Photo
+	var out []photo.Photo
 	for rows.Next() {
 		p, err := scanPhoto(rows)
 		if err != nil {

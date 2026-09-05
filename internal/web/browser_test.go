@@ -16,7 +16,7 @@
 //     （実行環境によって結果が変わるとCIで再現できないため）。
 //
 // 実行方法は README.md を参照。
-package web
+package web_test
 
 import (
 	"context"
@@ -42,9 +42,11 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/web"
 
+	"github.com/yendo/famifo-proto/internal/index/thumb"
+	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
-	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 const (
@@ -293,7 +295,7 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	webSrv, err := NewServer(st, thumbDir, testPageSize, log)
+	webSrv, err := web.NewServer(st, thumbDir, testPageSize, log)
 	if err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
@@ -319,10 +321,10 @@ func seedCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
 				return fmt.Errorf("テスト画像を書けません (%s): %w", name, err)
 			}
 
-			id := store.IDFor(path)
-			thumbSource := store.ThumbFamifo
-			if gen.Generate(path, id) != nil {
-				thumbSource = store.ThumbNone
+			id := photo.IDFor(path)
+			thumbSource := photo.ThumbFamifo
+			if gen.Generate(path, id, 1) != nil {
+				thumbSource = photo.ThumbNone
 			}
 
 			// 分単位で戻す。最大30枚なので日をまたがない。
@@ -331,7 +333,7 @@ func seedCorpus(st *store.Store, gen *thumb.Generator, photoDir string) error {
 			if statErr != nil {
 				return fmt.Errorf("テスト画像を統計できません (%s): %w", name, statErr)
 			}
-			p := store.Photo{
+			p := photo.Photo{
 				ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
 				Size: fi.Size(), Ext: ".jpg", ThumbSource: thumbSource,
 			}
@@ -402,7 +404,7 @@ func expectedPhotoURLs(n int) []string {
 	out := make([]string, n)
 	for i := 0; i < n; i++ {
 		path := filepath.Join(testPhotoDir, fmt.Sprintf("p%04d.jpg", i))
-		out[i] = "/photo/" + store.IDFor(path)
+		out[i] = "/photo/" + photo.IDFor(path)
 	}
 	return out
 }
@@ -1737,8 +1739,8 @@ func seedStallCorpus(st *store.Store, gen *thumb.Generator, photoDir string) err
 		if err := writeTestJPEG(path, i); err != nil {
 			return fmt.Errorf("テスト画像を書けません (%s): %w", path, err)
 		}
-		id := store.IDFor(path)
-		if err := gen.Generate(path, id); err != nil {
+		id := photo.IDFor(path)
+		if err := gen.Generate(path, id, 1); err != nil {
 			return fmt.Errorf("サムネイルを作れません (%s): %w", path, err)
 		}
 		takenAt := corpusBase.AddDate(0, 0, -(i / stallPerDay)).
@@ -1747,9 +1749,9 @@ func seedStallCorpus(st *store.Store, gen *thumb.Generator, photoDir string) err
 		if err != nil {
 			return err
 		}
-		p := store.Photo{
+		p := photo.Photo{
 			ID: id, Path: path, TakenAt: takenAt, ModTime: takenAt,
-			Size: fi.Size(), Ext: ".jpg", ThumbSource: store.ThumbFamifo,
+			Size: fi.Size(), Ext: ".jpg", ThumbSource: photo.ThumbFamifo,
 		}
 		if err := st.Upsert(ctx, p); err != nil {
 			return fmt.Errorf("写真を登録できません (%s): %w", path, err)
@@ -1778,7 +1780,7 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 	require.NoError(t, err)
 	require.NoError(t, seedStallCorpus(st, gen, photoDir))
 
-	webSrv, err := NewServer(st, thumbDir, stallPageSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	webSrv, err := web.NewServer(st, thumbDir, stallPageSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 
 	var items, dropped int64

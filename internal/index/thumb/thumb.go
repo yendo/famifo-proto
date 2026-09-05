@@ -1,8 +1,7 @@
-// Package thumb は一覧表示用のサムネイルを生成・管理する。出力は常にJPEG。
+// Package thumb は一覧表示用のサムネイルを生成する。出力は常にJPEG。
 //
-// サムネイルには2つの出どころがある。Synologyが @eaDir に作ったものと、無ければ
-// 自前で生成してキャッシュに置いたもの。生成にHEICは来ない（デコードしない方針）が、
-// 借りるほうはHEICも対象になる。
+// 生成にHEICは来ない（自前ではデコードしない方針）。Synologyが @eaDir に持つ
+// サムネイルを借りる経路は internal/synology が扱う。
 package thumb
 
 import (
@@ -10,7 +9,6 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -19,7 +17,7 @@ import (
 	_ "image/gif" // image.Decode にGIFを登録する
 	_ "image/png" // image.Decode にPNGを登録する
 
-	"github.com/evanoberholster/imagemeta"
+	"github.com/yendo/famifo-proto/internal/photo"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // image.Decode にWebPを登録する（デコードのみ）
 )
@@ -27,13 +25,13 @@ import (
 // jpegQuality はサムネイルの画質。一覧表示に十分で、かつ十分軽い値。
 const jpegQuality = 82
 
-// Generator はサムネイルキャッシュを管理する。
+// Generator は自前で生成したサムネイルの置き場を管理する。
 type Generator struct {
 	dir  string
 	size int // 長辺の最大ピクセル数
 }
 
-// NewGenerator はキャッシュディレクトリを用意してGeneratorを返す。
+// NewGenerator は置き場のディレクトリを用意してGeneratorを返す。
 func NewGenerator(dir string, size int) (*Generator, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("サムネイルディレクトリを作れません: %w", err)
@@ -41,55 +39,23 @@ func NewGenerator(dir string, size int) (*Generator, error) {
 	return &Generator{dir: dir, size: size}, nil
 }
 
-// eaDir はSynologyがサムネイルなどを置く管理用ディレクトリの名前。
-const eaDir = "@eaDir"
-
-// synoThumbName は一覧に借りるサムネイルのファイル名。Mは短辺320px（4:3なら
-// 長辺427px）で、famifo自身が作る長辺480pxよりわずかに小さい。
-const synoThumbName = "SYNOPHOTO_THUMB_M.jpg"
-
-// synoLargeName は拡大表示に借りるJPEGのファイル名。長辺1707px・約1MBで、
-// 一覧には過大だが1枚だけ見せる場面では妥当な大きさになる。
-const synoLargeName = "SYNOPHOTO_THUMB_XL.jpg"
-
-// CachePath は自前で生成したサムネイルのパスを返す。
-// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
-func CachePath(dir, id string) string { return filepath.Join(dir, id[:2], id+".jpg") }
-
-// synoPath は @eaDir の中の1ファイルのパスを組み立てる。
-func synoPath(srcPath, name string) string {
-	return filepath.Join(filepath.Dir(srcPath), eaDir, filepath.Base(srcPath), name)
-}
-
-// SynoThumbPath はSynologyがsrcPathの写真用に持つ一覧用サムネイルのパスを返す。
-// 実在するとは限らない。あるかどうかは HasSyno で確かめる。
-func SynoThumbPath(srcPath string) string { return synoPath(srcPath, synoThumbName) }
-
-// SynoLargePath はSynologyがsrcPathの写真用に持つ拡大表示用JPEGのパスを返す。
-// SynoThumbPath と同じディレクトリを指す。存在は確かめない。MとXLは同じ生成器が
-// 一緒に書くため、Mがあることを確かめてあればXLもあるものとして扱う。
-func SynoLargePath(srcPath string) string { return synoPath(srcPath, synoLargeName) }
-
-// HasSyno は借りられるサムネイルがあるかを報告する。
+// path はサムネイルの絶対パスを返す。
 //
-// DSM 7.3 はHEICをデコードできず、.jpg の代わりに0バイトの .fail を置く。拡張子が
-// 違うので存在確認だけで弾けるが、手で消したあとに空の .jpg が残るような状況も
-// あるため、通常ファイルかつ中身があることまで見る。
-func HasSyno(srcPath string) bool {
-	fi, err := os.Stat(SynoThumbPath(srcPath))
-	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
-}
-
-// Path はサムネイルの絶対パスを返す。
-func (g *Generator) Path(id string) string { return CachePath(g.dir, id) }
+// 置き場所の規則そのものは photo.FamifoThumbPath が持つ。配信側はGeneratorを
+// 持たずに同じパスを引く必要があるため、規則の在り処はここではなく photo である。
+func (g *Generator) path(id string) string { return photo.FamifoThumbPath(g.dir, id) }
 
 // Generate は srcPath の画像からサムネイルを作る。
-// デコードできないファイルはエラーを返し、キャッシュには何も残さない。
+// デコードできないファイルはエラーを返し、サムネイルは何も残さない。
+//
+// orientation は internal/index/exif が読んだEXIFの向き。image.Decode はEXIFを見ずに
+// 生の画素を返し、jpeg.Encode はEXIFを書き出さないため、ここで適用しないと
+// 向きの情報はサムネイルから完全に失われる。1..8以外は回転不要として扱う。
 //
 // 既にサムネイルがあり、元の写真より新しければ何もしない。DBを作り直すたびに
 // 全件を作り直すと4,495枚で37分（NASなら数時間）かかるが、その大半は中身の
 // 変わらないサムネイルの再生成である。
-func (g *Generator) Generate(srcPath, id string) error {
+func (g *Generator) Generate(srcPath, id string, orientation uint16) error {
 	f, err := os.Open(srcPath)
 	if err != nil {
 		return fmt.Errorf("画像を開けません: %w", err)
@@ -100,20 +66,12 @@ func (g *Generator) Generate(srcPath, id string) error {
 		return nil
 	}
 
-	// 画素より先にEXIFを読む。image.Decode はEXIFを見ずに生の画素を返し、
-	// jpeg.Encode はEXIFを書き出さないため、ここで回転を適用しないと向きの
-	// 情報はサムネイルから完全に失われる。
-	orientation := orientationOf(f)
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("画像を読み直せません: %w", err)
-	}
-
 	src, _, err := image.Decode(f)
 	if err != nil {
 		return fmt.Errorf("画像をデコードできません: %w", err)
 	}
 
-	out := g.Path(id)
+	out := g.path(id)
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return fmt.Errorf("サムネイルの保存先を作れません: %w", err)
 	}
@@ -147,7 +105,7 @@ func (g *Generator) Generate(srcPath, id string) error {
 // 出力は一時ファイルへ書いてからrenameしているので、中途半端な内容が
 // 残っていることはない。存在して新しければ、そのまま使ってよい。
 func (g *Generator) isFresh(id string, srcModTime time.Time) bool {
-	fi, err := os.Stat(g.Path(id))
+	fi, err := os.Stat(g.path(id))
 	if err != nil || !fi.Mode().IsRegular() {
 		return false
 	}
@@ -156,7 +114,7 @@ func (g *Generator) isFresh(id string, srcModTime time.Time) bool {
 
 // Remove はサムネイルを削除する。存在しない場合はエラーにしない。
 func (g *Generator) Remove(id string) error {
-	if err := os.Remove(g.Path(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := os.Remove(g.path(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("サムネイルを削除できません: %w", err)
 	}
 	return nil
@@ -183,31 +141,6 @@ func scaleToFit(src image.Image, max int) image.Image {
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, xdraw.Over, nil)
 	return dst
-}
-
-// orientationOf はEXIFのOrientationを返す。読めない場合や値が範囲外の場合は
-// 1（回転不要）を返す。EXIFを持たない画像は普通に存在するのでエラーにしない。
-//
-// imagemeta はISOBMFFとPNGのパスをrecoverで囲っていない。サムネイル生成の
-// 失敗はその写真をインデックスから落とすため、パニックでデーモンごと落ちる
-// のは避ける。internal/takenat と同じ理由のガード。
-func orientationOf(r io.ReadSeeker) (o uint16) {
-	defer func() {
-		if recover() != nil {
-			o = 1
-		}
-	}()
-	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return 1
-	}
-	ex, err := imagemeta.Decode(r)
-	if err != nil {
-		return 1
-	}
-	if v := uint16(ex.IFD0.Orientation); v >= 1 && v <= 8 {
-		return v
-	}
-	return 1
 }
 
 // applyOrientation はEXIFのOrientationに従って画素を並べ替える。
