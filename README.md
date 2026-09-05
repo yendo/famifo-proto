@@ -39,6 +39,20 @@ original.
 CGO_ENABLED=0 go build -o famifo-proto .
 ```
 
+## Releases
+
+Tagged builds are published to [GitHub Releases](https://github.com/yendo/famifo-proto/releases)
+as a `linux/amd64` tarball, and to `ghcr.io/yendo/famifo-proto` under both the tag and
+`latest`. Untagged commits publish nothing; build them yourself.
+
+```bash
+git tag -a v0.1.0 -m "v0.1.0"
+git push origin v0.1.0
+```
+
+Check `git status` first — goreleaser refuses to release from a dirty tree, and a stray
+untracked file would otherwise stamp the binaries `+dirty`.
+
 ## Usage
 
 ```bash
