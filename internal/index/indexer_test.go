@@ -24,8 +24,14 @@ type fixture struct {
 	log      *slog.Logger
 }
 
-// thumbPath は写真IDに対応するサムネイルのパスを返す。
-func (f *fixture) thumbPath(id string) string { return photo.FamifoThumbPath(f.thumbDir, id) }
+// thumbPath は src の写真のサムネイルが置かれるパスを返す。
+// 名前には元画像の版が入るので、srcのmtimeから引く。
+func (f *fixture) thumbPath(t *testing.T, src string) string {
+	t.Helper()
+	fi, err := os.Stat(src)
+	require.NoError(t, err)
+	return photo.FamifoThumbPath(f.thumbDir, photo.IDFor(src), fi.ModTime())
+}
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
@@ -79,7 +85,7 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path())
 	require.Equal(t, photo.ThumbFamifo, got.ThumbSource())
-	require.FileExists(t, f.thumbPath(got.ID()))
+	require.FileExists(t, f.thumbPath(t, path))
 }
 
 // TestIndexFileAppliesTheEXIFOrientationToTheThumbnail はEXIFから読んだ向きが
@@ -92,7 +98,7 @@ func TestIndexFileAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	cfg := decodeThumbConfig(t, f.thumbPath(photo.IDFor(path)))
+	cfg := decodeThumbConfig(t, f.thumbPath(t, path))
 	require.Equal(t, 8, cfg.Width, "Orientation=6 なら縦横が入れ替わる")
 	require.Equal(t, 16, cfg.Height)
 }
@@ -108,7 +114,7 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, photo.ThumbNone, got.ThumbSource(), "HEICはデコードできない")
-	require.NoFileExists(t, f.thumbPath(got.ID()))
+	require.NoFileExists(t, f.thumbPath(t, path))
 }
 
 func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
@@ -153,7 +159,7 @@ func TestRemoveFileDeletesRowAndThumb(t *testing.T) {
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
 	require.NoError(t, f.ix.IndexFile(ctx, path))
-	thumbPath := f.thumbPath(photo.IDFor(path))
+	thumbPath := f.thumbPath(t, path)
 	require.FileExists(t, thumbPath)
 
 	require.NoError(t, f.ix.RemoveFile(ctx, path))
@@ -188,7 +194,7 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, photo.ThumbSyno, got.ThumbSource())
-	require.NoFileExists(t, f.thumbPath(got.ID()), "借りられるなら自前では作らない")
+	require.NoFileExists(t, f.thumbPath(t, path), "借りられるなら自前では作らない")
 }
 
 // HEICはGoでデコードできないが、Synologyのサムネイルがあれば一覧に出せる。
