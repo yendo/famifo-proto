@@ -1,0 +1,25 @@
+---
+version: 2
+project_name: famifo-proto
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+    flags:
+      - -trimpath
+    # -X は使わない。版は go build が .git から埋める。
+    ldflags:
+      - -s -w
+
+archives:
+  - formats:
+      - tar.gz
+
+checksum: {}
+
+changelog:
+  use: github
