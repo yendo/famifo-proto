@@ -188,8 +188,15 @@ func setupBrowserEnv() (cleanup func(), ok bool) {
 	// クラッシュした前回実行の残骸があれば先に片付ける。
 	_ = exec.Command("docker", "rm", "-f", containerName).Run()
 
+	// /dev/shm はDocker既定の64MBでは足りない。このスイートでChromeが要求する
+	// 共有メモリのピークは実測227MBあり、64MBだと天井に張り付く。確保に失敗した
+	// 瞬間が net::ERR_INSUFFICIENT_RESOURCES、間に合わなかった瞬間が待ちの
+	// タイムアウトになって、変更と無関係にテストが落ちる。
+	// 実測の失敗率: 16MB/32MBは8回中8回、既定の64MBは27回中1回、2GBは10回中0回。
+	// タイムアウト値の問題ではない。通常0.5秒で終わるテストが40秒の予算を
+	// 使い切って落ちるので、値を伸ばしても停止している時間が伸びるだけ。
 	runOut, err := exec.Command("docker", "run", "-d", "--rm", "--network", "host",
-		"--name", containerName, dockerImage).CombinedOutput()
+		"--shm-size", "2g", "--name", containerName, dockerImage).CombinedOutput()
 	if err != nil {
 		browserSkipReason = fmt.Sprintf("docker run に失敗しました: %v: %s", err, runOut)
 		return noop, false
