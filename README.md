@@ -84,11 +84,11 @@ The image is built `FROM scratch` around the static binary — 15MB, no runtime
 dependencies.
 
 ```bash
-docker build --build-arg VERSION=$(git rev-parse --short HEAD) -t famifo .
+docker build -t famifo .
 ```
 
-`.git` is kept out of the build context, so Go's automatic VCS stamping has nothing to
-read and `-version` would report `dev`. Pass `VERSION` and it is embedded instead.
+`.git` is part of the build context, so `go build` stamps the version by itself —
+nothing has to be passed in.
 
 ### Running it
 

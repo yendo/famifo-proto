@@ -1,10 +1,10 @@
-# ビルドに要らないものは送らない。famifo-data は写真1万枚規模で数百MBになる。
-.git
+# .git を送るので、追跡ファイルは1つも除外しない。除くと git が「削除された」と
+# 見なし、版に +dirty が付く。版は go build が .git から埋める。
+# famifo-data は写真1万枚規模で数百MBになるため除く。
 .claude
 .superpowers
-docs
+.idea
+.vscode
+dist
 famifo-data
 famifo-proto
-*.md
-.dockerignore
-Dockerfile
