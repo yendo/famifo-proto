@@ -1,23 +1,18 @@
-// Package photo は写真1枚について答えられることをまとめる。
-// インデックス上の型と安定ID、サムネイルの出どころ、配信する画像ファイルのパス
+// Package photo はインデックス上の1枚を表す。型と安定ID、サムネイルの出どころ
 // （photo.go）、撮影日時の決め方（takenat.go）。
 //
-// パスから導ける値の規則はここにしかない。組み立ては New と Restore を通す。
+// IDの導出規則はここにしかない。組み立ては New と Restore を通す。
 // 呼び出し側が同じ式を書き直すと規則が二重化するため。
 //
-// 対応する画像形式の表は internal/imagefmt が持つ。I/Oは一切行わない。
+// 対応する画像形式の表は internal/imagefmt が、表示用に派生した画像の置き場所と
+// 選択は internal/thumb が持つ。I/Oは一切行わない。
 package photo
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io/fs"
-	"path/filepath"
 	"time"
-
-	"github.com/yendo/famifo-proto/internal/imagefmt"
-	"github.com/yendo/famifo-proto/internal/synology"
 )
 
 // ThumbSource はサムネイルの出どころ。
@@ -96,49 +91,9 @@ func (p Photo) ModTime() time.Time { return p.modTime }
 // Size はファイルサイズを返す。
 func (p Photo) Size() int64 { return p.size }
 
-// ThumbSource はサムネイルの出どころを返す。store が永続化するために要る。
+// ThumbSource はサムネイルの出どころを返す。store が永続化し、
+// thumb が配信するファイルを選ぶために要る。
 func (p Photo) ThumbSource() ThumbSource { return p.thumbSource }
-
-// ThumbPath は一覧に出すサムネイルのパスを返す。無ければ ok=false。
-// ok=false のとき、一覧は原本のURLにフォールバックし、/thumb/ エンドポイントは404を返す。
-//
-// thumbDir は -data から来る配置設定で、写真そのものの属性ではないため引数で受ける。
-func (p Photo) ThumbPath(thumbDir string) (string, bool) {
-	switch p.thumbSource {
-	case ThumbFamifo:
-		return FamifoThumbPath(thumbDir, p.id, p.modTime), true
-	case ThumbSyno:
-		return synology.ThumbMPath(p.path), true
-	}
-	return "", false
-}
-
-// HasThumb は一覧に出せるサムネイルがあるかを報告する。
-// パスを組み立てずに判定できるので、一覧の組み立てではこちらを使う。
-func (p Photo) HasThumb() bool {
-	return p.thumbSource == ThumbFamifo || p.thumbSource == ThumbSyno
-}
-
-// HasFamifoThumb は famifo が作ったサムネイルを採用しているかを報告する。
-// 消してよいのはこれだけで、@eaDir から借りたものは読むだけ。
-func (p Photo) HasFamifoThumb() bool { return p.thumbSource == ThumbFamifo }
-
-// FullPath は拡大表示に配信するファイルのパスを返す。
-//
-// HEICはSafari以外のブラウザが表示できない。@eaDir から借りているなら原本ではなく
-// SynologyのXL（長辺1707px）を返す。thumb_source が eadir であればMがあり、MとXLは
-// 同じ生成器が一緒に書くので、XLの存在はそこから導ける。
-func (p Photo) FullPath() string {
-	if imagefmt.IsSupported(p.path) && !imagefmt.IsDecodable(p.path) &&
-		p.thumbSource == ThumbSyno {
-		return synology.ThumbXLPath(p.path)
-	}
-	return p.path
-}
-
-// ContentType は FullPath が返すファイルのMIMEタイプを返す。
-// 借りたXLは .jpg なので、原本がHEICでも image/jpeg になる。
-func (p Photo) ContentType() string { return imagefmt.ContentType(p.FullPath()) }
 
 // IDFor はパスから安定したIDを導出する。
 // URLにファイルシステムのパスを露出させないためと、
@@ -146,25 +101,4 @@ func (p Photo) ContentType() string { return imagefmt.ContentType(p.FullPath()) 
 func IDFor(path string) string {
 	sum := sha256.Sum256([]byte(path))
 	return hex.EncodeToString(sum[:])[:32]
-}
-
-// FamifoThumbDir は famifo が生成したサムネイルを置くディレクトリを返す。
-// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
-func FamifoThumbDir(thumbDir, id string) string {
-	return filepath.Join(thumbDir, id[:2])
-}
-
-// FamifoThumbPath は famifo が自分で生成したサムネイルのパスを返す。
-//
-// 名前に元画像の版（mtimeのUnix秒）を含める。写真が差し替われば別のファイルに
-// なるので、鮮度の判定が「サムネイルのほうが新しいか」という順序の比較ではなく
-// 「その版の名前があるか」という一致の確認で済む。mtimeは前にしか進むとは
-// 限らず（cp -p や rsync -t でバックアップから戻すと過去へ動く）、順序で
-// 判定すると作り直しを見送ってしまうため。
-//
-// 秒に丸めるのは、DBが mod_time を Unix 秒で持っているのに合わせるためと、
-// ファイルシステムによって時刻の粒度が違うのを避けるため。
-func FamifoThumbPath(thumbDir, id string, modTime time.Time) string {
-	return filepath.Join(FamifoThumbDir(thumbDir, id),
-		fmt.Sprintf("%s-%d.jpg", id, modTime.Unix()))
 }

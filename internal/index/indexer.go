@@ -1,9 +1,11 @@
 // Package index はディスク上の写真とSQLiteインデックスを同期させる。
 // 起動時のフルスキャンとfsnotifyによる追従の両方をここで担う。
 //
-// 1枚を取り込む手順のうち、重いものはサブパッケージに置く。
-// exif がEXIFを読み、thumb がサムネイルを調達する。どちらも取り込み時にしか
-// 使わないので、internal/photo と横並びにはしない。
+// 1枚を取り込む手順のうち、EXIFの読み取りは exif が担う。取り込み時にしか
+// 使わないのでサブパッケージに置く。
+//
+// サムネイルの調達は internal/thumb が担う。こちらは配信側とも共有するため、
+// 呼び出し側が組み立てたものを受け取る。
 package index
 
 import (
@@ -14,31 +16,25 @@ import (
 
 	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/index/exif"
-	"github.com/yendo/famifo-proto/internal/index/thumb"
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
+	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 // Indexer は1ファイル単位でインデックスを更新する。
 type Indexer struct {
-	roots         []string
-	st            *store.Store
-	thumbProvider *thumb.Provider
-	log           *slog.Logger
+	roots  []string
+	st     *store.Store
+	thumbs *thumb.Provider
+	log    *slog.Logger
 }
 
-// New はIndexerを作る。rootsは写真を収集するルートディレクトリ、
-// thumbDir は生成したサムネイルの置き場所。
+// New はIndexerを作る。rootsは写真を収集するルートディレクトリ。
 //
-// サムネイルの供給者はここで組み立てる。呼び出し側にとってサムネイルは
-// インデックス作成の副産物であって、単体で持ち回る道具ではない。寸法は
-// thumb の既定に任せる。利用者が変えられる設定ではない。
-func New(roots []string, st *store.Store, thumbDir string, log *slog.Logger) (*Indexer, error) {
-	thumbProvider, err := thumb.NewProvider(thumbDir)
-	if err != nil {
-		return nil, err
-	}
-	return &Indexer{roots: roots, st: st, thumbProvider: thumbProvider, log: log}, nil
+// thumbs は配信側と共有する。同じ置き場所を指す設定値を2経路に配ると、
+// ずれても誰も気づけないため、組み立てたものを1つ受け取る。
+func New(roots []string, st *store.Store, thumbs *thumb.Provider, log *slog.Logger) *Indexer {
+	return &Indexer{roots: roots, st: st, thumbs: thumbs, log: log}
 }
 
 // IndexFile は1ファイルをインデックスに反映する。
@@ -62,7 +58,7 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	// 決まるので、写真1枚につきEXIFのパースは1回で済む。
 	m := exif.Read(path)
 
-	thumbSource, err := ix.thumbProvider.ResolveSource(path, m.Orientation)
+	thumbSource, err := ix.thumbs.ResolveSource(path, m.Orientation)
 	if err != nil {
 		return err
 	}
@@ -81,11 +77,11 @@ func (ix *Indexer) RemoveFile(ctx context.Context, path string) error {
 	if !ok {
 		return nil
 	}
-	if p.HasFamifoThumb() {
-		if err := ix.thumbProvider.Remove(p.ID()); err != nil {
-			// DBからは消えているので、サムネイルの消し残しは致命的ではない
-			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID(), "err", err)
-		}
+	// 出どころは見ない。Remove は自分の置き場しか触らないので、@eaDir から
+	// 借りていた写真に対しては何も消さずに終わる。
+	if err := ix.thumbs.Remove(p.ID()); err != nil {
+		// DBからは消えているので、サムネイルの消し残しは致命的ではない
+		ix.log.Warn("サムネイルの削除に失敗", "id", p.ID(), "err", err)
 	}
 	return nil
 }
@@ -100,10 +96,7 @@ func (ix *Indexer) RemoveTree(ctx context.Context, dir string) error {
 		return err
 	}
 	for _, p := range photos {
-		if !p.HasFamifoThumb() {
-			continue
-		}
-		if err := ix.thumbProvider.Remove(p.ID()); err != nil {
+		if err := ix.thumbs.Remove(p.ID()); err != nil {
 			// DBからは消えているので、サムネイルの消し残しは致命的ではない
 			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID(), "err", err)
 		}

@@ -17,12 +17,13 @@ import (
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
+	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 type webFixture struct {
 	h        http.Handler
 	st       *store.Store
-	thumbDir string
+	thumbs   *thumb.Provider
 	photoDir string
 }
 
@@ -33,16 +34,16 @@ func newWebFixture(t *testing.T, chunkSize int) *webFixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	thumbDir := filepath.Join(base, "thumbs")
-	require.NoError(t, os.MkdirAll(thumbDir, 0o755))
+	thumbs, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
+	require.NoError(t, err)
 	photoDir := filepath.Join(base, "photos")
 	require.NoError(t, os.MkdirAll(photoDir, 0o755))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv, err := web.NewServer(st, thumbDir, log)
+	srv, err := web.NewServer(st, thumbs, log)
 	require.NoError(t, err)
 	srv.SetChunkSize(chunkSize)
-	return &webFixture{h: srv.Handler(), st: st, thumbDir: thumbDir, photoDir: photoDir}
+	return &webFixture{h: srv.Handler(), st: st, thumbs: thumbs, photoDir: photoDir}
 }
 
 // addPhoto は原本ファイルとDB行を用意する。出どころに応じてサムネイルも置く。
@@ -56,7 +57,7 @@ func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, thum
 
 	switch thumbSource {
 	case photo.ThumbFamifo:
-		thumbPath, ok := p.ThumbPath(f.thumbDir)
+		thumbPath, ok := f.thumbs.SmallPath(p)
 		require.True(t, ok)
 		writeFileAt(t, thumbPath, "thumb-"+name)
 	case photo.ThumbSyno:

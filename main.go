@@ -25,6 +25,7 @@ import (
 	"github.com/yendo/famifo-proto/internal/config"
 	"github.com/yendo/famifo-proto/internal/index"
 	"github.com/yendo/famifo-proto/internal/store"
+	"github.com/yendo/famifo-proto/internal/thumb"
 	"github.com/yendo/famifo-proto/internal/web"
 )
 
@@ -109,7 +110,14 @@ func run() error {
 	}
 	defer st.Close()
 
-	srv, err := web.NewServer(st, cfg.ThumbDir(), log)
+	// サムネイルの置き場は取り込みと配信の両方が使う。設定値を2経路に配ると
+	// ずれても気づけないので、ここで1つだけ組み立てて両方へ渡す。
+	thumbs, err := thumb.NewProvider(cfg.ThumbDir())
+	if err != nil {
+		return err
+	}
+
+	srv, err := web.NewServer(st, thumbs, log)
 	if err != nil {
 		return err
 	}
@@ -132,10 +140,7 @@ func run() error {
 		}
 	}()
 
-	ix, err := index.New(cfg.PhotoDirs, st, cfg.ThumbDir(), log)
-	if err != nil {
-		return err
-	}
+	ix := index.New(cfg.PhotoDirs, st, thumbs, log)
 
 	// fsnotifyは停止中の変更を検知できないので、起動のたびに実態と突き合わせる。
 	log.Info("フルスキャンを開始", "dirs", cfg.PhotoDirs)

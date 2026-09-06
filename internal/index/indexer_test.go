@@ -14,14 +14,15 @@ import (
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
+	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 type fixture struct {
-	ix       *index.Indexer
-	st       *store.Store
-	thumbDir string
-	root     string
-	log      *slog.Logger
+	ix     *index.Indexer
+	st     *store.Store
+	thumbs *thumb.Provider
+	root   string
+	log    *slog.Logger
 }
 
 // thumbPath は src の写真のサムネイルが置かれるパスを返す。
@@ -30,7 +31,10 @@ func (f *fixture) thumbPath(t *testing.T, src string) string {
 	t.Helper()
 	fi, err := os.Stat(src)
 	require.NoError(t, err)
-	return photo.FamifoThumbPath(f.thumbDir, photo.IDFor(src), fi.ModTime())
+	path, ok := f.thumbs.SmallPath(
+		photo.Restore(src, fi.ModTime(), fi.ModTime(), fi.Size(), photo.ThumbFamifo))
+	require.True(t, ok)
+	return path
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -43,12 +47,12 @@ func newFixture(t *testing.T) *fixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	thumbDir := filepath.Join(base, "thumbs")
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix, err := index.New([]string{root}, st, thumbDir, log)
+	thumbs, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
 	require.NoError(t, err)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ix := index.New([]string{root}, st, thumbs, log)
 
-	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: root, log: log}
+	return &fixture{ix: ix, st: st, thumbs: thumbs, root: root, log: log}
 }
 
 // newFixtureRoots は複数のルートを持つ fixture を作る。roots[0] が f.root。
@@ -67,12 +71,12 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	thumbDir := filepath.Join(base, "thumbs")
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix, err := index.New(roots, st, thumbDir, log)
+	thumbs, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
 	require.NoError(t, err)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ix := index.New(roots, st, thumbs, log)
 
-	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: roots[0], log: log}, roots
+	return &fixture{ix: ix, st: st, thumbs: thumbs, root: roots[0], log: log}, roots
 }
 
 func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {

@@ -52,7 +52,7 @@ func (s *Server) buildRange(r *http.Request, offset, limit int) (itemsView, erro
 			ThumbURL: "/photo/" + p.ID(),
 			Date:     p.TakenAt().Format("2006-01-02"),
 		}
-		if p.HasThumb() {
+		if _, ok := s.thumbs.SmallPath(p); ok {
 			pv.ThumbURL = "/thumb/" + p.ID()
 		}
 		v.Photos = append(v.Photos, pv)

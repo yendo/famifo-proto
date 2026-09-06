@@ -1,5 +1,10 @@
-// Package thumb は一覧表示用のサムネイルを調達する。借りられるものは借り、
-// 借りられないものだけ自前で生成する。自前の出力は常にJPEG。
+// Package thumb は表示用に派生した画像を所有する。一覧用のサムネイルは借りられる
+// ものを借り、借りられないものだけ自前で生成する（自前の出力は常にJPEG）。
+// 拡大表示にどのファイルを配信するかの選択もここが決める。
+//
+// 取り込み側（internal/index）が生成と掃除を、配信側（internal/web）がパスの取得を
+// 使う。置き場所の規則を知るのはこのパッケージだけで、どちらの側もサムネイルの
+// ディレクトリを持たない。
 //
 // 生成にHEICは来ない（自前ではデコードしない方針）。@eaDir のパスの組み立てと
 // 存在確認は internal/synology が持ち、ここはそれを使って選ぶだけである。
@@ -52,12 +57,53 @@ func NewProvider(dir string) (*Provider, error) {
 	return &Provider{dir: dir}, nil
 }
 
+// shardDir は id のサムネイルを置くディレクトリを返す。
+// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
+func (pv *Provider) shardDir(id string) string {
+	return filepath.Join(pv.dir, id[:2])
+}
+
 // path は元画像の版に対応するサムネイルの絶対パスを返す。
 //
-// 置き場所の規則そのものは photo.FamifoThumbPath が持つ。配信側はProviderを
-// 持たずに同じパスを引く必要があるため、規則の在り処はここではなく photo である。
+// 名前に元画像の版（mtimeのUnix秒）を含める。写真が差し替われば別のファイルに
+// なるので、鮮度の判定が「サムネイルのほうが新しいか」という順序の比較ではなく
+// 「その版の名前があるか」という一致の確認で済む。mtimeは前にしか進むとは
+// 限らず（cp -p や rsync -t でバックアップから戻すと過去へ動く）、順序で
+// 判定すると作り直しを見送ってしまうため。
+//
+// 秒に丸めるのは、DBが mod_time を Unix 秒で持っているのに合わせるためと、
+// ファイルシステムによって時刻の粒度が違うのを避けるため。
 func (pv *Provider) path(id string, srcModTime time.Time) string {
-	return photo.FamifoThumbPath(pv.dir, id, srcModTime)
+	return filepath.Join(pv.shardDir(id), fmt.Sprintf("%s-%d.jpg", id, srcModTime.Unix()))
+}
+
+// SmallPath は一覧に出すサムネイルのパスを返す。無ければ ok=false。
+// ok=false のとき、一覧は原本のURLにフォールバックし、/thumb/ エンドポイントは404を返す。
+func (pv *Provider) SmallPath(p photo.Photo) (string, bool) {
+	switch p.ThumbSource() {
+	case photo.ThumbFamifo:
+		return pv.path(p.ID(), p.ModTime()), true
+	case photo.ThumbSyno:
+		return synology.ThumbMPath(p.Path()), true
+	}
+	return "", false
+}
+
+// LargePath は拡大表示に配信するファイルのパスと、そのMIMEタイプを返す。
+//
+// HEICはSafari以外のブラウザが表示できない。@eaDir から借りているなら原本ではなく
+// SynologyのXL（長辺1707px）を返す。thumb_source が eadir であればMがあり、MとXLは
+// 同じ生成器が一緒に書くので、XLの存在はそこから導ける。
+//
+// 借りたXLは .jpg なので、原本がHEICでもMIMEは image/jpeg になる。呼び出し側が
+// 選ばれたパスからMIMEを引き直さずに済むよう、ここで一緒に返す。
+func (pv *Provider) LargePath(p photo.Photo) (path, contentType string) {
+	path = p.Path()
+	if imagefmt.IsSupported(path) && !imagefmt.IsDecodable(path) &&
+		p.ThumbSource() == photo.ThumbSyno {
+		path = synology.ThumbXLPath(p.Path())
+	}
+	return path, imagefmt.ContentType(path)
 }
 
 // ResolveSource は写真1枚のサムネイルの出どころを確定させて返す。
@@ -174,7 +220,7 @@ func (pv *Provider) Remove(id string) error { return pv.sweep(id, "") }
 // 同じ写真の古い版はここでまとめて片づく。前回の異常終了で取り残されたものも
 // 同時に回収する。版を持たない旧形式（<id>.jpg）も接頭辞で拾えるようにしてある。
 func (pv *Provider) sweep(id, keep string) error {
-	dir := photo.FamifoThumbDir(pv.dir, id)
+	dir := pv.shardDir(id)
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil

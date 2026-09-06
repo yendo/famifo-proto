@@ -94,13 +94,13 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleThumb はサムネイルを配信する。どのファイルを出すかは photo が決める。
+// handleThumb はサムネイルを配信する。どのファイルを出すかは thumb が決める。
 func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.lookup(w, r)
 	if !ok {
 		return
 	}
-	path, ok := p.ThumbPath(s.thumbDir)
+	path, ok := s.thumbs.SmallPath(p)
 	if !ok {
 		// 借りるものも作れるものも無い写真。原本を使うべき。
 		http.NotFound(w, r)
@@ -115,10 +115,11 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	path, contentType := s.thumbs.LargePath(p)
 	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
 	// 先に設定しておけばServeContentは上書きしない。
-	w.Header().Set("Content-Type", p.ContentType())
-	http.ServeFile(w, r, p.FullPath())
+	w.Header().Set("Content-Type", contentType)
+	http.ServeFile(w, r, path)
 }
 
 // lookup はURLのIDから写真を引く。
