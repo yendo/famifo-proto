@@ -19,6 +19,7 @@ import (
 	_ "image/gif" // image.Decode にGIFを登録する
 	_ "image/png" // image.Decode にPNGを登録する
 
+	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/synology"
 	xdraw "golang.org/x/image/draw"
@@ -77,7 +78,7 @@ func (pv *Provider) ResolveSource(path string, orientation uint16) (photo.ThumbS
 		// 借りるほうへ切り替わったら、自前で作ったものは用済みになる。
 		pv.sweepQuietly(id, "")
 		return photo.ThumbSyno, nil
-	case photo.IsDecodableFile(path):
+	case imagefmt.IsDecodable(path):
 		out, err := pv.generate(path, id, orientation)
 		if err != nil {
 			// 失敗しても古い版は消さない。新しいのができるまでの控えとして

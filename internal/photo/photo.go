@@ -1,13 +1,11 @@
 // Package photo は写真1枚について答えられることをまとめる。
 // インデックス上の型と安定ID、サムネイルの出どころ、配信する画像ファイルのパス
-// （photo.go）、対応する画像形式（imageformat.go）、撮影日時の決め方
-// （takenat.go）。
+// （photo.go）、撮影日時の決め方（takenat.go）。
 //
 // パスから導ける値の規則はここにしかない。組み立ては New と Restore を通す。
 // 呼び出し側が同じ式を書き直すと規則が二重化するため。
 //
-// 分類は拡張子のみに基づき、ファイルの中身は読まない
-// （fsnotifyの大量イベントを軽く捌くため）。I/Oは一切行わない。
+// 対応する画像形式の表は internal/imagefmt が持つ。I/Oは一切行わない。
 package photo
 
 import (
@@ -18,6 +16,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/synology"
 )
 
@@ -130,8 +129,8 @@ func (p Photo) HasFamifoThumb() bool { return p.thumbSource == ThumbFamifo }
 // SynologyのXL（長辺1707px）を返す。thumb_source が eadir であればMがあり、MとXLは
 // 同じ生成器が一緒に書くので、XLの存在はそこから導ける。
 func (p Photo) FullPath() string {
-	f, supported := supportedExts[ext(p.path)]
-	if supported && !f.decodable && p.thumbSource == ThumbSyno {
+	if imagefmt.IsSupported(p.path) && !imagefmt.IsDecodable(p.path) &&
+		p.thumbSource == ThumbSyno {
 		return synology.ThumbXLPath(p.path)
 	}
 	return p.path
@@ -139,14 +138,7 @@ func (p Photo) FullPath() string {
 
 // ContentType は FullPath が返すファイルのMIMEタイプを返す。
 // 借りたXLは .jpg なので、原本がHEICでも image/jpeg になる。
-//
-// HEIC/HEIFはGoの mime パッケージが知らないため自前の表で引く。
-func (p Photo) ContentType() string {
-	if f, ok := supportedExts[ext(p.FullPath())]; ok {
-		return f.mime
-	}
-	return "application/octet-stream"
-}
+func (p Photo) ContentType() string { return imagefmt.ContentType(p.FullPath()) }
 
 // IDFor はパスから安定したIDを導出する。
 // URLにファイルシステムのパスを露出させないためと、

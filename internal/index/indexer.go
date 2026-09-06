@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/index/exif"
 	"github.com/yendo/famifo-proto/internal/index/thumb"
 	"github.com/yendo/famifo-proto/internal/photo"
@@ -46,7 +47,7 @@ func New(roots []string, st *store.Store, thumbDir string, log *slog.Logger) (*I
 // 自前で作るしかないファイルでサムネイルを作れなかった場合はエラーを返し、
 // DBには登録しない。壊れた画像を登録すると一覧に読み込めない <img> が並ぶため。
 func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
-	if !photo.IsSupportedFile(path) {
+	if !imagefmt.IsSupported(path) {
 		return nil
 	}
 	fi, err := os.Stat(path)

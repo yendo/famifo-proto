@@ -1,10 +1,10 @@
-package photo_test
+package imagefmt_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/imagefmt"
 )
 
 // 拡張子ごとに2つの問いへの答えを固定する。「インデックスに載せるか」と
@@ -27,8 +27,8 @@ func TestSupportedAndDecodableByExtension(t *testing.T) {
 	}
 	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, want.supported, photo.IsSupportedFile(name), "IsSupportedFile")
-			require.Equal(t, want.decodable, photo.IsDecodableFile(name), "IsDecodableFile")
+			require.Equal(t, want.supported, imagefmt.IsSupported(name), "IsSupported")
+			require.Equal(t, want.decodable, imagefmt.IsDecodable(name), "IsDecodable")
 		})
 	}
 }
@@ -46,8 +46,7 @@ func TestContentType(t *testing.T) {
 	}
 	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
-			// 借りていない写真は原本を配信するので、MIMEは拡張子どおりになる。
-			require.Equal(t, want, restored("/photos/"+name, photo.ThumbNone).ContentType())
+			require.Equal(t, want, imagefmt.ContentType("/photos/"+name))
 		})
 	}
 }

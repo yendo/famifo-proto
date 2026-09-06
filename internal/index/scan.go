@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/synology"
 )
 
@@ -55,7 +55,7 @@ func (ix *Indexer) FullScan(ctx context.Context) (Stats, error) {
 				}
 				return nil
 			}
-			if !photo.IsSupportedFile(path) {
+			if !imagefmt.IsSupported(path) {
 				return nil
 			}
 			found[root]++
