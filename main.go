@@ -53,6 +53,17 @@ func startupTimezone(t time.Time) string {
 	return t.Format("MST-07:00")
 }
 
+// defaultScanWorkers はフルスキャンの既定の並行数を返す。
+//
+// CPUを全部使うと同じマシンの他の仕事とHTTPの応答を圧迫するので、半分に留める。
+// 1未満にはしない。足りなければ -scan-workers で上げられる。
+func defaultScanWorkers() int {
+	if n := runtime.NumCPU() / 2; n > 1 {
+		return n
+	}
+	return 1
+}
+
 // parseArgs はコマンドライン引数を解析して検証済みの設定を返す。
 // argsにはプログラム名を含めない。2つ目の戻り値は -version が指定されたことを表す。
 func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
@@ -68,7 +79,7 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	fs.StringVar(&c.Addr, "addr", ":8080", "HTTPの待ち受けアドレス")
 	// 適正値はCPU数とストレージの待ち時間の両方で決まる。NASでは読み込み待ちが
 	// 効くので、CPU数が最善とは限らない。実機で詰められるようフラグにしてある。
-	fs.IntVar(&c.ScanWorkers, "scan-workers", runtime.NumCPU(),
+	fs.IntVar(&c.ScanWorkers, "scan-workers", defaultScanWorkers(),
 		"フルスキャンで同時に取り込む枚数")
 	showVersion := fs.Bool("version", false, "バージョンを表示して終了する")
 

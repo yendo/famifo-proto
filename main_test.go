@@ -59,8 +59,8 @@ func TestParseArgsUsesDefaults(t *testing.T) {
 	require.Equal(t, []string{dir}, got.PhotoDirs)
 	require.Equal(t, "./famifo-data", got.DataDir)
 	require.Equal(t, ":8080", got.Addr)
-	require.Equal(t, runtime.NumCPU(), got.ScanWorkers,
-		"既定はこのマシンのCPU数。設定を書かなくても並行に取り込む")
+	require.Equal(t, max(runtime.NumCPU()/2, 1), got.ScanWorkers,
+		"既定はCPU数の半分。設定を書かなくても並行に取り込みつつ、CPUは使い切らない")
 }
 
 func TestParseArgsOverridesEveryFlag(t *testing.T) {
