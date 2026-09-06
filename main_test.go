@@ -33,25 +33,6 @@ func TestEmbedsTimezoneDatabase(t *testing.T) {
 			"タイムゾーンデータベースをバイナリに埋め込むこと")
 }
 
-// go build は .git からタグとコミットを読んで版を埋める。埋まった値を
-// そのまま見せる。組み立て直すと桁数や書式が経路ごとにずれる。
-func TestFormatVersionPassesThroughTheStampedVersion(t *testing.T) {
-	require.Equal(t, "v0.1.0", formatVersion("v0.1.0"))
-
-	// タグから進んだコミットは擬似バージョンになる。未コミットの変更が
-	// 混ざっていれば +dirty が付き、手元のどのコミットとも一致しない
-	// バイナリを見分けられる。
-	require.Equal(t, "v0.1.1-0.20260905095503-153d347e4f14+dirty",
-		formatVersion("v0.1.1-0.20260905095503-153d347e4f14+dirty"))
-}
-
-// .git の無い場所でビルドすると版は "(devel)" になる。そのまま出しても
-// 読み手には何も伝わらないので unknown に落とす。
-func TestFormatVersionFallsBackWhenNothingIsStamped(t *testing.T) {
-	require.Equal(t, "unknown", formatVersion("(devel)"))
-	require.Equal(t, "unknown", formatVersion(""))
-}
-
 // TZを渡し忘れたコンテナは黙ってUTCで動き、そのまま本番のインデックスを
 // 作ると全件に誤った値が焼き付く。起動ログで気づけるようにする。
 //

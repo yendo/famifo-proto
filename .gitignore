@@ -28,6 +28,5 @@ go.work.sum
 /famifo-proto
 /famifo-data/
 
-# goreleaser の出力。無視しないと未追跡ディレクトリとして数えられ、
-# リリースバイナリ全部の版に +dirty が付く。
+# artifacts
 /dist/

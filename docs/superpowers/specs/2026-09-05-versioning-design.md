@@ -34,7 +34,7 @@
 ## 目標
 
 - 版の埋め込み経路を1本にする。どのビルド方法でも同じ規則で同じ形式の版が入る
-- 版を渡し忘れて `dev` や `unknown` になる経路を無くす
+- 版を渡し忘れて `dev` になる経路を無くす
 - `docker build .` が引数なし・単体で、正しい版のイメージを作れる状態を保つ
 - タグを打つとバイナリとイメージが揃って出る形にする
 
@@ -67,41 +67,36 @@ Goの自動VCSスタンプだけを使う。`-ldflags -X` も `--build-arg VERSI
 | タグから進んだコミット | `v0.1.1-0.20260905095503-153d347e4f14` |
 | タグを打つ前 | `v0.0.0-20260905095503-153d347e4f14` |
 | 未コミット・未追跡のファイルがある | 上記 + `+dirty` |
-| `.git` の無い場所（tarballからのビルド等） | `unknown` |
+| `.git` の無い場所（tarballからのビルド等） | `(devel)` |
 
 Docker でも `make build` でも goreleaser でも同じ経路を通り、同じ値になる。
 
 ### `main.go` と `main_test.go`
 
-`var version string` を削除する。`formatVersion` は `vcs.revision` / `vcs.time` /
-`vcs.modified` の組み立てをやめ、`Main.Version` をそのまま返す。
+`var version string` と `formatVersion` を削除する。`vcs.revision` / `vcs.time` /
+`vcs.modified` の組み立てをやめ、`versionString` が `Main.Version` をそのまま返す。
 
 ```go
 // versionString は実行中のバイナリのバージョンを返す。
+//
+// go build は .git からタグとコミットを読み、モジュール自身のバージョンを
+// 埋める。タグ上でビルドすれば "v0.1.0"、途中のコミットなら擬似バージョン、
+// 未コミットの変更があれば "+dirty" が付く。.git の無い場所でビルドすると
+// Go 自身の印である "(devel)" になる。書き換えずそのまま出す。
+// go version -m の表示と一致するほうが、突き合わせるときに迷わない。
 func versionString() string {
 	bi, ok := debug.ReadBuildInfo()
-	if !ok {
+	if !ok || bi.Main.Version == "" {
 		return "unknown"
 	}
-	return formatVersion(bi.Main.Version)
-}
-
-// formatVersion は go build が埋めた版を表示用に整える。
-//
-// go build は .git からタグとコミットを読んで版を埋める。.git の無い場所で
-// ビルドすると "(devel)" になり、版として読めない。
-func formatVersion(v string) string {
-	if v == "" || v == "(devel)" {
-		return "unknown"
-	}
-	return v
+	return bi.Main.Version
 }
 ```
 
-テストは4本から2本に減る。
-
-- `formatVersion` が埋まった版をそのまま返すこと
-- `.git` の無いビルド（`"(devel)"` と `""`）で `unknown` に落ちること
+版のテスト4本は削除する。`debug.ReadBuildInfo` は差し替えられないので、テストの
+ために純粋な関数へ切り出す手はあるが、残る判断は「空かどうか」だけで、テストが
+関数の定義を書き写すだけのものになる。`unknown` が2箇所に分かれる副作用のほうが
+大きいと判断した。
 
 `vcs.modified` を自前で見なくなるが、`+dirty` は `Main.Version` に含まれるので
 「未コミットの変更が混ざったバイナリを見分けられる」性質は失われない。
@@ -117,8 +112,6 @@ func formatVersion(v string) string {
 # famifo-data は写真1万枚規模で数百MBになるため除く。
 .claude
 .superpowers
-.idea
-.vscode
 dist
 famifo-data
 famifo-proto
@@ -241,9 +234,9 @@ Go 1.27.1 で実測した。
 ## 既知の制約
 
 - **手元の `make build` は `+dirty` になりやすい。** Goは未追跡ファイルも「汚れ」と
-  数えるため、`.claude/` や `.idea/` があるだけで付く。`.dockerignore` で除外される
+  数えるため、`.claude/` があるだけで付く。`.dockerignore` で除外される
   Dockerビルドのほうがきれいな版になる、という逆転が起きる。`.gitignore` に
-  `.claude/` `.idea/` `.vscode/` を足せば解消するが、この設計の範囲外とする
+  `.claude/` を足せば解消するが、この設計の範囲外とする
 - **`COPY . .` 層のキャッシュがコミットのたびに外れる。** `.git` が変わるため。
   ソースを変えれば同じ層は外れるので、実際に増える再ビルドは「ソースを変えずに
   コミットだけ進めた場合」に限られる

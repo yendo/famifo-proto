@@ -32,79 +32,55 @@
 
 **Interfaces:**
 - Consumes: なし
-- Produces: `formatVersion(v string) string` — `debug.BuildInfo.Main.Version` を表示用に整える。`versionString() string` は据え置き（`run()` から呼ばれる）
+- Produces: `versionString() string` — `debug.BuildInfo.Main.Version` をそのまま返す（`run()` から呼ばれる）
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [ ] **Step 1: 版のテストを削除する**
 
 `main_test.go` の版のテスト4本（`TestFormatVersionPrefersTheOverride` /
 `TestFormatVersionUsesTheEmbeddedRevision` / `TestFormatVersionMarksADirtyTree` /
-`TestFormatVersionFallsBackWhenNothingIsEmbedded`）を、次の2本に置き換える。
+`TestFormatVersionFallsBackWhenNothingIsEmbedded`）を削除する。
 
-```go
-// go build は .git からタグとコミットを読んで版を埋める。埋まった値を
-// そのまま見せる。組み立て直すと桁数や書式が経路ごとにずれる。
-func TestFormatVersionPassesThroughTheStampedVersion(t *testing.T) {
-	require.Equal(t, "v0.1.0", formatVersion("v0.1.0"))
-
-	// タグから進んだコミットは擬似バージョンになる。未コミットの変更が
-	// 混ざっていれば +dirty が付き、手元のどのコミットとも一致しない
-	// バイナリを見分けられる。
-	require.Equal(t, "v0.1.1-0.20260905095503-153d347e4f14+dirty",
-		formatVersion("v0.1.1-0.20260905095503-153d347e4f14+dirty"))
-}
-
-// .git の無い場所でビルドすると版は "(devel)" になる。そのまま出しても
-// 読み手には何も伝わらないので unknown に落とす。
-func TestFormatVersionFallsBackWhenNothingIsStamped(t *testing.T) {
-	require.Equal(t, "unknown", formatVersion("(devel)"))
-	require.Equal(t, "unknown", formatVersion(""))
-}
-```
+`debug.ReadBuildInfo` は差し替えられないので、テストのために純粋な関数へ切り出す
+手はある。だが残る判断は「版が空かどうか」だけで、テストが関数の定義を書き写す
+だけのものになる。`unknown` が2箇所に分かれる副作用のほうが大きい。
 
 `main_test.go` の import から `"runtime/debug"` を消す（`debug.BuildSetting` を
-使うテストが無くなるため）。
+使うテストが無くなるため）。`TestEmbedsTimezoneDatabase` と
+`TestStartupTimezoneDistinguishesZonesWithTheSameName` はそのまま残す。
 
-- [ ] **Step 2: 失敗することを確かめる**
+- [ ] **Step 2: 実装する**
 
-Run: `go test -run TestFormatVersion ./... 2>&1 | head -20`
-Expected: コンパイルエラー。`too many arguments in call to formatVersion`
-（旧 `formatVersion` は引数2つのため）
-
-- [ ] **Step 3: 実装する**
-
-`main.go` の `var version string` を削除し、`formatVersion` と `versionString` を
+`main.go` の `var version string` と `formatVersion` を削除し、`versionString` を
 次の内容に置き換える（`28行目`のコメントごと差し替える）。
 
 ```go
-// formatVersion は go build が埋めた版を表示用に整える。
+// versionString は実行中のバイナリのバージョンを返す。
 //
 // go build は .git からタグとコミットを読み、モジュール自身のバージョンを
 // 埋める。タグ上でビルドすれば "v0.1.0"、途中のコミットなら擬似バージョン、
 // 未コミットの変更があれば "+dirty" が付く。.git の無い場所でビルドすると
-// "(devel)" になり、版として読めない。
-func formatVersion(v string) string {
-	if v == "" || v == "(devel)" {
-		return "unknown"
-	}
-	return v
-}
-
-// versionString は実行中のバイナリのバージョンを返す。
+// Go 自身の印である "(devel)" になる。書き換えずそのまま出す。
+// go version -m の表示と一致するほうが、突き合わせるときに迷わない。
 func versionString() string {
 	bi, ok := debug.ReadBuildInfo()
-	if !ok {
+	if !ok || bi.Main.Version == "" {
 		return "unknown"
 	}
-	return formatVersion(bi.Main.Version)
+	return bi.Main.Version
 }
 ```
 
 `main.go` の `runtime/debug` の import は `debug.ReadBuildInfo` で使い続けるので残す。
 
-- [ ] **Step 4: テストが通ることを確かめる**
+- [ ] **Step 3: 残ったテストが通ることを確かめる**
 
 Run: `make unit-test`
 Expected: PASS（`ok github.com/yendo/famifo-proto`）
+
+- [ ] **Step 4: ビルドが通ることを確かめる**
+
+Run: `make build`
+Expected: 成功
 
 - [ ] **Step 5: 実際の出力を確かめる**
 
@@ -164,8 +140,6 @@ git commit -m "refactor: take the version straight from the build info"
 # famifo-data は写真1万枚規模で数百MBになるため除く。
 .claude
 .superpowers
-.idea
-.vscode
 dist
 famifo-data
 famifo-proto
@@ -176,7 +150,7 @@ famifo-proto
 Run:
 
 ```bash
-for p in .claude .superpowers .idea .vscode dist famifo-data famifo-proto; do
+for p in .claude .superpowers dist famifo-data famifo-proto; do
   printf '%s: ' "$p"; git ls-files "$p" | wc -l
 done
 ```

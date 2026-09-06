@@ -36,9 +36,6 @@ COPY --from=build /famifo /famifo
 # 起動ログの timezone= で確認できる。
 ENV TZ=Asia/Tokyo
 
-LABEL org.opencontainers.image.source="https://github.com/yendo/famifo-proto"
-LABEL org.opencontainers.image.description="Photo gallery for a home LAN"
-
 USER ${UID}:${GID}
 
 # HEALTHCHECK は付けない。scratch にはシェルも curl も無いので、exec 形式で

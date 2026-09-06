@@ -9,17 +9,35 @@ builds:
       - linux
     goarch:
       - amd64
+      - arm64
     flags:
       - -trimpath
-    # -X は使わない。版は go build が .git から埋める。
+    # No -X. go build stamps the version from .git.
     ldflags:
       - -s -w
 
 archives:
   - formats:
       - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    files:
+      - none*
 
-checksum: {}
+checksum:
+  name_template: 'checksums.txt'
 
 changelog:
-  use: github
+  use: github-native
+
+release:
+  # Keep tags like v0.2.0-rc1 out of Latest release, matching the guard in
+  # release.yml that leaves the image's :latest alone.
+  prerelease: auto
+  # A separate job pushes the image. goreleaser knows nothing about it, so
+  # without this the release page gives no way to find it.
+  footer: |
+    ## Docker image
+
+    ```
+    docker pull ghcr.io/yendo/famifo-proto:{{ .Tag }}
+    ```

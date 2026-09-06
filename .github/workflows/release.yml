@@ -9,14 +9,14 @@ on: # yamllint disable-line rule:truthy
 permissions: {}
 
 jobs:
-  release:
-    name: Release
+  goreleaser:
+    name: Go
     runs-on: ubuntu-latest
 
     permissions:
-      # contents to create the release, packages to push the image
       contents: write
-      packages: write
+      id-token: write
+      attestations: write
 
     steps:
       - name: Checkout code
@@ -30,6 +30,40 @@ jobs:
         uses: actions/setup-go@v7 # zizmor: ignore[unpinned-uses]
         with:
           go-version-file: go.mod
+          # a poisoned build cache would reach the published binaries
+          cache: false
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest artifacts
+        uses: actions/attest@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          subject-checksums: ./dist/checksums.txt
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7 # zizmor: ignore[unpinned-uses]
+        with:
+          # the go build inside the image reads the tag from the history too
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Extract metadata
         id: meta
@@ -42,6 +76,9 @@ jobs:
             type=ref,event=tag
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -50,6 +87,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -58,12 +96,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # Push the image before creating the Release: a failure here retries
-      # cleanly, but a published Release cannot be recreated by a re-run.
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+      - name: Attest artifacts
+        uses: actions/attest@v4 # zizmor: ignore[unpinned-uses]
         with:
-          version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

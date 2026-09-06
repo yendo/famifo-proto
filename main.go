@@ -25,26 +25,19 @@ import (
 	"github.com/yendo/famifo-proto/internal/web"
 )
 
-// formatVersion は go build が埋めた版を表示用に整える。
+// versionString は実行中のバイナリのバージョンを返す。
 //
 // go build は .git からタグとコミットを読み、モジュール自身のバージョンを
 // 埋める。タグ上でビルドすれば "v0.1.0"、途中のコミットなら擬似バージョン、
 // 未コミットの変更があれば "+dirty" が付く。.git の無い場所でビルドすると
-// "(devel)" になり、版として読めない。
-func formatVersion(v string) string {
-	if v == "" || v == "(devel)" {
-		return "unknown"
-	}
-	return v
-}
-
-// versionString は実行中のバイナリのバージョンを返す。
+// Go 自身の印である "(devel)" になる。書き換えずそのまま出す。
+// go version -m の表示と一致するほうが、突き合わせるときに迷わない。
 func versionString() string {
 	bi, ok := debug.ReadBuildInfo()
-	if !ok {
+	if !ok || bi.Main.Version == "" {
 		return "unknown"
 	}
-	return formatVersion(bi.Main.Version)
+	return bi.Main.Version
 }
 
 // startupTimezone は起動ログに載せるタイムゾーンの表記を返す。
