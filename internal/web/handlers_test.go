@@ -26,7 +26,7 @@ type webFixture struct {
 	photoDir string
 }
 
-func newWebFixture(t *testing.T, pageSize int) *webFixture {
+func newWebFixture(t *testing.T, chunkSize int) *webFixture {
 	t.Helper()
 	base := t.TempDir()
 	st, err := store.Open(filepath.Join(base, "test.db"))
@@ -39,7 +39,7 @@ func newWebFixture(t *testing.T, pageSize int) *webFixture {
 	require.NoError(t, os.MkdirAll(photoDir, 0o755))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv, err := web.NewServer(st, thumbDir, pageSize, log)
+	srv, err := web.NewServer(st, thumbDir, chunkSize, log)
 	require.NoError(t, err)
 	return &webFixture{h: srv.Handler(), st: st, thumbDir: thumbDir, photoDir: photoDir}
 }

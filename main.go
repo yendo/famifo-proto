@@ -79,8 +79,8 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	return c, false, c.Validate()
 }
 
-// pageSize は一覧1ページあたりの枚数。
-const pageSize = 60
+// chunkSize は1塊あたりの枚数。
+const chunkSize = 60
 
 func main() {
 	if err := run(); err != nil {
@@ -112,7 +112,7 @@ func run() error {
 	}
 	defer st.Close()
 
-	srv, err := web.NewServer(st, cfg.ThumbDir(), pageSize, log)
+	srv, err := web.NewServer(st, cfg.ThumbDir(), chunkSize, log)
 	if err != nil {
 		return err
 	}

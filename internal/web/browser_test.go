@@ -56,11 +56,11 @@ const (
 	dockerImage     = "chromedp/headless-shell:latest"
 	debugVersionURL = "http://127.0.0.1:9222/json/version"
 
-	testPageSize = 60
+	testChunkSize = 60
 
 	// deepScrollIndex は「複数の塊を跨いだ、十分に奥」の位置。
 	// 塊を2つ跨いだうえで、境界のちょうど上に止まらないよう半端に足す。
-	deepScrollIndex = testPageSize*2 + 30
+	deepScrollIndex = testChunkSize*2 + 30
 )
 
 // testDayCounts は日ごとの枚数(新しい順)。1枚の日・数枚の日・列数を超える
@@ -296,7 +296,7 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	webSrv, err := web.NewServer(st, thumbDir, testPageSize, log)
+	webSrv, err := web.NewServer(st, thumbDir, testChunkSize, log)
 	if err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
@@ -430,10 +430,10 @@ const rectJS = `(() => {
 //
 // 読み込み直後に、可視範囲が写真で埋まっているかを見る。
 //
-// 注意: サーバは gallery.html の中で最初の1塊（testPageSize枚）を #window に
+// 注意: サーバは gallery.html の中で最初の1塊（testChunkSize枚）を #window に
 // 直接描画して返す。そのため「タイルが存在する」「下端がビューポートを超える」
 // だけを見ると、app.js が一切動かなくても通ってしまう。仮想スクロールが
-// 実際に働いて塊を追加で貼ったこと（tileCount > testPageSize）まで見る。
+// 実際に働いて塊を追加で貼ったこと（tileCount > testChunkSize）まで見る。
 func TestInitialRenderFillsViewport(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
@@ -490,7 +490,7 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 	// "waiting for function failed: timeout" だけになり、何枚あったのかが
 	// 分からない。エラーは受け取っておき、実測してから報告する。
 	pollErr := chromedp.Run(rctx, chromedp.Poll(
-		fmt.Sprintf(`document.querySelectorAll('#window .tile').length > %d`, testPageSize),
+		fmt.Sprintf(`document.querySelectorAll('#window .tile').length > %d`, testChunkSize),
 		nil, chromedp.WithPollingTimeout(10*time.Second)))
 
 	err = chromedp.Run(rctx, chromedp.Evaluate(measureJS, &res))
@@ -502,8 +502,8 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 	require.NoErrorf(t, pollErr,
 		"#windowのタイルが%d枚のまま増えない。サーバが埋めた最初の1塊(%d枚)のままで、"+
 			"仮想スクロールが追加の塊を貼っていない（app.jsが動いていない疑い）",
-		res.TileCount, testPageSize)
-	require.Greater(t, res.TileCount, testPageSize)
+		res.TileCount, testChunkSize)
+	require.Greater(t, res.TileCount, testChunkSize)
 
 	// 「ぎりぎり超えている」を成功とみなすと、ビューポート高やCSSの変更で
 	// 正しい実装のまま落ちる。1行分の余裕を要求する。
@@ -1004,7 +1004,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 
 // --- Task: TestLightboxCrossesChunkBoundary ---
 //
-// ライトボックスの送りが塊(testPageSize枚)の境界で止まらないこと、
+// ライトボックスの送りが塊(testChunkSize枚)の境界で止まらないこと、
 // そして境界の継ぎ目で写真がずれないことを見る。
 //
 // 「srcが前回と変わったか」だけでは、2塊目以降で常に1枚ずれた写真を
@@ -1029,8 +1029,8 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
-	// 塊の境界を2回（testPageSize番目・testPageSize*2番目）跨ぐのに十分な回数。
-	steps := testPageSize*2 + 10
+	// 塊の境界を2回（testChunkSize番目・testChunkSize*2番目）跨ぐのに十分な回数。
+	steps := testChunkSize*2 + 10
 	want := expectedPhotoURLs(steps + 1)
 
 	err := chromedp.Run(rctx,
@@ -1068,10 +1068,10 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 		)
 		require.NoErrorf(t, err,
 			"%d枚目でsrcが変化しなかった（塊の境界=%dで止まっている疑い）: prev=%s",
-			i, testPageSize, prev)
+			i, testChunkSize, prev)
 		require.Equalf(t, want[i], got,
 			"%d枚目の写真が期待と違う（塊の境界=%dでの継ぎ目のずれの疑い）: got=%s want=%s",
-			i, testPageSize, got, want[i])
+			i, testChunkSize, got, want[i])
 		prev = got
 	}
 }
@@ -1719,12 +1719,12 @@ func TestScrollMapsIntoLayoutSpace(t *testing.T) {
 
 // 長いスクロールの再現に使うcorpus。共有corpus(200枚)は塊が4つしかなく、
 // 「通り過ぎた塊の取得が滞留する」状況そのものを作れないため別に用意する。
-// 塊の数(= stallPhotoCount / stallPageSize = 60)が、下まで降りる間に
+// 塊の数(= stallPhotoCount / stallChunkSize = 60)が、下まで降りる間に
 // 積み上がる取得要求の上限になる。
 const (
 	stallPhotoCount = 1200
 	stallPerDay     = 20
-	stallPageSize   = 20
+	stallChunkSize  = 20
 
 	// stallItemDelay は /items 1本あたりの応答時間。フルスキャンでCPUが
 	// 埋まったNASを模す。直列化と併せて「1本ずつ、250msかけて捌く」になる。
@@ -1777,7 +1777,7 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 
 	require.NoError(t, seedStallCorpus(st, photoDir, thumbDir))
 
-	webSrv, err := web.NewServer(st, thumbDir, stallPageSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	webSrv, err := web.NewServer(st, thumbDir, stallChunkSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 
 	var items, dropped int64
@@ -1841,7 +1841,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 	duringScroll := atomic.LoadInt64(itemsSeen)
 
 	// 手を止めてから、一番古い写真が実際に貼られるまでを測る。
-	wantFrom := stallPhotoCount - stallPageSize*3
+	wantFrom := stallPhotoCount - stallChunkSize*3
 	start := time.Now()
 	pollErr := chromedp.Run(rctx, chromedp.Poll(
 		fmt.Sprintf(`famifo.pastedRange().from >= %d`, wantFrom),
@@ -1856,7 +1856,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 
 	t.Logf("追いつくまで %v: /items はスクロール中に%d本、合計%d本（うちブラウザが諦めた%d本、全%d塊）pasted=%d..%d",
 		elapsed.Round(time.Millisecond), duringScroll, atomic.LoadInt64(itemsSeen),
-		atomic.LoadInt64(itemsDropped), stallPhotoCount/stallPageSize, pasted.From, pasted.To)
+		atomic.LoadInt64(itemsDropped), stallPhotoCount/stallChunkSize, pasted.From, pasted.To)
 
 	require.NoErrorf(t, pollErr,
 		"一番古い写真が貼られないまま終わった: pasted=%d..%d (期待 from>=%d) /items=%d本",
@@ -1866,7 +1866,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 			"通り過ぎた塊の取得が中断されず、止まった場所の塊がその後ろに並んでいる。"+
 			"/items はスクロール中に%d本、追いつくまでに合計%d本（全%d塊）",
 		elapsed.Round(time.Millisecond), stallCatchUp,
-		duringScroll, atomic.LoadInt64(itemsSeen), stallPhotoCount/stallPageSize)
+		duringScroll, atomic.LoadInt64(itemsSeen), stallPhotoCount/stallChunkSize)
 }
 
 // --- Task: TestLightboxFetchSurvivesAGridRender ---

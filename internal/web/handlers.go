@@ -12,7 +12,7 @@ import (
 	"github.com/yendo/famifo-proto/internal/store"
 )
 
-// parseWindow はクエリから窓枠の範囲を読む。省略時は先頭から pageSize 件。
+// parseWindow はクエリから窓枠の範囲を読む。省略時は先頭から chunkSize 件。
 func parseWindow(r *http.Request, defaultLimit int) (offset, limit int, err error) {
 	limit = defaultLimit
 	q := r.URL.Query()
@@ -35,7 +35,7 @@ func parseWindow(r *http.Request, defaultLimit int) (offset, limit int, err erro
 // handleGallery はギャラリーのトップページを返す。
 // 先頭の塊を埋めた状態で返すので、開いた直後に灰色の画面が出ない。
 func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
-	items, err := s.buildRange(r, 0, s.pageSize)
+	items, err := s.buildRange(r, 0, s.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -62,7 +62,7 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	view := galleryView{
-		itemsView: items, Total: total, ChunkSize: s.pageSize,
+		itemsView: items, Total: total, ChunkSize: s.chunkSize,
 		DayGroups: template.JS(raw),
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "gallery", view); err != nil {
@@ -75,7 +75,7 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 // handleItems は仮想スクロール用のHTML断片を返す。
 // 初回ページと同じテンプレートを使い、マークアップを1箇所に保つ。
 func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
-	offset, limit, err := parseWindow(r, s.pageSize)
+	offset, limit, err := parseWindow(r, s.chunkSize)
 	if err != nil {
 		http.Error(w, "bad range", http.StatusBadRequest)
 		return

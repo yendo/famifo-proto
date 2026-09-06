@@ -18,21 +18,21 @@ var assets embed.FS
 
 // Server はギャラリーのHTTPハンドラ群を保持する。
 type Server struct {
-	st       *store.Store
-	tmpl     *template.Template
-	thumbDir string
-	pageSize int
-	log      *slog.Logger
+	st        *store.Store
+	tmpl      *template.Template
+	thumbDir  string
+	chunkSize int
+	log       *slog.Logger
 }
 
 // NewServer はテンプレートを読み込んでServerを作る。
-// pageSize は一覧1ページあたりの枚数。
-func NewServer(st *store.Store, thumbDir string, pageSize int, log *slog.Logger) (*Server, error) {
+// chunkSize は1塊あたりの枚数。クライアントはこの単位で取得しキャッシュする。
+func NewServer(st *store.Store, thumbDir string, chunkSize int, log *slog.Logger) (*Server, error) {
 	tmpl, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("テンプレートを読み込めません: %w", err)
 	}
-	return &Server{st: st, tmpl: tmpl, thumbDir: thumbDir, pageSize: pageSize, log: log}, nil
+	return &Server{st: st, tmpl: tmpl, thumbDir: thumbDir, chunkSize: chunkSize, log: log}, nil
 }
 
 // Handler はルーティング済みのハンドラを返す。
