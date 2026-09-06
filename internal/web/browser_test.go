@@ -31,7 +31,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -351,7 +350,7 @@ func writeTestPhoto(path string, i int, takenAt time.Time) error {
 // indexAll は本番と同じ取り込み経路でコーパスをインデックスに載せる。
 // 手でPhotoを組むと、Photoの構造が変わるたびにブラウザテストが巻き添えになる。
 func indexAll(st *store.Store, photoDir string, thumbs *thumb.Provider) (index.Stats, error) {
-	ix := index.New([]string{photoDir}, st, thumbs, runtime.NumCPU(),
+	ix := index.New([]string{photoDir}, st, thumbs, 4,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return ix.FullScan(context.Background())
 }
