@@ -65,7 +65,7 @@ const (
 
 // testDayCounts は日ごとの枚数(新しい順)。1枚の日・数枚の日・列数を超える
 // 大きい日を混ぜる。日ごとの枚数がそのままレイアウトを決めるため、以前の
-// 「1日1枚」のcorpusでは横並びも行占有も検証できない。
+// 「1日1枚」のテスト写真では横並びも行占有も検証できない。
 // デスクトップ幅(1600px)は7列なので、8枚以上の日が行を占有する側になる。
 var testDayCounts = []int{
 	20, 1, 3, 1, 9, 2, 1, 5, 14, 1,
@@ -88,7 +88,7 @@ func dayOfPhoto(i int) string {
 	seen := 0
 	for d, c := range testDayCounts {
 		if i < seen+c {
-			return corpusBase.AddDate(0, 0, -d).Format("2006-01-02")
+			return newestDay.AddDate(0, 0, -d).Format("2006-01-02")
 		}
 		seen += c
 	}
@@ -104,11 +104,11 @@ func dayStartIndex(d int) int {
 	return n
 }
 
-// corpusBase は最も新しい日。seedCorpus と上記2つが共有する。
-var corpusBase = time.Date(2026, 1, 1, 12, 0, 0, 0, time.Local)
+// newestDay は最も新しい日。prepareTestPhotos と上記2つが共有する。
+var newestDay = time.Date(2026, 1, 1, 12, 0, 0, 0, time.Local)
 
-// corpus 自体が壊れると、他のブラウザテストが理由不明で落ちる。先に押さえる。
-func TestCorpusHasMixedDaySizes(t *testing.T) {
+// テスト写真の用意自体が壊れると、他のブラウザテストが理由不明で落ちる。先に押さえる。
+func TestPhotosHaveMixedDaySizes(t *testing.T) {
 	require.Equal(t, 200, testPhotoCount)
 	small, big, single := 0, 0, 0
 	for _, c := range testDayCounts {
@@ -138,7 +138,7 @@ var allocCtx context.Context
 // baseURL はテスト用に起動したアプリのURL（例: http://127.0.0.1:54321）。
 var baseURL string
 
-// testPhotoDir は seedCorpus が写真を書いたディレクトリ。
+// testPhotoDir は prepareTestPhotos が写真を書いたディレクトリ。
 // 期待される写真の並びを再現するために使う。
 var testPhotoDir string
 
@@ -290,7 +290,7 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 		return tempDir, nil, nil, err
 	}
 
-	if err := seedCorpus(st, photoDir, thumbDir); err != nil {
+	if err := prepareTestPhotos(st, photoDir, thumbDir); err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
 	}
@@ -306,18 +306,18 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	return tempDir, srv, func() { st.Close() }, nil
 }
 
-// seedCorpus は testDayCounts のとおりに実画像ファイルを生成して登録する。
+// prepareTestPhotos は testDayCounts のとおりに実画像ファイルを生成して登録する。
 // ユーザーの実ライブラリを読むと実行環境ごとに結果が変わりCIで再現できない
 // ため、写真は常にこの場で作る。1日の中では撮影時刻を1分ずつ古くするので、
 // 通し番号iがそのままギャラリー上の並び順(新しい順)に対応する。
-func seedCorpus(st *store.Store, photoDir, thumbDir string) error {
+func prepareTestPhotos(st *store.Store, photoDir, thumbDir string) error {
 	i := 0
 	for d, count := range testDayCounts {
 		for k := 0; k < count; k++ {
 			name := fmt.Sprintf("p%04d.jpg", i)
 			path := filepath.Join(photoDir, name)
 			// 分単位で戻す。最大30枚なので日をまたがない。
-			takenAt := corpusBase.AddDate(0, 0, -d).Add(-time.Duration(k) * time.Minute)
+			takenAt := newestDay.AddDate(0, 0, -d).Add(-time.Duration(k) * time.Minute)
 			if err := writeTestPhoto(path, i, takenAt); err != nil {
 				return err
 			}
@@ -401,7 +401,7 @@ func scrollToPhotoJS(index int) string {
 
 // expectedPhotoURLs はギャラリーの並び順どおりの原寸URLをn件返す。
 //
-// seedCorpus は p0000.jpg から順に、testDayCounts のとおり日をまたぎながら
+// prepareTestPhotos は p0000.jpg から順に、testDayCounts のとおり日をまたぎながら
 // takenAt を古くしていく（同じ日の中では1分ずつ）。日をまたぐタイミングは
 // 一定ではないが、通し番号の順序自体は常に撮影時刻の新しい順と一致するので、
 // 通し番号がそのまま並び順になる。サーバの ListRange を呼ばずにここで
@@ -765,7 +765,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	// 貼り付け範囲が動かなくなったことを静定とみなす。
 	//
 	// 以前は「貼り付けタイル数 == total - chunkSize」で静定を判定していたが、
-	// この等式は貼り付け窓が最終行まで届くことに依存しており、corpus や
+	// この等式は貼り付け窓が最終行まで届くことに依存しており、テスト写真や
 	// viewport を変えると無言のPollタイムアウトで落ちる（元のコメント参照）。
 	// 総枚数から逆算するのをやめれば、その脆さごと消える。
 	// 「範囲が変わらない」だけでは、render()が塊の取得待ちで早期returnして
@@ -1518,7 +1518,7 @@ func TestSmallDaysSitSideBySide(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Greater(t, sharedRows, 0,
-		"1行に収まる日が横に並んでいない（corpusに1枚・数枚の日が入っているか確認すること）")
+		"1行に収まる日が横に並んでいない（テスト写真に1枚・数枚の日が入っているか確認すること）")
 }
 
 // 列数を超える日が行を占有し、ラベルがその日を指すこと。
@@ -1553,7 +1553,7 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 	require.Equal(t, 7, res.Span, "1600pxは7列。20枚の日は全列を占めること")
 	require.True(t, res.Full, "行を占有する日はグリッドの全幅であること")
 
-	// ラベルはタイルの data-date から作る。corpus の先頭の日と一致すること。
+	// ラベルはタイルの data-date から作る。テスト写真の先頭の日と一致すること。
 	day := dayOfPhoto(0) // "2026-01-01"
 	parts := strings.Split(day, "-")
 	wantMonth, wantDay := strings.TrimLeft(parts[1], "0"), strings.TrimLeft(parts[2], "0")
@@ -1569,13 +1569,13 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 // 気づかれずに残っていた。ここでは中間位置までドラッグし、表示される
 // ラベルの月が、可視範囲の先頭に実際に来た写真の月と一致することを見る。
 //
-// corpus は先頭の日(2026-01-01, 20枚)だけが1月で、残り(testDayCounts[1:])は
-// すべて2025年12月に収まる（corpusBase.AddDate(0,0,-d)がd>=1で前年12月に
+// テスト写真は先頭の日(2026-01-01, 20枚)だけが1月で、残り(testDayCounts[1:])は
+// すべて2025年12月に収まる（newestDay.AddDate(0,0,-d)がd>=1で前年12月に
 // 入るため）。月境界は「先頭の日を過ぎた直後」の1箇所しかないので、
 // スクラバーの中間（frac=0.5）まで下げれば、1行に複数の日が同居しても
 // 月をまたぐ心配がない。
 // 注意: これはドラッグとラベル表示の経路を通すテストであって、座標変換の
-// 正しさは検出できない。月単位で比べており、この corpus の月境界は文書の
+// 正しさは検出できない。月単位で比べており、このテスト写真の月境界は文書の
 // 先頭にしか無いため、48px程度のずれでは答えが変わらない（実測で確認済み）。
 // 座標変換そのものは TestScrollMapsIntoLayoutSpace が押さえている。
 func TestScrubberLabelMatchesTheTopPhoto(t *testing.T) {
@@ -1717,14 +1717,14 @@ func TestScrollMapsIntoLayoutSpace(t *testing.T) {
 
 // --- Task: TestLongScrollDoesNotStallOnSlowServer ---
 
-// 長いスクロールの再現に使うcorpus。共有corpus(200枚)は塊が4つしかなく、
+// 長いスクロールの再現に使う写真。共有の200枚は塊が4つしかなく、
 // 「通り過ぎた塊の取得が滞留する」状況そのものを作れないため別に用意する。
-// 塊の数(= stallPhotoCount / stallChunkSize = 60)が、下まで降りる間に
+// 塊の数(= manyPhotoCount / stallChunkSize = 60)が、下まで降りる間に
 // 積み上がる取得要求の上限になる。
 const (
-	stallPhotoCount = 1200
-	stallPerDay     = 20
-	stallChunkSize  = 20
+	manyPhotoCount = 1200
+	manyPerDay     = 20
+	stallChunkSize = 20
 
 	// stallItemDelay は /items 1本あたりの応答時間。フルスキャンでCPUが
 	// 埋まったNASを模す。直列化と併せて「1本ずつ、250msかけて捌く」になる。
@@ -1738,12 +1738,12 @@ const (
 	stallCatchUp = 4 * time.Second
 )
 
-// seedStallCorpus は stallPhotoCount 枚を stallPerDay 枚ずつの日に分けて登録する。
-func seedStallCorpus(st *store.Store, photoDir, thumbDir string) error {
-	for i := 0; i < stallPhotoCount; i++ {
+// prepareManyTestPhotos は manyPhotoCount 枚を manyPerDay 枚ずつの日に分けて登録する。
+func prepareManyTestPhotos(st *store.Store, photoDir, thumbDir string) error {
+	for i := 0; i < manyPhotoCount; i++ {
 		path := filepath.Join(photoDir, fmt.Sprintf("s%05d.jpg", i))
-		takenAt := corpusBase.AddDate(0, 0, -(i / stallPerDay)).
-			Add(-time.Duration(i%stallPerDay) * time.Minute)
+		takenAt := newestDay.AddDate(0, 0, -(i / manyPerDay)).
+			Add(-time.Duration(i%manyPerDay) * time.Minute)
 		if err := writeTestPhoto(path, i, takenAt); err != nil {
 			return err
 		}
@@ -1753,8 +1753,8 @@ func seedStallCorpus(st *store.Store, photoDir, thumbDir string) error {
 		return err
 	}
 	// 滞留の再現には全件が載っている必要がある。1枚でも欠けると本数が変わる。
-	if stats.Indexed != stallPhotoCount {
-		return fmt.Errorf("取り込めた枚数が足りません: %d/%d", stats.Indexed, stallPhotoCount)
+	if stats.Indexed != manyPhotoCount {
+		return fmt.Errorf("取り込めた枚数が足りません: %d/%d", stats.Indexed, manyPhotoCount)
 	}
 	return nil
 }
@@ -1775,7 +1775,7 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	require.NoError(t, seedStallCorpus(st, photoDir, thumbDir))
+	require.NoError(t, prepareManyTestPhotos(st, photoDir, thumbDir))
 
 	webSrv, err := web.NewServer(st, thumbDir, stallChunkSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
@@ -1841,7 +1841,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 	duringScroll := atomic.LoadInt64(itemsSeen)
 
 	// 手を止めてから、一番古い写真が実際に貼られるまでを測る。
-	wantFrom := stallPhotoCount - stallChunkSize*3
+	wantFrom := manyPhotoCount - stallChunkSize*3
 	start := time.Now()
 	pollErr := chromedp.Run(rctx, chromedp.Poll(
 		fmt.Sprintf(`famifo.pastedRange().from >= %d`, wantFrom),
@@ -1856,7 +1856,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 
 	t.Logf("追いつくまで %v: /items はスクロール中に%d本、合計%d本（うちブラウザが諦めた%d本、全%d塊）pasted=%d..%d",
 		elapsed.Round(time.Millisecond), duringScroll, atomic.LoadInt64(itemsSeen),
-		atomic.LoadInt64(itemsDropped), stallPhotoCount/stallChunkSize, pasted.From, pasted.To)
+		atomic.LoadInt64(itemsDropped), manyPhotoCount/stallChunkSize, pasted.From, pasted.To)
 
 	require.NoErrorf(t, pollErr,
 		"一番古い写真が貼られないまま終わった: pasted=%d..%d (期待 from>=%d) /items=%d本",
@@ -1866,7 +1866,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 			"通り過ぎた塊の取得が中断されず、止まった場所の塊がその後ろに並んでいる。"+
 			"/items はスクロール中に%d本、追いつくまでに合計%d本（全%d塊）",
 		elapsed.Round(time.Millisecond), stallCatchUp,
-		duringScroll, atomic.LoadInt64(itemsSeen), stallPhotoCount/stallChunkSize)
+		duringScroll, atomic.LoadInt64(itemsSeen), manyPhotoCount/stallChunkSize)
 }
 
 // --- Task: TestLightboxFetchSurvivesAGridRender ---
