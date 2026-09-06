@@ -14,14 +14,15 @@ import (
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
+	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 type fixture struct {
-	ix       *index.Indexer
-	st       *store.Store
-	thumbDir string
-	root     string
-	log      *slog.Logger
+	ix     *index.Indexer
+	st     *store.Store
+	thumbs *thumb.Provider
+	root   string
+	log    *slog.Logger
 }
 
 // thumbPath は src の写真のサムネイルが置かれるパスを返す。
@@ -30,7 +31,7 @@ func (f *fixture) thumbPath(t *testing.T, src string) string {
 	t.Helper()
 	fi, err := os.Stat(src)
 	require.NoError(t, err)
-	return photo.FamifoThumbPath(f.thumbDir, photo.IDFor(src), fi.ModTime())
+	return f.thumbs.GeneratedPath(photo.Restore(src, fi.ModTime(), fi.ModTime()))
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -43,12 +44,12 @@ func newFixture(t *testing.T) *fixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	thumbDir := filepath.Join(base, "thumbs")
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix, err := index.New([]string{root}, st, thumbDir, log)
+	thumbs, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
 	require.NoError(t, err)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ix := index.New([]string{root}, st, thumbs, log)
 
-	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: root, log: log}
+	return &fixture{ix: ix, st: st, thumbs: thumbs, root: root, log: log}
 }
 
 // newFixtureRoots は複数のルートを持つ fixture を作る。roots[0] が f.root。
@@ -67,12 +68,12 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	thumbDir := filepath.Join(base, "thumbs")
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix, err := index.New(roots, st, thumbDir, log)
+	thumbs, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
 	require.NoError(t, err)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ix := index.New(roots, st, thumbs, log)
 
-	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: roots[0], log: log}, roots
+	return &fixture{ix: ix, st: st, thumbs: thumbs, root: roots[0], log: log}, roots
 }
 
 func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
@@ -84,13 +85,12 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path())
-	require.Equal(t, photo.ThumbFamifo, got.ThumbSource())
-	require.FileExists(t, f.thumbPath(t, path))
+	require.FileExists(t, f.thumbPath(t, path), "借りられないので自前で作る")
 }
 
 // TestIndexFileAppliesTheEXIFOrientationToTheThumbnail はEXIFから読んだ向きが
 // サムネイル生成まで届いていることを確かめる。読み取り(internal/index/exif)と
-// 適用(internal/index/thumb)は別パッケージなので、繋ぎ違えても双方のテストは通る。
+// 適用(internal/thumb)は別パッケージなので、繋ぎ違えても双方のテストは通る。
 func TestIndexFileAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
 	f := newFixture(t)
 	// 縮小されない小ささにして、向きの適用が寸法にそのまま出るようにする。
@@ -113,8 +113,8 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, photo.ThumbNone, got.ThumbSource(), "HEICはデコードできない")
-	require.NoFileExists(t, f.thumbPath(t, path))
+	require.Equal(t, path, got.Path(), "サムネイルが無くてもインデックスには載せる")
+	require.NoFileExists(t, f.thumbPath(t, path), "HEICはデコードできない")
 }
 
 func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
@@ -193,8 +193,9 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, photo.ThumbSyno, got.ThumbSource())
 	require.NoFileExists(t, f.thumbPath(t, path), "借りられるなら自前では作らない")
+	small, _, _ := f.thumbs.SmallPath(got)
+	require.Equal(t, synology.ThumbMPath(path), small, "一覧には借りたものが出る")
 }
 
 // HEICはGoでデコードできないが、Synologyのサムネイルがあれば一覧に出せる。
@@ -208,7 +209,9 @@ func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, photo.ThumbSyno, got.ThumbSource())
+	small, _, _ := f.thumbs.SmallPath(got)
+	require.Equal(t, synology.ThumbMPath(path), small,
+		"自前でデコードできなくても、借りられれば一覧に出せる")
 }
 
 // DSM 7.3 がHEICのデコードに失敗すると .fail だけが残る。famifoも作れないので
@@ -225,7 +228,9 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, photo.ThumbNone, got.ThumbSource())
+	require.NoFileExists(t, f.thumbPath(t, path))
+	_, _, ok := f.thumbs.SmallPath(got)
+	require.False(t, ok, ".fail しか無ければ一覧に出せるものが無い")
 }
 
 // famifoはSynology Photosの領域に書き込まない。消しもしない。

@@ -11,10 +11,16 @@ import (
 	"net/http"
 
 	"github.com/yendo/famifo-proto/internal/store"
+	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 //go:embed templates static
 var assets embed.FS
+
+// noPreview は出せる絵が無い写真のタイルに配るプレースホルダ。
+//
+//go:embed static/no-preview.svg
+var noPreview []byte
 
 // defaultChunkSize は仮想スクロールが1回に取る塊の枚数。
 //
@@ -30,19 +36,22 @@ const defaultChunkSize = 120
 type Server struct {
 	st        *store.Store
 	tmpl      *template.Template
-	thumbDir  string
+	thumbs    *thumb.Provider
 	chunkSize int
 	log       *slog.Logger
 }
 
 // NewServer はテンプレートを読み込んでServerを作る。
 // 塊の大きさは defaultChunkSize に任せる。利用者が変えられる設定ではない。
-func NewServer(st *store.Store, thumbDir string, log *slog.Logger) (*Server, error) {
+//
+// thumbs は取り込み側と共有する。配信するファイルの選択はすべてそこが決めるので、
+// サーバーはサムネイルの置き場所を知らない。
+func NewServer(st *store.Store, thumbs *thumb.Provider, log *slog.Logger) (*Server, error) {
 	tmpl, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("テンプレートを読み込めません: %w", err)
 	}
-	return &Server{st: st, tmpl: tmpl, thumbDir: thumbDir, chunkSize: defaultChunkSize, log: log}, nil
+	return &Server{st: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, log: log}, nil
 }
 
 // Handler はルーティング済みのハンドラを返す。

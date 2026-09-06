@@ -205,8 +205,7 @@ func TestFullScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 	require.NoError(t, err)
 
 	// bob を引数から外して起動し直した状況を模す
-	f2, err := index.New(roots[:1], f.st, f.thumbDir, f.log)
-	require.NoError(t, err)
+	f2 := index.New(roots[:1], f.st, f.thumbs, f.log)
 
 	stats, err := f2.FullScan(ctx)
 

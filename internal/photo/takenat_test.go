@@ -11,7 +11,7 @@ import (
 // newWithEXIFDate は撮影日時だけを変えて1枚を組み立てる。
 func newWithEXIFDate(exifTakenAt time.Time) photo.Photo {
 	return photo.New("/photos/a.jpg",
-		fakeFileInfo{modTime: testModTime, size: 1234}, exifTakenAt, photo.ThumbNone)
+		fakeFileInfo{modTime: testModTime}, exifTakenAt)
 }
 
 func TestNewUsesTheEXIFDateWhenPresent(t *testing.T) {
@@ -34,7 +34,7 @@ func TestNewAssumesLocalWhenTheEXIFDateHasNoOffset(t *testing.T) {
 	time.Local = time.FixedZone("JST", 9*60*60)
 	t.Cleanup(func() { time.Local = orig })
 
-	// internal/index/exif は時差を持たないEXIF日時をUTCとして返す。
+	// 時差を持たないEXIF日時は、読み取り側からUTCとして渡ってくる。
 	p := newWithEXIFDate(time.Date(2025, 5, 24, 9, 8, 31, 0, time.UTC))
 
 	want := time.Date(2025, 5, 24, 9, 8, 31, 0, time.Local)

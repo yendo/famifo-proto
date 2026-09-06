@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/synology"
 )
 
@@ -98,7 +98,7 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 			return // すぐ消された等。何もしない
 		}
 		if !fi.IsDir() {
-			if photo.IsSupportedFile(ev.Name) {
+			if imagefmt.IsSupported(ev.Name) {
 				pending[ev.Name] = time.Now()
 			}
 			return
@@ -111,7 +111,7 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 		w.enqueueTree(ev.Name, pending)
 
 	case ev.Has(fsnotify.Write):
-		if photo.IsSupportedFile(ev.Name) {
+		if imagefmt.IsSupported(ev.Name) {
 			pending[ev.Name] = time.Now()
 		}
 	}
@@ -179,7 +179,7 @@ func (w *Watcher) enqueueTree(root string, pending map[string]time.Time) {
 			}
 			return nil
 		}
-		if !photo.IsSupportedFile(path) {
+		if !imagefmt.IsSupported(path) {
 			return nil
 		}
 		pending[path] = now

@@ -47,6 +47,7 @@ import (
 	"github.com/yendo/famifo-proto/internal/index"
 	"github.com/yendo/famifo-proto/internal/photo"
 	"github.com/yendo/famifo-proto/internal/store"
+	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 const (
@@ -280,8 +281,11 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 
 	photoDir := filepath.Join(tempDir, "photos")
 	testPhotoDir = photoDir
-	thumbDir := filepath.Join(tempDir, "thumbs")
 	if err := os.MkdirAll(photoDir, 0o755); err != nil {
+		return tempDir, nil, nil, err
+	}
+	thumbs, err := thumb.NewProvider(filepath.Join(tempDir, "thumbs"))
+	if err != nil {
 		return tempDir, nil, nil, err
 	}
 
@@ -290,13 +294,13 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 		return tempDir, nil, nil, err
 	}
 
-	if err := prepareTestPhotos(st, photoDir, thumbDir); err != nil {
+	if err := prepareTestPhotos(st, photoDir, thumbs); err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	webSrv, err := web.NewServer(st, thumbDir, log)
+	webSrv, err := web.NewServer(st, thumbs, log)
 	if err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
@@ -311,7 +315,7 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 // ユーザーの実ライブラリを読むと実行環境ごとに結果が変わりCIで再現できない
 // ため、写真は常にこの場で作る。1日の中では撮影時刻を1分ずつ古くするので、
 // 通し番号iがそのままギャラリー上の並び順(新しい順)に対応する。
-func prepareTestPhotos(st *store.Store, photoDir, thumbDir string) error {
+func prepareTestPhotos(st *store.Store, photoDir string, thumbs *thumb.Provider) error {
 	i := 0
 	for d, count := range testDayCounts {
 		for k := 0; k < count; k++ {
@@ -325,7 +329,7 @@ func prepareTestPhotos(st *store.Store, photoDir, thumbDir string) error {
 			i++
 		}
 	}
-	if _, err := indexAll(st, photoDir, thumbDir); err != nil {
+	if _, err := indexAll(st, photoDir, thumbs); err != nil {
 		return err
 	}
 	return nil
@@ -345,12 +349,9 @@ func writeTestPhoto(path string, i int, takenAt time.Time) error {
 
 // indexAll は本番と同じ取り込み経路でコーパスをインデックスに載せる。
 // 手でPhotoを組むと、Photoの構造が変わるたびにブラウザテストが巻き添えになる。
-func indexAll(st *store.Store, photoDir, thumbDir string) (index.Stats, error) {
-	ix, err := index.New([]string{photoDir}, st, thumbDir,
+func indexAll(st *store.Store, photoDir string, thumbs *thumb.Provider) (index.Stats, error) {
+	ix := index.New([]string{photoDir}, st, thumbs,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		return index.Stats{}, err
-	}
 	return ix.FullScan(context.Background())
 }
 
@@ -1740,7 +1741,7 @@ const (
 )
 
 // prepareManyTestPhotos は manyPhotoCount 枚を manyPerDay 枚ずつの日に分けて登録する。
-func prepareManyTestPhotos(st *store.Store, photoDir, thumbDir string) error {
+func prepareManyTestPhotos(st *store.Store, photoDir string, thumbs *thumb.Provider) error {
 	for i := 0; i < manyPhotoCount; i++ {
 		path := filepath.Join(photoDir, fmt.Sprintf("s%05d.jpg", i))
 		takenAt := newestDay.AddDate(0, 0, -(i / manyPerDay)).
@@ -1749,7 +1750,7 @@ func prepareManyTestPhotos(st *store.Store, photoDir, thumbDir string) error {
 			return err
 		}
 	}
-	stats, err := indexAll(st, photoDir, thumbDir)
+	stats, err := indexAll(st, photoDir, thumbs)
 	if err != nil {
 		return err
 	}
@@ -1769,16 +1770,17 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 
 	tempDir := t.TempDir()
 	photoDir := filepath.Join(tempDir, "photos")
-	thumbDir := filepath.Join(tempDir, "thumbs")
 	require.NoError(t, os.MkdirAll(photoDir, 0o755))
+	thumbs, err := thumb.NewProvider(filepath.Join(tempDir, "thumbs"))
+	require.NoError(t, err)
 
 	st, err := store.Open(filepath.Join(tempDir, "stall.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	require.NoError(t, prepareManyTestPhotos(st, photoDir, thumbDir))
+	require.NoError(t, prepareManyTestPhotos(st, photoDir, thumbs))
 
-	webSrv, err := web.NewServer(st, thumbDir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	webSrv, err := web.NewServer(st, thumbs, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 	webSrv.SetChunkSize(stallChunkSize)
 
