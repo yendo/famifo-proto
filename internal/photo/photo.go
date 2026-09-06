@@ -31,11 +31,11 @@ type Photo struct {
 // New はインデックスに載せる1枚を組み立てる。
 // IDと撮影日時はパスとファイル情報から導く。
 //
-// exifTakenAt は internal/index/exif が読んだEXIFの撮影日時で、ゼロ値は
-// 「EXIFに無い」ことを表す。
+// exifTakenAt はEXIFの撮影日時（DateTimeOriginal）。
+// ゼロ値は「EXIFに無い」ことを表す。
 //
 // サムネイルの調達より先に組み立てる。ModTime が原本の版であり、
-// internal/thumb はそれを見て出力の名前を決めるため。
+// サムネイルの置き場所はその版から決まるため。
 func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
 	return Photo{
 		id:      IDFor(path),

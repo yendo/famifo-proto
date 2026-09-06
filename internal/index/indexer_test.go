@@ -90,7 +90,7 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 
 // TestIndexFileAppliesTheEXIFOrientationToTheThumbnail はEXIFから読んだ向きが
 // サムネイル生成まで届いていることを確かめる。読み取り(internal/index/exif)と
-// 適用(internal/index/thumb)は別パッケージなので、繋ぎ違えても双方のテストは通る。
+// 適用(internal/thumb)は別パッケージなので、繋ぎ違えても双方のテストは通る。
 func TestIndexFileAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
 	f := newFixture(t)
 	// 縮小されない小ささにして、向きの適用が寸法にそのまま出るようにする。

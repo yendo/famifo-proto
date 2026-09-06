@@ -170,7 +170,7 @@ func (pv *Provider) Prepare(p photo.Photo, orientation uint16) error {
 // generate は p の原本からサムネイルを作る。
 // デコードできないファイルはエラーを返し、サムネイルは何も残さない。
 //
-// orientation は internal/index/exif が読んだEXIFの向き。image.Decode はEXIFを見ずに
+// orientation はEXIFの向き（Orientation、1..8）。image.Decode はEXIFを見ずに
 // 生の画素を返し、jpeg.Encode はEXIFを書き出さないため、ここで適用しないと
 // 向きの情報はサムネイルから完全に失われる。1..8以外は回転不要として扱う。
 //
