@@ -33,19 +33,10 @@ var testModTime = time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
 func TestNewFillsTheFieldsFromThePathAndFileInfo(t *testing.T) {
 	const path = "/photos/A.JPG"
 
-	p := photo.New(path, fakeFileInfo{modTime: testModTime, size: 1234}, time.Time{}, photo.ThumbNone)
+	p := photo.New(path, fakeFileInfo{modTime: testModTime, size: 1234}, time.Time{})
 
 	require.Equal(t, photo.IDFor(path), p.ID(), "IDはパスから導く")
 	require.Equal(t, path, p.Path())
 	require.Equal(t, int64(1234), p.Size())
 	require.True(t, p.ModTime().Equal(testModTime))
-}
-
-// 出どころはそのまま持ち回るだけで、Photoは中身を解釈しない。
-// どのファイルを配信するかを決めるのは internal/thumb である。
-func TestThumbSourceIsCarriedThrough(t *testing.T) {
-	for _, src := range []photo.ThumbSource{photo.ThumbNone, photo.ThumbFamifo, photo.ThumbSyno} {
-		p := photo.Restore("/photos/a.jpg", testModTime, testModTime, 0, src)
-		require.Equal(t, src, p.ThumbSource())
-	}
 }

@@ -24,11 +24,7 @@ func openTestStore(t *testing.T) *store.Store {
 }
 
 func photoAt(path string, takenAt time.Time) photo.Photo {
-	return photoWithThumb(path, takenAt, photo.ThumbFamifo)
-}
-
-func photoWithThumb(path string, takenAt time.Time, thumbSource photo.ThumbSource) photo.Photo {
-	return photo.Restore(path, takenAt, takenAt, 1234, thumbSource)
+	return photo.Restore(path, takenAt, takenAt, 1234)
 }
 
 // store.Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
@@ -72,7 +68,7 @@ func TestUpsertThenGetByID(t *testing.T) {
 	require.Equal(t, want.Path(), got.Path())
 	require.Equal(t, want.TakenAt().Unix(), got.TakenAt().Unix())
 	require.Equal(t, want.Size(), got.Size())
-	require.Equal(t, photo.ThumbFamifo, got.ThumbSource())
+	require.Equal(t, want.ModTime().Unix(), got.ModTime().Unix())
 }
 
 func TestUpsertReplacesExistingRow(t *testing.T) {
@@ -81,13 +77,12 @@ func TestUpsertReplacesExistingRow(t *testing.T) {
 	p := photoAt("/photos/a.jpg", time.Unix(1600000000, 0))
 	require.NoError(t, s.Upsert(ctx, p))
 
-	p = photoWithThumb(p.Path(), time.Unix(1700000000, 0), photo.ThumbNone)
+	p = photoAt(p.Path(), time.Unix(1700000000, 0))
 	require.NoError(t, s.Upsert(ctx, p))
 
 	got, err := s.GetByID(ctx, p.ID())
 	require.NoError(t, err)
 	require.Equal(t, int64(1700000000), got.TakenAt().Unix())
-	require.Equal(t, photo.ThumbNone, got.ThumbSource())
 
 	n, err := s.Count(ctx)
 	require.NoError(t, err)
@@ -111,8 +106,7 @@ func TestDeleteByPath(t *testing.T) {
 	got, ok, err := s.DeleteByPath(ctx, p.Path())
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, p.ID(), got.ID())
-	require.Equal(t, photo.ThumbFamifo, got.ThumbSource()) // サムネイル削除の判断に使う
+	require.Equal(t, p.ID(), got.ID()) // 呼び出し側はこのIDでサムネイルを消す
 
 	_, ok, err = s.DeleteByPath(ctx, p.Path())
 	require.NoError(t, err)
@@ -142,7 +136,7 @@ func TestAllPaths(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 	p := photo.Restore("/photos/a.jpg",
-		time.Unix(1600000000, 0), time.Unix(1650000000, 0), 1234, photo.ThumbFamifo)
+		time.Unix(1600000000, 0), time.Unix(1650000000, 0), 1234)
 	require.NoError(t, s.Upsert(ctx, p))
 
 	got, err := s.AllPaths(ctx)
@@ -319,21 +313,5 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 				"offset=%d の写真は %s のはず", offset, g.Date)
 			offset++
 		}
-	}
-}
-
-func TestUpsertRoundTripsEveryThumbSource(t *testing.T) {
-	s := openTestStore(t)
-	ctx := context.Background()
-
-	for _, thumbSource := range []photo.ThumbSource{photo.ThumbNone, photo.ThumbFamifo, photo.ThumbSyno} {
-		t.Run(string(thumbSource), func(t *testing.T) {
-			p := photoWithThumb("/photos/"+string(thumbSource)+".jpg", time.Unix(1600000000, 0), thumbSource)
-			require.NoError(t, s.Upsert(ctx, p))
-
-			got, err := s.GetByID(ctx, p.ID())
-			require.NoError(t, err)
-			require.Equal(t, thumbSource, got.ThumbSource())
-		})
 	}
 }

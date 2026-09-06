@@ -46,21 +46,29 @@ func newWebFixture(t *testing.T, chunkSize int) *webFixture {
 	return &webFixture{h: srv.Handler(), st: st, thumbs: thumbs, photoDir: photoDir}
 }
 
-// addPhoto は原本ファイルとDB行を用意する。出どころに応じてサムネイルも置く。
-func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, thumbSource photo.ThumbSource) photo.Photo {
+// thumbKind は addPhoto がどのサムネイルをディスクに置くかを指定する。
+// 出どころはDBの列ではなくファイルの有無で決まるので、テストが用意するのもファイルである。
+type thumbKind int
+
+const (
+	noThumb     thumbKind = iota // 借りるものも作ったものも無い
+	famifoThumb                  // 自前で生成したものがある
+	eadirThumb                   // Synologyのものが @eaDir にある
+)
+
+// addPhoto は原本ファイルとDB行を用意する。kind に応じてサムネイルも置く。
+func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, kind thumbKind) photo.Photo {
 	t.Helper()
 	path := filepath.Join(f.photoDir, name)
 	require.NoError(t, os.WriteFile(path, []byte("original-"+name), 0o644))
 
-	p := photo.Restore(path, takenAt, takenAt, 10, thumbSource)
+	p := photo.Restore(path, takenAt, takenAt, 10)
 	require.NoError(t, f.st.Upsert(context.Background(), p))
 
-	switch thumbSource {
-	case photo.ThumbFamifo:
-		thumbPath, ok := f.thumbs.SmallPath(p)
-		require.True(t, ok)
-		writeFileAt(t, thumbPath, "thumb-"+name)
-	case photo.ThumbSyno:
+	switch kind {
+	case famifoThumb:
+		writeFileAt(t, f.thumbs.GeneratedPath(p), "thumb-"+name)
+	case eadirThumb:
 		writeFileAt(t, synology.ThumbMPath(path), "eadir-"+name)
 		writeFileAt(t, synology.ThumbXLPath(path), "eadir-xl-"+name)
 	}
@@ -83,7 +91,7 @@ func do(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder 
 
 func TestServeThumb(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	rec := do(t, f.h, "/thumb/"+p.ID())
 
@@ -99,18 +107,37 @@ func TestServeThumbNotFoundForUnknownID(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
-func TestServeThumbNotFoundWhenPhotoHasNone(t *testing.T) {
+// 出せるサムネイルが無ければ原本に落ちる。一覧のタイルは出どころによらず
+// /thumb/ を指すので、ここで404にすると穴が開く。
+func TestServeThumbFallsBackToTheOriginal(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbNone)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
 	rec := do(t, f.h, "/thumb/"+p.ID())
 
-	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "original-a.heic", rec.Body.String())
+	require.Equal(t, "image/heic", rec.Header().Get("Content-Type"))
+}
+
+// 取り込みのあとでDSMがサムネイルを作った場合。出どころをDBに焼いていたころは、
+// 再取り込みされない限り原本を配信し続けていた。
+func TestServeThumbPicksUpAThumbThatAppearsAfterIndexing(t *testing.T) {
+	f := newWebFixture(t, 10)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
+	require.Equal(t, "original-a.heic", do(t, f.h, "/thumb/"+p.ID()).Body.String())
+
+	writeFileAt(t, synology.ThumbMPath(p.Path()), "eadir-a.heic")
+
+	rec := do(t, f.h, "/thumb/"+p.ID())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "eadir-a.heic", rec.Body.String(), "取り込み直さなくても切り替わる")
 }
 
 func TestServeOriginal(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbFamifo)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	rec := do(t, f.h, "/photo/"+p.ID())
 
@@ -121,7 +148,7 @@ func TestServeOriginal(t *testing.T) {
 
 func TestServeOriginalSetsHEICContentType(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbNone)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
 	rec := do(t, f.h, "/photo/"+p.ID())
 
@@ -157,7 +184,7 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 
 func TestServeThumbFromEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbSyno)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
 	rec := do(t, f.h, "/thumb/"+p.ID())
 
@@ -167,7 +194,7 @@ func TestServeThumbFromEaDir(t *testing.T) {
 
 func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), photo.ThumbSyno)
+	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
 	rec := do(t, f.h, "/photo/"+p.ID())
 
@@ -180,7 +207,7 @@ func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 
 func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), photo.ThumbSyno)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), eadirThumb)
 
 	rec := do(t, f.h, "/photo/"+p.ID())
 

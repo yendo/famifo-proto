@@ -58,12 +58,13 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	// 決まるので、写真1枚につきEXIFのパースは1回で済む。
 	m := exif.Read(path)
 
-	thumbSource, err := ix.thumbs.ResolveSource(path, m.Orientation)
-	if err != nil {
+	// Photoを先に組み立てる。ModTime が原本の版であり、thumb はそれを見て出力の
+	// 名前を決める。ここで確定させておけば、インデックスに載る版とサムネイルの
+	// 名前に入る版が食い違いようがない。
+	p := photo.New(path, fi, m.TakenAt)
+	if err := ix.thumbs.Prepare(p, m.Orientation); err != nil {
 		return err
 	}
-
-	p := photo.New(path, fi, m.TakenAt, thumbSource)
 	return ix.st.Upsert(ctx, p)
 }
 

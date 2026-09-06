@@ -31,10 +31,7 @@ func (f *fixture) thumbPath(t *testing.T, src string) string {
 	t.Helper()
 	fi, err := os.Stat(src)
 	require.NoError(t, err)
-	path, ok := f.thumbs.SmallPath(
-		photo.Restore(src, fi.ModTime(), fi.ModTime(), fi.Size(), photo.ThumbFamifo))
-	require.True(t, ok)
-	return path
+	return f.thumbs.GeneratedPath(photo.Restore(src, fi.ModTime(), fi.ModTime(), fi.Size()))
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -88,8 +85,7 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path())
-	require.Equal(t, photo.ThumbFamifo, got.ThumbSource())
-	require.FileExists(t, f.thumbPath(t, path))
+	require.FileExists(t, f.thumbPath(t, path), "借りられないので自前で作る")
 }
 
 // TestIndexFileAppliesTheEXIFOrientationToTheThumbnail はEXIFから読んだ向きが
@@ -117,8 +113,8 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, photo.ThumbNone, got.ThumbSource(), "HEICはデコードできない")
-	require.NoFileExists(t, f.thumbPath(t, path))
+	require.Equal(t, path, got.Path(), "サムネイルが無くてもインデックスには載せる")
+	require.NoFileExists(t, f.thumbPath(t, path), "HEICはデコードできない")
 }
 
 func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
@@ -197,8 +193,9 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, photo.ThumbSyno, got.ThumbSource())
 	require.NoFileExists(t, f.thumbPath(t, path), "借りられるなら自前では作らない")
+	small, _ := f.thumbs.SmallPath(got)
+	require.Equal(t, synology.ThumbMPath(path), small, "一覧には借りたものが出る")
 }
 
 // HEICはGoでデコードできないが、Synologyのサムネイルがあれば一覧に出せる。
@@ -212,7 +209,9 @@ func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, photo.ThumbSyno, got.ThumbSource())
+	small, _ := f.thumbs.SmallPath(got)
+	require.Equal(t, synology.ThumbMPath(path), small,
+		"自前でデコードできなくても、借りられれば一覧に出せる")
 }
 
 // DSM 7.3 がHEICのデコードに失敗すると .fail だけが残る。famifoも作れないので
@@ -229,7 +228,9 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, photo.ThumbNone, got.ThumbSource())
+	require.NoFileExists(t, f.thumbPath(t, path))
+	small, _ := f.thumbs.SmallPath(got)
+	require.Equal(t, path, small, ".fail しか無ければ原本に落ちる")
 }
 
 // famifoはSynology Photosの領域に書き込まない。消しもしない。

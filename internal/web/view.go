@@ -44,18 +44,16 @@ func (s *Server) buildRange(r *http.Request, offset, limit int) (itemsView, erro
 		return itemsView{}, err
 	}
 
+	// タイルのURLは出どころによらず /thumb/ である。どのファイルを出すかは
+	// ハンドラが調べるので、一覧の組み立てではファイルシステムを叩かない。
 	v := itemsView{Photos: make([]photoView, 0, len(photos))}
 	for _, p := range photos {
-		pv := photoView{
+		v.Photos = append(v.Photos, photoView{
 			ID:       p.ID(),
 			FullURL:  "/photo/" + p.ID(),
-			ThumbURL: "/photo/" + p.ID(),
+			ThumbURL: "/thumb/" + p.ID(),
 			Date:     p.TakenAt().Format("2006-01-02"),
-		}
-		if _, ok := s.thumbs.SmallPath(p); ok {
-			pv.ThumbURL = "/thumb/" + p.ID()
-		}
-		v.Photos = append(v.Photos, pv)
+		})
 	}
 	return v, nil
 }

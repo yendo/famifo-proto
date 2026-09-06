@@ -77,68 +77,87 @@ func (pv *Provider) path(id string, srcModTime time.Time) string {
 	return filepath.Join(pv.shardDir(id), fmt.Sprintf("%s-%d.jpg", id, srcModTime.Unix()))
 }
 
-// SmallPath は一覧に出すサムネイルのパスを返す。無ければ ok=false。
-// ok=false のとき、一覧は原本のURLにフォールバックし、/thumb/ エンドポイントは404を返す。
-func (pv *Provider) SmallPath(p photo.Photo) (string, bool) {
-	switch p.ThumbSource() {
-	case photo.ThumbFamifo:
-		return pv.path(p.ID(), p.ModTime()), true
-	case photo.ThumbSyno:
-		return synology.ThumbMPath(p.Path()), true
+// GeneratedPath は自前で生成したサムネイルの置き場所を返す。実在するとは限らない。
+// Prepare が書き込む先であり、置き場を掃除する道具が同じ規則で引くために公開する。
+func (pv *Provider) GeneratedPath(p photo.Photo) string {
+	return pv.path(p.ID(), p.ModTime())
+}
+
+// SmallPath は一覧のタイルに配信するファイルのパスと、そのMIMEタイプを返す。
+//
+// 出どころはDBに持たず、配信のたびに調べる。取り込み時点の判断を焼き付けると、
+// あとからDSMがサムネイルを作っても（原本のmtimeが動かない限り再取り込みされないため）
+// 永久に反映されない。
+//
+// @eaDir を先に見るのは、実際のライブラリではHEICもJPEGもほぼ全てにSynologyの
+// サムネイルがあり、取り込み時に借りる側を優先しているぶん自前の置き場がほぼ空になる
+// ためである。先に自分の置き場を見ると大半のタイルで空振りする。
+//
+// どちらも無ければ原本に落ちる。必ず何かを返す。
+func (pv *Provider) SmallPath(p photo.Photo) (path, contentType string) {
+	if synology.HasThumbM(p.Path()) {
+		m := synology.ThumbMPath(p.Path())
+		return m, imagefmt.ContentType(m)
 	}
-	return "", false
+	if out := pv.GeneratedPath(p); isRegularFile(out) {
+		return out, imagefmt.ContentType(out)
+	}
+	// ここへ来た時点で借りるものが無いことは確かめてあるので、LargePath に
+	// 訊き直しても原本しか返らない。@eaDir をもう一度 stat せずに済ませる。
+	return p.Path(), imagefmt.ContentType(p.Path())
 }
 
 // LargePath は拡大表示に配信するファイルのパスと、そのMIMEタイプを返す。
 //
-// HEICはSafari以外のブラウザが表示できない。@eaDir から借りているなら原本ではなく
-// SynologyのXL（長辺1707px）を返す。thumb_source が eadir であればMがあり、MとXLは
-// 同じ生成器が一緒に書くので、XLの存在はそこから導ける。
+// HEICはSafari以外のブラウザが表示できない。@eaDir から借りられるなら原本ではなく
+// SynologyのXL（長辺1707px）を返す。存在を確かめるのはMだけで、MとXLは同じ生成器が
+// 一緒に書くので、XLの存在はそこから導ける。
 //
 // 借りたXLは .jpg なので、原本がHEICでもMIMEは image/jpeg になる。呼び出し側が
 // 選ばれたパスからMIMEを引き直さずに済むよう、ここで一緒に返す。
 func (pv *Provider) LargePath(p photo.Photo) (path, contentType string) {
 	path = p.Path()
 	if imagefmt.IsSupported(path) && !imagefmt.IsDecodable(path) &&
-		p.ThumbSource() == photo.ThumbSyno {
+		synology.HasThumbM(p.Path()) {
 		path = synology.ThumbXLPath(p.Path())
 	}
 	return path, imagefmt.ContentType(path)
 }
 
-// ResolveSource は写真1枚のサムネイルの出どころを確定させて返す。
+// Prepare は写真1枚ぶんのサムネイルを配信できる状態にする。
+//
+// 呼び終わると、自分の置き場にはこの写真の現在の版が1つだけあるか、1つも無い。
+// 「サムネイルがある」ことは保証しない。
 //
 // Synologyが作ったものがあれば借りる。デコードもリサイズもせずに済み、famifoが
 // デコードできないHEICも一覧に出せるようになる。@eaDir は読むだけで、書き込みも
 // 削除もしない。
 //
-// 借りられず自前でも作れない写真（サムネイルの無いHEIC等）は ThumbNone を返す。
-// 一覧は原本のURLにフォールバックする。
+// 借りられず自前でも作れない写真（サムネイルの無いHEIC等）には何も残さない。
+// 出せるものが無いことはエラーではなく、配信側が原本に落ちる。
 //
-// 生成に失敗した場合はエラーを返す。インデックスに載せるかどうかは呼び出し側の
-// 判断で、ここでは出どころを決めない。
-func (pv *Provider) ResolveSource(path string, orientation uint16) (photo.ThumbSource, error) {
-	id := photo.IDFor(path)
+// 生成に失敗した場合だけエラーを返す。インデックスに載せるかどうかは呼び出し側の
+// 判断である。
+func (pv *Provider) Prepare(p photo.Photo, orientation uint16) error {
 	switch {
-	case synology.HasThumbM(path):
+	case synology.HasThumbM(p.Path()):
 		// 借りるほうへ切り替わったら、自前で作ったものは用済みになる。
-		pv.sweepQuietly(id, "")
-		return photo.ThumbSyno, nil
-	case imagefmt.IsDecodable(path):
-		out, err := pv.generate(path, id, orientation)
+		pv.sweepQuietly(p.ID(), "")
+	case imagefmt.IsDecodable(p.Path()):
+		out, err := pv.generate(p, orientation)
 		if err != nil {
 			// 失敗しても古い版は消さない。新しいのができるまでの控えとして
 			// 働いており、先に消すと一覧のタイルが割れるため。
-			return photo.ThumbNone, err
+			return err
 		}
-		pv.sweepQuietly(id, out)
-		return photo.ThumbFamifo, nil
+		pv.sweepQuietly(p.ID(), out)
+	default:
+		pv.sweepQuietly(p.ID(), "")
 	}
-	pv.sweepQuietly(id, "")
-	return photo.ThumbNone, nil
+	return nil
 }
 
-// generate は srcPath の画像からサムネイルを作る。
+// generate は p の原本からサムネイルを作る。
 // デコードできないファイルはエラーを返し、サムネイルは何も残さない。
 //
 // orientation は internal/index/exif が読んだEXIFの向き。image.Decode はEXIFを見ずに
@@ -147,26 +166,24 @@ func (pv *Provider) ResolveSource(path string, orientation uint16) (photo.ThumbS
 //
 // その版のサムネイルが既にあれば何もしない。DBを作り直すたびに全件を作り直すと
 // 4,495枚で37分（NASなら数時間）かかるが、その大半は中身の変わらないサムネイルの
-// 再生成である。
+// 再生成である。既にある場合は原本を開きもしない。
+//
+// 版は p.ModTime() から取る。自分で stat し直すと、その1回とインデックスに載る
+// 版とが食い違い、配信側が存在しない名前を引くことになるため。
 //
 // 作った（または既にあった）サムネイルのパスを返す。呼び出し側が、それ以外の版を
 // 掃除するために使う。
-func (pv *Provider) generate(srcPath, id string, orientation uint16) (string, error) {
-	f, err := os.Open(srcPath)
+func (pv *Provider) generate(p photo.Photo, orientation uint16) (string, error) {
+	out := pv.path(p.ID(), p.ModTime())
+	if isRegularFile(out) {
+		return out, nil
+	}
+
+	f, err := os.Open(p.Path())
 	if err != nil {
 		return "", fmt.Errorf("画像を開けません: %w", err)
 	}
 	defer f.Close()
-
-	// 出力の名前に元画像の版が入るので、mtimeが取れないと置き場所が決まらない。
-	fi, err := f.Stat()
-	if err != nil {
-		return "", fmt.Errorf("画像のファイル情報を取得できません: %w", err)
-	}
-	out := pv.path(id, fi.ModTime())
-	if isRegularFile(out) {
-		return out, nil
-	}
 
 	src, _, err := image.Decode(f)
 	if err != nil {

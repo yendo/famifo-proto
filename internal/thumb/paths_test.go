@@ -1,156 +1,184 @@
 package thumb_test
 
-// 配信するファイルの選択を確かめる。SmallPath と LargePath はI/Oを持たないので、
-// 実ファイルもHTTPサーバーも用意せずに全ての組み合わせを並べられる。
+// 配信するファイルの選択を確かめる。出どころはDBに持たずディスクの状態で決めるので、
+// @eaDir と自前の置き場に実際にファイルを置いて確かめる。
 
 import (
-	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
-var testModTime = time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
-
-// restored は保存済みの1枚を模したPhotoを組み立てる。日時とサイズはどのテストも
-// 見ないので固定値でよく、パスと出どころだけを行ごとに変える。
-func restored(path string, thumbSource photo.ThumbSource) photo.Photo {
-	return photo.Restore(path, testModTime, testModTime, 0, thumbSource)
+type pathFixture struct {
+	pv       *thumb.Provider
+	photoDir string
 }
 
-// newPathProvider は置き場のディレクトリも一緒に返す。自前で生成したサムネイルの
-// パスは、その下のどこに置かれるかまで含めて期待値になる。
-func newPathProvider(t *testing.T) (*thumb.Provider, string) {
+func newPathFixture(t *testing.T) *pathFixture {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "thumbs")
-	pv, err := thumb.NewProvider(dir)
+	base := t.TempDir()
+	pv, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
 	require.NoError(t, err)
-	return pv, dir
+	photoDir := filepath.Join(base, "photos")
+	require.NoError(t, os.MkdirAll(photoDir, 0o755))
+	return &pathFixture{pv: pv, photoDir: photoDir}
 }
 
-func TestSmallPathBySource(t *testing.T) {
-	pv, thumbDir := newPathProvider(t)
-	jpgID := photo.IDFor("/photos/a.jpg")
-	tests := []struct {
-		name string
-		p    photo.Photo
-		want string
-		ok   bool
-	}{
-		{
-			name: "自前で生成したものは自分の置き場から引く",
-			p:    restored("/photos/a.jpg", photo.ThumbFamifo),
-			want: filepath.Join(thumbDir, jpgID[:2],
-				fmt.Sprintf("%s-%d.jpg", jpgID, testModTime.Unix())),
-			ok: true,
-		},
-		{
-			name: "借りたものは @eaDir から引く",
-			p:    restored("/photos/a.heic", photo.ThumbSyno),
-			want: "/photos/@eaDir/a.heic/SYNOPHOTO_THUMB_M.jpg",
-			ok:   true,
-		},
-		{
-			name: "借りるものも作れるものも無ければ ok=false",
-			p:    restored("/photos/a.heic", photo.ThumbNone),
-			want: "",
-			ok:   false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := pv.SmallPath(tt.p)
-			require.Equal(t, tt.ok, ok)
-			require.Equal(t, tt.want, got)
-		})
-	}
+// addPhoto は原本を1つ置いて、その1枚を返す。
+// どのテストも中身は見ないので、画像として妥当である必要はない。
+func (f *pathFixture) addPhoto(t *testing.T, name string) photo.Photo {
+	t.Helper()
+	path := filepath.Join(f.photoDir, name)
+	require.NoError(t, os.WriteFile(path, []byte("original"), 0o644))
+	return photoOf(t, path)
+}
+
+// borrowable は Synologyが作った体のMとXLを写真の隣に置く。
+func (f *pathFixture) borrowable(t *testing.T, p photo.Photo) {
+	t.Helper()
+	writeFileAt(t, synology.ThumbMPath(p.Path()), "eadir m")
+	writeFileAt(t, synology.ThumbXLPath(p.Path()), "eadir xl")
+}
+
+// generated は自前で生成した体のサムネイルを、その版の置き場に置く。
+func (f *pathFixture) generated(t *testing.T, p photo.Photo) string {
+	t.Helper()
+	out := f.pv.GeneratedPath(p)
+	writeFileAt(t, out, "generated thumb")
+	return out
+}
+
+func writeFileAt(t *testing.T, path, body string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+}
+
+func TestSmallPathPrefersTheBorrowedThumb(t *testing.T) {
+	f := newPathFixture(t)
+	p := f.addPhoto(t, "a.jpg")
+	own := f.generated(t, p)
+	f.borrowable(t, p)
+
+	got, contentType := f.pv.SmallPath(p)
+
+	require.Equal(t, synology.ThumbMPath(p.Path()), got,
+		"実ライブラリではほぼ全てに @eaDir があるので先に見る")
+	require.NotEqual(t, own, got)
+	require.Equal(t, "image/jpeg", contentType)
+}
+
+func TestSmallPathUsesTheGeneratedThumbWhenNothingToBorrow(t *testing.T) {
+	f := newPathFixture(t)
+	p := f.addPhoto(t, "a.jpg")
+	own := f.generated(t, p)
+
+	got, contentType := f.pv.SmallPath(p)
+
+	require.Equal(t, own, got)
+	require.Equal(t, "image/jpeg", contentType)
+}
+
+func TestSmallPathFallsBackToTheOriginal(t *testing.T) {
+	f := newPathFixture(t)
+	p := f.addPhoto(t, "a.heic")
+
+	got, contentType := f.pv.SmallPath(p)
+
+	require.Equal(t, p.Path(), got, "出せるサムネイルが無ければ原本に落ちる")
+	require.Equal(t, "image/heic", contentType)
+}
+
+// 取り込みのあとでDSMがサムネイルを作った場合。出どころをDBに焼いていたころは、
+// 原本のmtimeが動かない限り再取り込みされないため、永久に反映されなかった。
+func TestSmallPathSeesAThumbThatAppearsAfterIndexing(t *testing.T) {
+	f := newPathFixture(t)
+	p := f.addPhoto(t, "a.heic")
+	got, _ := f.pv.SmallPath(p)
+	require.Equal(t, p.Path(), got, "この時点ではまだ何も無い")
+
+	f.borrowable(t, p)
+
+	got, _ = f.pv.SmallPath(p)
+	require.Equal(t, synology.ThumbMPath(p.Path()), got,
+		"取り込み直さなくても、次の配信から借りたものに切り替わる")
+}
+
+// 名前に版が入っているので、別の版のサムネイルは引き当たらない。
+func TestSmallPathIgnoresAThumbFromAnotherVersion(t *testing.T) {
+	f := newPathFixture(t)
+	p := f.addPhoto(t, "a.jpg")
+	stale := photo.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour), p.Size())
+	writeFileAt(t, f.pv.GeneratedPath(stale), "古い版のサムネイル")
+
+	got, _ := f.pv.SmallPath(p)
+
+	require.Equal(t, p.Path(), got, "版が違えば無いものとして扱い、原本に落ちる")
 }
 
 // 1ディレクトリにファイルが集中しないよう、IDの先頭2文字で分割する。
-func TestSmallPathShardsByTheFirstTwoCharsOfTheID(t *testing.T) {
-	pv, thumbDir := newPathProvider(t)
-	p := restored("/photos/a.jpg", photo.ThumbFamifo)
+func TestGeneratedPathShardsByTheFirstTwoCharsOfTheID(t *testing.T) {
+	f := newPathFixture(t)
+	p := f.addPhoto(t, "a.jpg")
 
-	got, ok := pv.SmallPath(p)
+	got := f.pv.GeneratedPath(p)
 
-	require.True(t, ok)
-	require.Equal(t, filepath.Join(thumbDir, p.ID()[:2]), filepath.Dir(got))
+	require.Equal(t, p.ID()[:2], filepath.Base(filepath.Dir(got)))
+	require.Equal(t, ".jpg", filepath.Ext(got), "自前の出力は常にJPEG")
 }
 
 // 名前に元画像の版が入るので、写真が差し替われば別のファイルを指す。
 // 鮮度を「サムネイルのほうが新しいか」で測らずに済ませるための土台。
-func TestSmallPathVariesWithTheSourceVersion(t *testing.T) {
-	pv, _ := newPathProvider(t)
-	const path = "/photos/a.jpg"
+func TestGeneratedPathVariesWithTheSourceVersion(t *testing.T) {
+	f := newPathFixture(t)
+	p := f.addPhoto(t, "a.jpg")
+	older := photo.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour), p.Size())
 
-	before, ok := pv.SmallPath(photo.Restore(path, testModTime, time.Unix(1700000000, 0), 0, photo.ThumbFamifo))
-	require.True(t, ok)
-	after, ok := pv.SmallPath(photo.Restore(path, testModTime, time.Unix(1600000000, 0), 0, photo.ThumbFamifo))
-	require.True(t, ok)
-
-	require.NotEqual(t, before, after, "版が違えば別の名前になる")
-	require.Equal(t, filepath.Dir(before), filepath.Dir(after), "置き場は同じ")
+	require.NotEqual(t, f.pv.GeneratedPath(p), f.pv.GeneratedPath(older),
+		"版が違えば別の名前になる")
+	require.Equal(t,
+		filepath.Dir(f.pv.GeneratedPath(p)), filepath.Dir(f.pv.GeneratedPath(older)),
+		"置き場は同じ")
 }
 
-// XLに差し替えるのは「HEICで、かつ借りている」ときだけ。
-// 他の5通りはすべて原本を配信する。
+// XLに差し替えるのは「自前でデコードできない形式で、かつ借りられる」ときだけ。
 func TestLargePathSwapsInTheXLOnlyForBorrowedOpaquePhotos(t *testing.T) {
-	pv, _ := newPathProvider(t)
 	tests := []struct {
-		name string
-		p    photo.Photo
-		want string
+		name     string
+		file     string
+		borrowed bool
+		wantXL   bool
+		wantType string
 	}{
-		{
-			name: "HEIC + 借りている → SynologyのXL",
-			p:    restored("/photos/a.heic", photo.ThumbSyno),
-			want: "/photos/@eaDir/a.heic/SYNOPHOTO_THUMB_XL.jpg",
-		},
-		{
-			name: "HEIC + 借りていない → 原本（Safariでしか見えないが他に出せるものが無い）",
-			p:    restored("/photos/a.heic", photo.ThumbNone),
-			want: "/photos/a.heic",
-		},
-		{
-			name: "HEIC + 自前生成 → 原本（HEICは自前生成しないので実際には起きない）",
-			p:    restored("/photos/a.heic", photo.ThumbFamifo),
-			want: "/photos/a.heic",
-		},
-		{
-			name: "JPEG + 借りている → 原本（借りるのは一覧用だけ）",
-			p:    restored("/photos/a.jpg", photo.ThumbSyno),
-			want: "/photos/a.jpg",
-		},
-		{
-			name: "JPEG + 自前生成 → 原本",
-			p:    restored("/photos/a.jpg", photo.ThumbFamifo),
-			want: "/photos/a.jpg",
-		},
-		{
-			name: "JPEG + サムネイル無し → 原本",
-			p:    restored("/photos/a.jpg", photo.ThumbNone),
-			want: "/photos/a.jpg",
-		},
+		{"HEIC + 借りられる → SynologyのXL", "a.heic", true, true, "image/jpeg"},
+		{"HEIC + 借りられない → 原本（Safariでしか見えないが他に出せるものが無い）",
+			"a.heic", false, false, "image/heic"},
+		{"JPEG + 借りられる → 原本（借りるのは見えないものの代替に限る）",
+			"a.jpg", true, false, "image/jpeg"},
+		{"JPEG + 借りられない → 原本", "a.jpg", false, false, "image/jpeg"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, _ := pv.LargePath(tt.p)
-			require.Equal(t, tt.want, got)
+			f := newPathFixture(t)
+			p := f.addPhoto(t, tt.file)
+			if tt.borrowed {
+				f.borrowable(t, p)
+			}
+
+			got, contentType := f.pv.LargePath(p)
+
+			want := p.Path()
+			if tt.wantXL {
+				want = synology.ThumbXLPath(p.Path())
+			}
+			require.Equal(t, want, got)
+			require.Equal(t, tt.wantType, contentType)
 		})
 	}
-}
-
-// MIMEが選ばれたファイルに追随することが、ハンドラ側で分岐を持たずに済む根拠。
-func TestLargePathContentTypeFollowsTheChosenFile(t *testing.T) {
-	pv, _ := newPathProvider(t)
-
-	_, borrowed := pv.LargePath(restored("/photos/a.heic", photo.ThumbSyno))
-	require.Equal(t, "image/jpeg", borrowed, "借りたXLは .jpg なので原本がHEICでもJPEG")
-
-	_, original := pv.LargePath(restored("/photos/a.heic", photo.ThumbNone))
-	require.Equal(t, "image/heic", original, "原本を出すなら原本の拡張子どおり")
 }

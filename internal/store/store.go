@@ -28,8 +28,7 @@ CREATE TABLE IF NOT EXISTS photos (
     path      TEXT NOT NULL UNIQUE,
     taken_at  INTEGER NOT NULL,
     mod_time  INTEGER NOT NULL,
-    size      INTEGER NOT NULL,
-    thumb_source TEXT NOT NULL
+    size      INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_photos_order ON photos(taken_at DESC, id DESC);
 `
@@ -63,19 +62,18 @@ func Open(dbPath string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 const upsertSQL = `
-INSERT INTO photos (id, path, taken_at, mod_time, size, thumb_source)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO photos (id, path, taken_at, mod_time, size)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     path      = excluded.path,
     taken_at  = excluded.taken_at,
     mod_time  = excluded.mod_time,
-    size      = excluded.size,
-    thumb_source = excluded.thumb_source`
+    size      = excluded.size`
 
 // Upsert は写真を登録または更新する。
 func (s *Store) Upsert(ctx context.Context, p photo.Photo) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
-		p.ID(), p.Path(), p.TakenAt().Unix(), p.ModTime().Unix(), p.Size(), p.ThumbSource())
+		p.ID(), p.Path(), p.TakenAt().Unix(), p.ModTime().Unix(), p.Size())
 	if err != nil {
 		return fmt.Errorf("写真を保存できません (%s): %w", p.Path(), err)
 	}
@@ -83,16 +81,15 @@ func (s *Store) Upsert(ctx context.Context, p photo.Photo) error {
 }
 
 // idは読まない。パスから導ける値なので、復元は photo.Restore に任せる。
-const selectCols = `path, taken_at, mod_time, size, thumb_source`
+const selectCols = `path, taken_at, mod_time, size`
 
 func scanPhoto(row interface{ Scan(...any) error }) (photo.Photo, error) {
 	var path string
 	var takenAt, modTime, size int64
-	var src photo.ThumbSource
-	if err := row.Scan(&path, &takenAt, &modTime, &size, &src); err != nil {
+	if err := row.Scan(&path, &takenAt, &modTime, &size); err != nil {
 		return photo.Photo{}, err
 	}
-	return photo.Restore(path, time.Unix(takenAt, 0), time.Unix(modTime, 0), size, src), nil
+	return photo.Restore(path, time.Unix(takenAt, 0), time.Unix(modTime, 0), size), nil
 }
 
 // GetByID はIDで写真を引く。見つからない場合は ErrNotFound を返す。
@@ -109,7 +106,7 @@ func (s *Store) GetByID(ctx context.Context, id string) (photo.Photo, error) {
 }
 
 // DeleteByPath はパスで写真を削除し、削除した行を返す。
-// 呼び出し側はサムネイルを消すかどうかを HasFamifoThumb で判断する。
+// 呼び出し側は返った行のIDでサムネイルを消す。
 // 該当が無い場合は ok=false を返し、エラーにはしない。
 func (s *Store) DeleteByPath(ctx context.Context, path string) (photo.Photo, bool, error) {
 	row := s.db.QueryRowContext(ctx,
