@@ -3,6 +3,8 @@ package main
 import (
 	"go/parser"
 	"go/token"
+	"io"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -45,4 +47,54 @@ func TestStartupTimezoneDistinguishesZonesWithTheSameName(t *testing.T) {
 	require.NotEqual(t, startupTimezone(utc), startupTimezone(jst),
 		"Location の名前が同じでも、時差で区別できること")
 	require.Contains(t, startupTimezone(jst), "+09:00")
+}
+
+func TestParseArgsUsesDefaults(t *testing.T) {
+	dir := t.TempDir()
+
+	got, _, err := parseArgs([]string{"-dir", dir}, io.Discard)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{dir}, got.PhotoDirs)
+	require.Equal(t, "./famifo-data", got.DataDir)
+	require.Equal(t, ":8080", got.Addr)
+}
+
+func TestParseArgsOverridesEveryFlag(t *testing.T) {
+	dir := t.TempDir()
+
+	got, _, err := parseArgs([]string{
+		"-dir", dir, "-data", "/var/famifo", "-addr", "192.168.1.10:9000",
+	}, io.Discard)
+
+	require.NoError(t, err)
+	require.Equal(t, "/var/famifo", got.DataDir)
+	require.Equal(t, "192.168.1.10:9000", got.Addr)
+}
+
+func TestParseArgsSplitsDirOnTheListSeparator(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+
+	got, _, err := parseArgs([]string{"-dir", a + string(filepath.ListSeparator) + b}, io.Discard)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{a, b}, got.PhotoDirs)
+}
+
+// -version はバージョンを表示して終わるだけなので、-dir を要求しない。
+// 設定の検証まで進むと「-dir は必須です」で落ちてしまう。
+func TestParseArgsVersionShortCircuitsValidation(t *testing.T) {
+	_, showVersion, err := parseArgs([]string{"-version"}, io.Discard)
+
+	require.NoError(t, err)
+	require.True(t, showVersion)
+}
+
+// ':' を含むパスを渡すと分割で壊れる。なぜそうなったか読めるエラーにする。
+func TestParseArgsExplainsHowDirWasSplit(t *testing.T) {
+	_, _, err := parseArgs([]string{"-dir", "/no/such/2024:05:24"}, io.Discard)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "2024",
+		"分割結果を示して、区切り文字で切れたことが分かるようにする")
 }

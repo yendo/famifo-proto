@@ -28,19 +28,27 @@ import (
 // jpegQuality はサムネイルの画質。一覧表示に十分で、かつ十分軽い値。
 const jpegQuality = 82
 
+// MaxEdge はサムネイルの辺の最大ピクセル数。長辺がこの値に収まるまで縮小する。
+//
+// 一覧のタイルは正方形で object-fit: cover のため、実際に効くのは短辺
+// （3:2の写真なら320px）である。設定可能にしていたが、利用者が変える場面が
+// 無いうえ、変えても既存のサムネイルは作り直されず「設定できるのに効かない」
+// フラグになっていたため定数にした。値を変えたときはデータディレクトリごと
+// 削除して作り直すこと。
+const MaxEdge = 480
+
 // Provider は一覧用のサムネイルを供給する。自前の置き場を所有し、借りられる
 // ものは @eaDir から借り、借りられないものだけ生成する。
 type Provider struct {
-	dir  string
-	size int // 長辺の最大ピクセル数
+	dir string
 }
 
 // NewProvider は置き場のディレクトリを用意してProviderを返す。
-func NewProvider(dir string, size int) (*Provider, error) {
+func NewProvider(dir string) (*Provider, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("サムネイルディレクトリを作れません: %w", err)
 	}
-	return &Provider{dir: dir, size: size}, nil
+	return &Provider{dir: dir}, nil
 }
 
 // path は元画像の版に対応するサムネイルの絶対パスを返す。
@@ -132,7 +140,7 @@ func (pv *Provider) generate(srcPath, id string, orientation uint16) (string, er
 
 	// 縮小してから回転する。長辺基準の縮小なので順序で結果の寸法は変わらないが、
 	// 4032x3024ではなく480x360を回すぶん安く済む。
-	dst := applyOrientation(scaleToFit(src, pv.size), orientation)
+	dst := applyOrientation(scaleToFit(src, MaxEdge), orientation)
 	if err := jpeg.Encode(tmp, dst, &jpeg.Options{Quality: jpegQuality}); err != nil {
 		tmp.Close()
 		return "", fmt.Errorf("サムネイルを書き出せません: %w", err)
