@@ -194,7 +194,7 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.NoFileExists(t, f.thumbPath(t, path), "借りられるなら自前では作らない")
-	small, _ := f.thumbs.SmallPath(got)
+	small, _, _ := f.thumbs.SmallPath(got)
 	require.Equal(t, synology.ThumbMPath(path), small, "一覧には借りたものが出る")
 }
 
@@ -209,7 +209,7 @@ func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	small, _ := f.thumbs.SmallPath(got)
+	small, _, _ := f.thumbs.SmallPath(got)
 	require.Equal(t, synology.ThumbMPath(path), small,
 		"自前でデコードできなくても、借りられれば一覧に出せる")
 }
@@ -229,8 +229,8 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.NoFileExists(t, f.thumbPath(t, path))
-	small, _ := f.thumbs.SmallPath(got)
-	require.Equal(t, path, small, ".fail しか無ければ原本に落ちる")
+	_, _, ok := f.thumbs.SmallPath(got)
+	require.False(t, ok, ".fail しか無ければ一覧に出せるものが無い")
 }
 
 // famifoはSynology Photosの領域に書き込まない。消しもしない。

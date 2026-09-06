@@ -93,18 +93,28 @@ func (pv *Provider) GeneratedPath(p photo.Photo) string {
 // サムネイルがあり、取り込み時に借りる側を優先しているぶん自前の置き場がほぼ空になる
 // ためである。先に自分の置き場を見ると大半のタイルで空振りする。
 //
-// どちらも無ければ原本に落ちる。必ず何かを返す。
-func (pv *Provider) SmallPath(p photo.Photo) (path, contentType string) {
+// どちらも無ければ原本に落ちる。ただしブラウザが表示できない形式（HEIC/HEIF）では
+// 原本を出しても割れたタイルになるだけなので ok=false を返し、配信側がプレースホルダに
+// 差し替える。
+//
+// 「ブラウザが出せるか」の判定に IsDecodable を使っている。いまの対応表では
+// 「famifoがデコードできる形式」と「ブラウザが表示できる形式」が一致しているためで、
+// 別の問いである。両者が食い違う形式（Goがデコードできないがブラウザは表示できる
+// AVIFなど）を表に足すときは、ここを分ける必要がある。
+func (pv *Provider) SmallPath(p photo.Photo) (path, contentType string, ok bool) {
 	if synology.HasThumbM(p.Path()) {
 		m := synology.ThumbMPath(p.Path())
-		return m, imagefmt.ContentType(m)
+		return m, imagefmt.ContentType(m), true
 	}
 	if out := pv.GeneratedPath(p); isRegularFile(out) {
-		return out, imagefmt.ContentType(out)
+		return out, imagefmt.ContentType(out), true
 	}
-	// ここへ来た時点で借りるものが無いことは確かめてあるので、LargePath に
-	// 訊き直しても原本しか返らない。@eaDir をもう一度 stat せずに済ませる。
-	return p.Path(), imagefmt.ContentType(p.Path())
+	if imagefmt.IsDecodable(p.Path()) {
+		// 借りるものが無いことは上で確かめてあるので、LargePath に訊き直しても
+		// 原本しか返らない。@eaDir をもう一度 stat せずに済ませる。
+		return p.Path(), imagefmt.ContentType(p.Path()), true
+	}
+	return "", "", false
 }
 
 // LargePath は拡大表示に配信するファイルのパスと、そのMIMEタイプを返す。

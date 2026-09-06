@@ -66,8 +66,9 @@ func TestSmallPathPrefersTheBorrowedThumb(t *testing.T) {
 	own := f.generated(t, p)
 	f.borrowable(t, p)
 
-	got, contentType := f.pv.SmallPath(p)
+	got, contentType, ok := f.pv.SmallPath(p)
 
+	require.True(t, ok)
 	require.Equal(t, synology.ThumbMPath(p.Path()), got,
 		"実ライブラリではほぼ全てに @eaDir があるので先に見る")
 	require.NotEqual(t, own, got)
@@ -79,20 +80,36 @@ func TestSmallPathUsesTheGeneratedThumbWhenNothingToBorrow(t *testing.T) {
 	p := f.addPhoto(t, "a.jpg")
 	own := f.generated(t, p)
 
-	got, contentType := f.pv.SmallPath(p)
+	got, contentType, ok := f.pv.SmallPath(p)
 
+	require.True(t, ok)
 	require.Equal(t, own, got)
 	require.Equal(t, "image/jpeg", contentType)
 }
 
+// ブラウザが表示できる形式なら、サムネイルが無くても原本を出せばタイルになる。
 func TestSmallPathFallsBackToTheOriginal(t *testing.T) {
+	f := newPathFixture(t)
+	p := f.addPhoto(t, "a.jpg")
+
+	got, contentType, ok := f.pv.SmallPath(p)
+
+	require.True(t, ok)
+	require.Equal(t, p.Path(), got)
+	require.Equal(t, "image/jpeg", contentType)
+}
+
+// HEICはブラウザが表示できないので、原本を出しても割れたタイルになるだけである。
+// 出せるものが無いことを伝えて、配信側にプレースホルダを出させる。
+func TestSmallPathHasNothingToShowForAnUnborrowedHEIC(t *testing.T) {
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.heic")
 
-	got, contentType := f.pv.SmallPath(p)
+	got, contentType, ok := f.pv.SmallPath(p)
 
-	require.Equal(t, p.Path(), got, "出せるサムネイルが無ければ原本に落ちる")
-	require.Equal(t, "image/heic", contentType)
+	require.False(t, ok)
+	require.Empty(t, got)
+	require.Empty(t, contentType)
 }
 
 // 取り込みのあとでDSMがサムネイルを作った場合。出どころをDBに焼いていたころは、
@@ -100,12 +117,13 @@ func TestSmallPathFallsBackToTheOriginal(t *testing.T) {
 func TestSmallPathSeesAThumbThatAppearsAfterIndexing(t *testing.T) {
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.heic")
-	got, _ := f.pv.SmallPath(p)
-	require.Equal(t, p.Path(), got, "この時点ではまだ何も無い")
+	_, _, ok := f.pv.SmallPath(p)
+	require.False(t, ok, "この時点では出せるものが無い")
 
 	f.borrowable(t, p)
 
-	got, _ = f.pv.SmallPath(p)
+	got, _, ok := f.pv.SmallPath(p)
+	require.True(t, ok)
 	require.Equal(t, synology.ThumbMPath(p.Path()), got,
 		"取り込み直さなくても、次の配信から借りたものに切り替わる")
 }
@@ -117,8 +135,9 @@ func TestSmallPathIgnoresAThumbFromAnotherVersion(t *testing.T) {
 	stale := photo.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour))
 	writeFileAt(t, f.pv.GeneratedPath(stale), "古い版のサムネイル")
 
-	got, _ := f.pv.SmallPath(p)
+	got, _, ok := f.pv.SmallPath(p)
 
+	require.True(t, ok)
 	require.Equal(t, p.Path(), got, "版が違えば無いものとして扱い、原本に落ちる")
 }
 

@@ -95,13 +95,17 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleThumb は一覧のタイルを配信する。どのファイルを出すかは thumb が決める。
-// 借りるものも作ったものも無ければ原本に落ちるので、404にはならない。
+// 出せる絵が無ければプレースホルダに差し替えるので、404にはならない。
 func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.lookup(w, r)
 	if !ok {
 		return
 	}
-	path, contentType := s.thumbs.SmallPath(p)
+	path, contentType, ok := s.thumbs.SmallPath(p)
+	if !ok {
+		serveNoPreview(w)
+		return
+	}
 	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
 	// 先に設定しておけばServeContentは上書きしない。
 	w.Header().Set("Content-Type", contentType)
@@ -119,6 +123,20 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	// 先に設定しておけばServeContentは上書きしない。
 	w.Header().Set("Content-Type", contentType)
 	http.ServeFile(w, r, path)
+}
+
+// serveNoPreview は出せる絵が無いときのプレースホルダを配る。
+//
+// 404にして <img> を壊すのではなく画像を配るのは、貼り替えのたびに失敗を検知し
+// 直す仕掛けをクライアントに持たせないためである。タイルは idiomorph が同じ要素の
+// まま貼り替えるので、JSが付けた印は貼り替えで消え、再読み込みも起きない。
+//
+// キャッシュさせないのは、DSMが後からサムネイルを作ったときに次の表示で
+// 本物へ切り替わるようにするため。
+func serveNoPreview(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(noPreview)
 }
 
 // lookup はURLのIDから写真を引く。

@@ -17,6 +17,11 @@ import (
 //go:embed templates static
 var assets embed.FS
 
+// noPreview は出せる絵が無い写真のタイルに配るプレースホルダ。
+//
+//go:embed static/no-preview.svg
+var noPreview []byte
+
 // defaultChunkSize は仮想スクロールが1回に取る塊の枚数。
 //
 // 先頭の1塊は初回HTMLに埋め込む。クライアントは範囲を覆う塊が揃うまで
