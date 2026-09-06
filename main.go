@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"syscall"
 	"time"
@@ -52,6 +53,17 @@ func startupTimezone(t time.Time) string {
 	return t.Format("MST-07:00")
 }
 
+// defaultScanWorkers はフルスキャンの既定の並行数を返す。
+//
+// CPUを全部使うと同じマシンの他の仕事とHTTPの応答を圧迫するので、半分に留める。
+// 1未満にはしない。足りなければ -scan-workers で上げられる。
+func defaultScanWorkers() int {
+	if n := runtime.NumCPU() / 2; n > 1 {
+		return n
+	}
+	return 1
+}
+
 // parseArgs はコマンドライン引数を解析して検証済みの設定を返す。
 // argsにはプログラム名を含めない。2つ目の戻り値は -version が指定されたことを表す。
 func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
@@ -65,6 +77,10 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 			string(filepath.ListSeparator)))
 	fs.StringVar(&c.DataDir, "data", "./famifo-data", "DBとサムネイルの保存先")
 	fs.StringVar(&c.Addr, "addr", ":8080", "HTTPの待ち受けアドレス")
+	// 適正値はCPU数とストレージの待ち時間の両方で決まる。NASでは読み込み待ちが
+	// 効くので、CPU数が最善とは限らない。実機で詰められるようフラグにしてある。
+	fs.IntVar(&c.ScanWorkers, "scan-workers", defaultScanWorkers(),
+		"フルスキャンで同時に取り込む枚数")
 	showVersion := fs.Bool("version", false, "バージョンを表示して終了する")
 
 	if err := fs.Parse(args); err != nil {
@@ -103,7 +119,8 @@ func run() error {
 	// 誤ったまま本番のインデックスを作ると、全件やり直しになる。
 	log.Info("起動", "version", versionString(),
 		"timezone", startupTimezone(time.Now()),
-		"dirs", cfg.PhotoDirs, "data", cfg.DataDir, "addr", cfg.Addr)
+		"dirs", cfg.PhotoDirs, "data", cfg.DataDir, "addr", cfg.Addr,
+		"scan-workers", cfg.ScanWorkers)
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {
 		return err
@@ -140,7 +157,7 @@ func run() error {
 		}
 	}()
 
-	ix := index.New(cfg.PhotoDirs, st, thumbs, log)
+	ix := index.New(cfg.PhotoDirs, st, thumbs, cfg.ScanWorkers, log)
 
 	// fsnotifyは停止中の変更を検知できないので、起動のたびに実態と突き合わせる。
 	log.Info("フルスキャンを開始", "dirs", cfg.PhotoDirs)

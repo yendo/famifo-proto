@@ -12,9 +12,10 @@ import (
 
 // Config はアプリの実行時設定。すべてコマンドライン引数から与えられる。
 type Config struct {
-	PhotoDirs []string // 写真を収集するルートディレクトリ（複数可）
-	DataDir   string   // DBとサムネイルの置き場
-	Addr      string   // HTTPの待ち受けアドレス
+	PhotoDirs   []string // 写真を収集するルートディレクトリ（複数可）
+	DataDir     string   // DBとサムネイルの置き場
+	Addr        string   // HTTPの待ち受けアドレス
+	ScanWorkers int      // フルスキャンでサムネイルを並行生成する数
 }
 
 // Validate は設定の不備を報告する。ここでのエラーは起動を中止させる。
@@ -52,6 +53,12 @@ func (c Config) Validate() error {
 	}
 	if c.Addr == "" {
 		return errors.New("-addr は必須です")
+	}
+	// 0を「自動」と読み替えない。既定値はフラグの側が runtime.NumCPU() で
+	// 与えており、0が届くのは利用者が明示的に0を渡したときだけである。
+	// 黙って読み替えると、走査が始まらない設定を無言で書き換えることになる。
+	if c.ScanWorkers < 1 {
+		return fmt.Errorf("-scan-workers は1以上にしてください: %d", c.ScanWorkers)
 	}
 	for _, dir := range c.PhotoDirs {
 		inside, err := dirContains(dir, c.DataDir)

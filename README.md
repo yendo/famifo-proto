@@ -74,6 +74,7 @@ every one of them.
 | `-dir` | (required) | Directories to collect photos from, `:`-separated |
 | `-data` | `./famifo-data` | Where the database and generated thumbnails are stored |
 | `-addr` | `:8080` | HTTP listen address |
+| `-scan-workers` | half the CPUs | How many photos the full scan takes in at once |
 | `-version` | | Print the build version and exit |
 
 The version comes from the build itself: a tagged build reports the tag, any

@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"io"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -58,6 +59,8 @@ func TestParseArgsUsesDefaults(t *testing.T) {
 	require.Equal(t, []string{dir}, got.PhotoDirs)
 	require.Equal(t, "./famifo-data", got.DataDir)
 	require.Equal(t, ":8080", got.Addr)
+	require.Equal(t, max(runtime.NumCPU()/2, 1), got.ScanWorkers,
+		"既定はCPU数の半分。設定を書かなくても並行に取り込みつつ、CPUは使い切らない")
 }
 
 func TestParseArgsOverridesEveryFlag(t *testing.T) {
@@ -65,11 +68,13 @@ func TestParseArgsOverridesEveryFlag(t *testing.T) {
 
 	got, _, err := parseArgs([]string{
 		"-dir", dir, "-data", "/var/famifo", "-addr", "192.168.1.10:9000",
+		"-scan-workers", "3",
 	}, io.Discard)
 
 	require.NoError(t, err)
 	require.Equal(t, "/var/famifo", got.DataDir)
 	require.Equal(t, "192.168.1.10:9000", got.Addr)
+	require.Equal(t, 3, got.ScanWorkers)
 }
 
 func TestParseArgsSplitsDirOnTheListSeparator(t *testing.T) {

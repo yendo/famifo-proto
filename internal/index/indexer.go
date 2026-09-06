@@ -23,18 +23,26 @@ import (
 
 // Indexer は1ファイル単位でインデックスを更新する。
 type Indexer struct {
-	roots  []string
-	st     *store.Store
-	thumbs *thumb.Provider
-	log    *slog.Logger
+	roots   []string
+	st      *store.Store
+	thumbs  *thumb.Provider
+	workers int
+	log     *slog.Logger
 }
 
 // New はIndexerを作る。rootsは写真を収集するルートディレクトリ。
 //
 // thumbs は配信側と共有する。同じ置き場所を指す設定値を2経路に配ると、
 // ずれても誰も気づけないため、組み立てたものを1つ受け取る。
-func New(roots []string, st *store.Store, thumbs *thumb.Provider, log *slog.Logger) *Indexer {
-	return &Indexer{roots: roots, st: st, thumbs: thumbs, log: log}
+//
+// workers はフルスキャンが同時に取り込む枚数。1未満は1として扱う。適正値は
+// CPU数とストレージの待ち時間で決まり、NASとローカルで違うため設定から来る。
+// fsnotifyの追従は1件ずつ来るので、こちらは workers を見ない。
+func New(roots []string, st *store.Store, thumbs *thumb.Provider, workers int, log *slog.Logger) *Indexer {
+	if workers < 1 {
+		workers = 1
+	}
+	return &Indexer{roots: roots, st: st, thumbs: thumbs, workers: workers, log: log}
 }
 
 // IndexFile は1ファイルをインデックスに反映する。

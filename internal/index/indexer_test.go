@@ -34,7 +34,12 @@ func (f *fixture) thumbPath(t *testing.T, src string) string {
 	return f.thumbs.GeneratedPath(photo.Restore(src, fi.ModTime(), fi.ModTime()))
 }
 
-func newFixture(t *testing.T) *fixture {
+// newFixture は既定のワーカー数で fixture を作る。1より大きいのは、
+// 既存のテストをそのまま並行経路に通して等価性を確かめるためである。
+func newFixture(t *testing.T) *fixture { return newFixtureWorkers(t, 4) }
+
+// newFixtureWorkers はワーカー数を指定して fixture を作る。
+func newFixtureWorkers(t *testing.T, workers int) *fixture {
 	t.Helper()
 	base := t.TempDir()
 	root := filepath.Join(base, "photos")
@@ -47,7 +52,7 @@ func newFixture(t *testing.T) *fixture {
 	thumbs, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
 	require.NoError(t, err)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix := index.New([]string{root}, st, thumbs, log)
+	ix := index.New([]string{root}, st, thumbs, workers, log)
 
 	return &fixture{ix: ix, st: st, thumbs: thumbs, root: root, log: log}
 }
@@ -71,7 +76,7 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 	thumbs, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
 	require.NoError(t, err)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix := index.New(roots, st, thumbs, log)
+	ix := index.New(roots, st, thumbs, 4, log)
 
 	return &fixture{ix: ix, st: st, thumbs: thumbs, root: roots[0], log: log}, roots
 }

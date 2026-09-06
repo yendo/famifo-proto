@@ -2,6 +2,7 @@ package index_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -205,7 +206,7 @@ func TestFullScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 	require.NoError(t, err)
 
 	// bob を引数から外して起動し直した状況を模す
-	f2 := index.New(roots[:1], f.st, f.thumbs, f.log)
+	f2 := index.New(roots[:1], f.st, f.thumbs, 4, f.log)
 
 	stats, err := f2.FullScan(ctx)
 
@@ -267,4 +268,37 @@ func TestFullScanSkipsSynologyMetadataDirs(t *testing.T) {
 	require.Len(t, paths, 1)
 	_, ok := paths[filepath.Join(f.root, "IMG_0001.jpg")]
 	require.True(t, ok, "本物が残っていること")
+}
+
+// 並行してサムネイルを作っても取りこぼしが出ないことを確かめる。ワーカーの完了を
+// 待たずに走査を終えると Indexed が実際より少なくなり、Stats の更新の競合は
+// -race で現れる。1枚ずつでは同時に走る窓が開かないので、まとまった枚数を置く。
+func TestFullScanIndexesEveryPhotoWithConcurrentWorkers(t *testing.T) {
+	f := newFixtureWorkers(t, 8)
+	const n = 64
+	for i := range n {
+		writeTestJPEG(t, f.root, fmt.Sprintf("p%02d.jpg", i), 40, 20)
+	}
+
+	stats, err := f.ix.FullScan(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, n, stats.Indexed)
+	require.Equal(t, 0, stats.Skipped)
+	count, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, n, count)
+}
+
+// ワーカー数1でも走査は成立する。並行化の面倒を避けたい環境のための逃げ道であり、
+// ここが壊れると設定で回避する手段が無くなる。
+func TestFullScanWorksWithASingleWorker(t *testing.T) {
+	f := newFixtureWorkers(t, 1)
+	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
+
+	stats, err := f.ix.FullScan(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 2, stats.Indexed)
 }
