@@ -79,8 +79,13 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	return c, false, c.Validate()
 }
 
-// chunkSize は1塊あたりの枚数。
-const chunkSize = 60
+// chunkSize は仮想スクロールが1回に取る塊の枚数。
+//
+// 先頭の1塊は初回HTMLに埋め込む。描画は範囲を覆う塊が揃うまで待つので、
+// この値が「開いた画面 + overscan 4行」に届かないと、開いた直後に取得を
+// 1往復待つことになる。1920x950・列幅200pxで先頭に要るのは76枚（実データ
+// 4497枚で計測）で、60では足りていなかった。
+const chunkSize = 120
 
 func main() {
 	if err := run(); err != nil {
