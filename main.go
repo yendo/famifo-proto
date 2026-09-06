@@ -144,12 +144,16 @@ func run() error {
 
 	// fsnotifyは停止中の変更を検知できないので、起動のたびに実態と突き合わせる。
 	log.Info("フルスキャンを開始", "dirs", cfg.PhotoDirs)
+	// 所要時間も出す。取り込みの重さを変える変更をしたとき、前後を突き合わせられる
+	// 記録がログにしか残らないため。
+	scanStart := time.Now()
 	stats, err := ix.FullScan(ctx)
 	if err != nil && ctx.Err() == nil {
 		return err
 	}
 	if ctx.Err() == nil {
 		log.Info("フルスキャンが完了",
+			"elapsed", time.Since(scanStart).Round(time.Millisecond),
 			"indexed", stats.Indexed, "unchanged", stats.Unchanged,
 			"removed", stats.Removed, "skipped", stats.Skipped)
 
