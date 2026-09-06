@@ -129,11 +129,11 @@ XLへの差し替え、MIME。結果として `photo` は全パッケージが�
 | `config` | 引数の解析・検証（現状維持） | なし |
 | `imagefmt` **(新)** | 対応拡張子の表。MIMEとデコード可否 | なし |
 | `synology` | `@eaDir` の規約（現状維持） | なし |
-| `photo` | インデックスの1行。id / path / takenAt / modTime / size | `imagefmt` |
+| `photo` | インデックスの1行。id / path / takenAt / modTime / size | なし |
 | `exif` | EXIFの読み取り（現状維持、置き場所は要検討） | なし |
-| `thumb` **(移動)** | 派生画像の唯一の所有者。生成・掃除・配信 | `photo` `imagefmt` `synology` |
+| `thumb` **(移動)** | 派生画像の唯一の所有者。生成・掃除・配信パスの決定 | `photo` `imagefmt` `synology` |
 | `store` | SQLite。`photo.Photo` を読み書きする入れ物 | `photo` |
-| `index` | ディスクとインデックスの同期 | `photo` `store` `thumb` `exif` |
+| `index` | ディスクとインデックスの同期 | `photo` `store` `thumb` `exif` `imagefmt` |
 | `web` | HTTP配信のみ | `photo` `store` `thumb` |
 
 依存が全部下向きになる。`photo` は `synology` を知らなくなる。
@@ -144,27 +144,53 @@ XLへの差し替え、MIME。結果として `photo` は全パッケージが�
 「原本から導いた別の画像」であり、「Synologyから借りられるなら借りる」という方針は
 両者に共通する。問題6で割れているものが、まとめれば消える。
 
+**(5) を先に済ませておく必要がある。** 拡大用のMIMEは `photo` の非公開の `supportedExts`
+から引いており（`internal/photo/photo.go:145`）、`FullPath` を移すと `ContentType` は
+`Photo` のメソッドとして成立しなくなる。表が `imagefmt` に出ていれば素直に移せる。
+
 **パッケージ名は `thumb` のままにする。** 拡大用も扱うので実態と合わなくなるかと考えたが、
 Synology自身がXLを `SYNOPHOTO_THUMB_XL.jpg` と名付けている。このドメインの語彙ではXLも
 サムネイルの一種であり、借りてくる相手がそう呼んでいるものを、こちらで言い換える理由はない。
-改名の差分も出ない。`OpenThumb` は `thumb.OpenThumb` で重複するため `OpenSmall` /
-`OpenLarge` にする。
+改名の差分も出ない。型名も `Provider` のままにする。`Store` にすると `index` と `web` の
+どちらでも `store.Store` と並ぶことになる。
 
 ```go
 package thumb
 
-func (s *Store) Ensure(p photo.Photo, orientation uint16) error         // 取り込み時
-func (s *Store) OpenSmall(p photo.Photo) (io.ReadCloser, string, error) // 一覧用 (body, contentType)
-func (s *Store) OpenLarge(p photo.Photo) (io.ReadCloser, string, error) // 拡大用
-func (s *Store) Remove(id string) error
+func (pv *Provider) Ensure(p photo.Photo, orientation uint16) error // 取り込み時
+func (pv *Provider) SmallPath(p photo.Photo) (string, bool)         // 一覧用。無ければ ok=false
+func (pv *Provider) LargePath(p photo.Photo) (path, contentType string)
+func (pv *Provider) Remove(id string) error
 ```
 
-`photo` から次が消える。
+**バイト列ではなくパスを返す。** `web` は `http.ServeFile` を使い続ける
+（`internal/web/handlers.go:109,121`）。`io.ReadCloser` を返す形にすると、`ServeFile` が
+処理しているRangeリクエスト（206）と `If-Modified-Since`（304）が失われ、拡大表示のたびに
+数MBを再ダウンロードすることになる。
+
+問題5の本質は「配置設定が2経路に配られている」ことなので、`web` が `string` ではなく
+`*thumb.Provider` を持てば解消する。パスを隠すことまでは要らない。
+
+**パス選択が純粋関数のままになる。** 前回の再編は `photo.ThumbPath` / `FullPath` を
+「Photoを入れるとパスが返るだけの関数」にして、`httptest` と実ファイルなしで
+テストできる状態を作った（`photo_test.go` の `TestThumbPathBySource` 他4本）。
+`SmallPath` / `LargePath` はI/Oを持たないので、テーブルドリブンのまま `thumb` へ移せる。
+ここをI/Oつきの関数に畳むと、その資産を失う。
+
+`photo` から次の7つが消える。
 
 `FamifoThumbDir` / `FamifoThumbPath` / `ThumbPath` / `HasThumb` / `HasFamifoThumb` /
-`ThumbSource` / `FullPath` / `ContentType`
+`FullPath` / `ContentType`
 
-`web` から `thumbDir` が消える。問題4・5・6・7・8がここで片付く。
+`ThumbSource` は残る。`store` が列として永続化し `photo.Restore` が復元しているため、
+消せるのは列を落とす (4) の時点である。ただし上の7つが `photo → synology` の唯一の
+理由なので、その依存は (1) で切れる。
+
+`web` からは `thumbDir` が消える。あわせて `main.go` で `Provider` を1つ作り、
+`index.New` と `web.NewServer` の両方へ渡す。ここを直さないと `cfg.ThumbDir()` が
+2経路に配られたまま残り、問題5は解消しない。
+
+問題4・5・6・7・8がここで片付く。
 
 **前回「`photo` に置く」と判断した理由への回答。** 前回の文書は「`web` の中に置くと、
 将来キャッシュ検証やプルーニングのCLIを作ったときに `web` の内部を覗きに行くことになる」
@@ -175,6 +201,7 @@ func (s *Store) Remove(id string) error
 「`photo` はすでに `ThumbSyno` というenum値でSynologyの存在を知っているから一貫している」
 とした。しかし、そのenumを `photo` が持っていること自体が問題の一部だった。既にそう
 なっていることは、そのままでよい理由にならない。
+
 
 ### (2) `thumb_source` 列を捨て、配信時に解決する
 
@@ -222,6 +249,17 @@ openが3回から1回になる。
 パッケージへ出して両者から引く。`photo` に置く根拠は「パスから導ける」だけで、それが
 根本原因Aそのものだった。
 
+`photo.ContentType` の中身もここへ移す。`thumb.LargePath` が返すMIMEはこの表から引くため、
+(1) より先に済ませておく必要がある。
+
+```go
+package imagefmt
+
+func IsSupported(name string) bool  // 走査対象か      (旧 photo.IsSupportedFile)
+func IsDecodable(name string) bool  // 自前で作れるか  (旧 photo.IsDecodableFile)
+func ContentType(name string) string
+```
+
 ## 未決の判断
 
 - **(2) と (2') のどちらを採るか。** NAS越しでのタイル表示のstatコストを測ってから決める
@@ -242,11 +280,11 @@ openが3回から1回になる。
 
 ## 移行の順序
 
-各ステップ単独で `go test ./...` が緑になる順で進める。
+各ステップ単独で `go test ./...` が緑になる順で進める。番号は上の設計の項番とは一致しない。
 
-1. `imagefmt` を切り出す（(5)。他に影響しないので最初に置ける）
-2. `index/thumb` を `internal/thumb` へ出し、`Open*` を生やして `web` から `photo.ThumbPath` /
-   `FullPath` の呼び出しを移す（(1)）
+1. `imagefmt` を切り出す（(5)。(1)がMIMEの表を必要とするため先に置く）
+2. `index/thumb` を `internal/thumb` へ出し、`SmallPath` / `LargePath` を生やして
+   `web` から `photo.ThumbPath` / `FullPath` の呼び出しを移す（(1)）
 3. 版を1回だけ取る形に直す（(3)）
 4. `thumb_source` を落とす（(2)。2の後でないと差分が読めない）
 5. HEICの穴を塞ぐ（(4)。独立なのでいつでもよい）
