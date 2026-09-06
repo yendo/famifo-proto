@@ -92,7 +92,7 @@ func (ix *Indexer) FullScan(ctx context.Context) (Stats, error) {
 			}
 			// ルート自体を読めない（ボリュームが外れた等）。1つのドライブが
 			// 外れただけで走査全体を止めると、生きているルートの更新まで
-			// 반映されなくなる。このルートは found が0のままなので、配下の
+			// 反映されなくなる。このルートは found が0のままなので、配下の
 			// 削除は下のガードが自動的に見送る。
 			ix.log.Warn("ルートを読めないため飛ばした", "root", root, "err", err)
 			continue
