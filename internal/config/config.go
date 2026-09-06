@@ -1,51 +1,20 @@
-// Package config はコマンドライン引数の解析と検証を担う。
+// Package config はアプリの実行時設定の保持と検証を担う。
+// 設定値をどこから読むか（コマンドライン引数の解析）は呼び出し側の責務。
 package config
 
 import (
 	"errors"
-	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
-
-// ErrVersionRequested は -version が指定されたことを表す。
-var ErrVersionRequested = errors.New("version requested")
 
 // Config はアプリの実行時設定。すべてコマンドライン引数から与えられる。
 type Config struct {
 	PhotoDirs []string // 写真を収集するルートディレクトリ（複数可）
 	DataDir   string   // DBとサムネイルの置き場
 	Addr      string   // HTTPの待ち受けアドレス
-}
-
-// Parse は引数を解析して検証済みのConfigを返す。argsにはプログラム名を含めない。
-func Parse(args []string, stderr io.Writer) (Config, error) {
-	fs := flag.NewFlagSet("famifo", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-
-	var c Config
-	var dirs string
-	fs.StringVar(&dirs, "dir", "",
-		fmt.Sprintf("写真を収集するディレクトリ (必須)。%q で区切って複数指定できる",
-			string(filepath.ListSeparator)))
-	fs.StringVar(&c.DataDir, "data", "./famifo-data", "DBとサムネイルの保存先")
-	fs.StringVar(&c.Addr, "addr", ":8080", "HTTPの待ち受けアドレス")
-	showVersion := fs.Bool("version", false, "バージョンを表示して終了する")
-
-	if err := fs.Parse(args); err != nil {
-		return Config{}, err
-	}
-	// バージョンを表示するだけなので -dir は要らない。検証まで進めない。
-	if *showVersion {
-		return Config{}, ErrVersionRequested
-	}
-	// 空文字を SplitList に渡すと [""] ではなく [] が返るので、
-	// 「未指定」は Validate 側の「1つ以上必須」で捕まる。
-	c.PhotoDirs = filepath.SplitList(dirs)
-	return c, c.Validate()
 }
 
 // Validate は設定の不備を報告する。ここでのエラーは起動を中止させる。

@@ -5,11 +5,14 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"syscall"
 	"time"
@@ -48,6 +51,34 @@ func startupTimezone(t time.Time) string {
 	return t.Format("MST-07:00")
 }
 
+// parseArgs はコマンドライン引数を解析して検証済みの設定を返す。
+// argsにはプログラム名を含めない。2つ目の戻り値は -version が指定されたことを表す。
+func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
+	fs := flag.NewFlagSet("famifo", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	var c config.Config
+	var dirs string
+	fs.StringVar(&dirs, "dir", "",
+		fmt.Sprintf("写真を収集するディレクトリ (必須)。%q で区切って複数指定できる",
+			string(filepath.ListSeparator)))
+	fs.StringVar(&c.DataDir, "data", "./famifo-data", "DBとサムネイルの保存先")
+	fs.StringVar(&c.Addr, "addr", ":8080", "HTTPの待ち受けアドレス")
+	showVersion := fs.Bool("version", false, "バージョンを表示して終了する")
+
+	if err := fs.Parse(args); err != nil {
+		return config.Config{}, false, err
+	}
+	// バージョンを表示するだけなので -dir は要らない。検証まで進めない。
+	if *showVersion {
+		return config.Config{}, true, nil
+	}
+	// 空文字を SplitList に渡すと [""] ではなく [] が返るので、
+	// 「未指定」は Validate 側の「1つ以上必須」で捕まる。
+	c.PhotoDirs = filepath.SplitList(dirs)
+	return c, false, c.Validate()
+}
+
 // pageSize は一覧1ページあたりの枚数。
 const pageSize = 60
 
@@ -74,13 +105,13 @@ func main() {
 func run() error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	cfg, err := config.Parse(os.Args[1:], os.Stderr)
-	if errors.Is(err, config.ErrVersionRequested) {
-		fmt.Println("famifo-proto", versionString())
-		return nil
-	}
+	cfg, showVersion, err := parseArgs(os.Args[1:], os.Stderr)
 	if err != nil {
 		return err
+	}
+	if showVersion {
+		fmt.Println("famifo-proto", versionString())
+		return nil
 	}
 	// 常駐プロセスなので、どのビルドが動いているかはログでしか確認できない。
 	// timezone を出すのは、TZ の渡し忘れが静かに UTC になるため。
