@@ -1,14 +1,51 @@
 ---
-name: Docker image
+name: Release
 
 on: # yamllint disable-line rule:truthy
   push:
-    branches:
-      - "**"
+    tags:
+      - "v*"
 
 permissions: {}
 
 jobs:
+  goreleaser:
+    name: Go
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7 # zizmor: ignore[unpinned-uses]
+        with:
+          # go build reads the tag from the history; a shallow clone has none
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7 # zizmor: ignore[unpinned-uses]
+        with:
+          go-version-file: go.mod
+          # a poisoned build cache would reach the published binaries
+          cache: false
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest artifacts
+        uses: actions/attest@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          subject-checksums: ./dist/checksums.txt
+
   docker:
     name: Docker image
     runs-on: ubuntu-latest
@@ -24,7 +61,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7 # zizmor: ignore[unpinned-uses]
         with:
-          # go build reads the tag from the history; a shallow clone has none
+          # the go build inside the image reads the tag from the history too
           fetch-depth: 0
           persist-credentials: false
 
@@ -33,37 +70,33 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/${{ github.repository }}
+          # The NAS pulls :latest, so a pre-release tag (e.g. v0.2.0-rc1) must
+          # not move it.
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Login to GitHub Container Registry
-        if: github.ref == 'refs/heads/main'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Other branches only build: that keeps a broken Dockerfile from
-      # reaching a tag unnoticed. Releases are published by release.yml.
       - name: Build and push
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          push: ${{ github.ref == 'refs/heads/main' }}
+          push: true
           provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Attest artifacts
-        if: github.ref == 'refs/heads/main'
         uses: actions/attest@v4 # zizmor: ignore[unpinned-uses]
         with:
           subject-name: ghcr.io/${{ github.repository }}

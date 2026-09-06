@@ -39,6 +39,21 @@ original.
 CGO_ENABLED=0 go build -o famifo-proto .
 ```
 
+## Releases
+
+Tagged builds are published to [GitHub Releases](https://github.com/yendo/famifo-proto/releases)
+as `linux/amd64` and `linux/arm64` tarballs, and to `ghcr.io/yendo/famifo-proto` under both
+the tag and `latest`. No tarball is built for untagged commits, but every push to `main`
+publishes an image tagged `latest` and `sha-<commit>`.
+
+```bash
+git tag -a v0.1.0 -m "v0.1.0"
+git push origin v0.1.0
+```
+
+Check `git status` first — goreleaser refuses to release from a dirty tree, and a stray
+untracked file would otherwise stamp the binaries `+dirty`.
+
 ## Usage
 
 ```bash
@@ -61,6 +76,10 @@ every one of them.
 | `-addr` | `:8080` | HTTP listen address |
 | `-version` | | Print the build version and exit |
 
+The version comes from the build itself: a tagged build reports the tag, any
+other build reports a pseudo-version carrying the commit, and uncommitted
+changes add `+dirty`.
+
 ### Timezone
 
 Photos are grouped by the day they were taken, which depends on the machine's local timezone.
@@ -69,7 +88,7 @@ zoneinfo — a bare container, for instance. Without it the process falls back t
 those photos under the wrong day. The startup log prints the zone it resolved:
 
 ```
-msg=起動 version="a4272a5b (2026-08-26T14:27:20Z)" timezone=JST+09:00 dirs=[/photos] ...
+msg=起動 version="v0.1.0" timezone=JST+09:00 dirs=[/photos] ...
 ```
 
 Check that line before letting a first index run to completion; rebuilding one costs hours.
@@ -80,11 +99,11 @@ The image is built `FROM scratch` around the static binary — 15MB, no runtime
 dependencies.
 
 ```bash
-docker build --build-arg VERSION=$(git rev-parse --short HEAD) -t famifo .
+docker build -t famifo .
 ```
 
-`.git` is kept out of the build context, so Go's automatic VCS stamping has nothing to
-read and `-version` would report `dev`. Pass `VERSION` and it is embedded instead.
+`.git` is part of the build context, so `go build` stamps the version by itself —
+nothing has to be passed in.
 
 ### Running it
 

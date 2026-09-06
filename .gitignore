@@ -27,3 +27,6 @@ go.work.sum
 # famifo
 /famifo-proto
 /famifo-data/
+
+# artifacts
+/dist/

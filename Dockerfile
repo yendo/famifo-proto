@@ -7,15 +7,12 @@ RUN go mod download
 
 COPY . .
 
-# .git はビルド文脈から除いてあるので、Goが自動で埋め込むVCS情報は入らない。
-# 版はここで渡す。省略すると -version が "dev" になる。
-#   docker build --build-arg VERSION=$(git rev-parse --short HEAD) ...
-ARG VERSION=dev
+# 版は go build が .git から読んで埋める。そのために .dockerignore で .git を
+# 除いていない（追跡ファイルを除くと +dirty が付くので、そちらも除いていない）。
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /famifo .
+    go build -trimpath -ldflags="-s -w" -o /famifo .
 
 FROM scratch
-ARG VERSION=dev
 
 # 実行ユーザー。写真は :ro でマウントするので読み取りしか許していないが、
 # :ro を書き忘れたときの二段目の守りとして非rootで動かす。root だと
@@ -38,10 +35,6 @@ COPY --from=build /famifo /famifo
 # 落ちる。そのまま初回インデックスを作ると全件が誤った日付で固定される。
 # 起動ログの timezone= で確認できる。
 ENV TZ=Asia/Tokyo
-
-LABEL org.opencontainers.image.source="https://github.com/yendo/famifo-proto"
-LABEL org.opencontainers.image.revision="${VERSION}"
-LABEL org.opencontainers.image.description="Photo gallery for a home LAN"
 
 USER ${UID}:${GID}
 

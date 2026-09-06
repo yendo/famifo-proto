@@ -25,56 +25,19 @@ import (
 	"github.com/yendo/famifo-proto/internal/web"
 )
 
-// version はリリースビルドで -ldflags で埋める。
-var version string
-
-// formatVersion は表示用のバージョン文字列を組み立てる。
-//
-// override が空でなければそれを使う（リリースビルドで -ldflags で埋める）。
-// 空なら go build が自動で埋めるVCS情報から組み立てるので、フラグを付け
-// 忘れても版が消えない。ただし .git の無い場所でビルドするとVCS情報自体が
-// 付かないため（Dockerのマルチステージ等）、その場合は override が要る。
-func formatVersion(override string, settings []debug.BuildSetting) string {
-	if override != "" {
-		return override
-	}
-
-	var rev, when string
-	var dirty bool
-	for _, s := range settings {
-		switch s.Key {
-		case "vcs.revision":
-			rev = s.Value
-		case "vcs.time":
-			when = s.Value
-		case "vcs.modified":
-			dirty = s.Value == "true"
-		}
-	}
-
-	if rev == "" {
-		return "unknown"
-	}
-	if len(rev) > 8 {
-		rev = rev[:8]
-	}
-	// 未コミットの変更が混ざったビルドは、手元のどのコミットとも一致しない。
-	if dirty {
-		rev += "-dirty"
-	}
-	if when == "" {
-		return rev
-	}
-	return rev + " (" + when + ")"
-}
-
 // versionString は実行中のバイナリのバージョンを返す。
+//
+// go build は .git からタグとコミットを読み、モジュール自身のバージョンを
+// 埋める。タグ上でビルドすれば "v0.1.0"、途中のコミットなら擬似バージョン、
+// 未コミットの変更があれば "+dirty" が付く。.git の無い場所でビルドすると
+// Go 自身の印である "(devel)" になる。書き換えずそのまま出す。
+// go version -m の表示と一致するほうが、突き合わせるときに迷わない。
 func versionString() string {
 	bi, ok := debug.ReadBuildInfo()
-	if !ok {
-		return formatVersion(version, nil)
+	if !ok || bi.Main.Version == "" {
+		return "unknown"
 	}
-	return formatVersion(version, bi.Settings)
+	return bi.Main.Version
 }
 
 // startupTimezone は起動ログに載せるタイムゾーンの表記を返す。
