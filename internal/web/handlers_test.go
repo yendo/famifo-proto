@@ -62,7 +62,7 @@ func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, kind
 	path := filepath.Join(f.photoDir, name)
 	require.NoError(t, os.WriteFile(path, []byte("original-"+name), 0o644))
 
-	p := photo.Restore(path, takenAt, takenAt, 10)
+	p := photo.Restore(path, takenAt, takenAt)
 	require.NoError(t, f.st.Upsert(context.Background(), p))
 
 	switch kind {

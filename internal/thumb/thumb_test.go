@@ -23,7 +23,7 @@ func photoOf(t *testing.T, src string) photo.Photo {
 	t.Helper()
 	fi, err := os.Stat(src)
 	require.NoError(t, err)
-	return photo.Restore(src, fi.ModTime(), fi.ModTime(), fi.Size())
+	return photo.Restore(src, fi.ModTime(), fi.ModTime())
 }
 
 // thumbPathFor は src のサムネイルが置かれるパスを返す。IDと版はどちらも
@@ -180,7 +180,7 @@ func TestGenerateFailsOnMissingFile(t *testing.T) {
 	pv := newTestProvider(t)
 	// 消えた直後にイベントを拾った状況。行だけあって原本が無い1枚を組み立てる。
 	missing := filepath.Join(t.TempDir(), "nope.jpg")
-	p := photo.Restore(missing, time.Unix(1600000000, 0), time.Unix(1600000000, 0), 0)
+	p := photo.Restore(missing, time.Unix(1600000000, 0), time.Unix(1600000000, 0))
 
 	require.Error(t, pv.Prepare(p, 1))
 }

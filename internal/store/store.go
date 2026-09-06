@@ -27,8 +27,7 @@ CREATE TABLE IF NOT EXISTS photos (
     id        TEXT PRIMARY KEY,
     path      TEXT NOT NULL UNIQUE,
     taken_at  INTEGER NOT NULL,
-    mod_time  INTEGER NOT NULL,
-    size      INTEGER NOT NULL
+    mod_time  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_photos_order ON photos(taken_at DESC, id DESC);
 `
@@ -62,18 +61,17 @@ func Open(dbPath string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 const upsertSQL = `
-INSERT INTO photos (id, path, taken_at, mod_time, size)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO photos (id, path, taken_at, mod_time)
+VALUES (?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     path      = excluded.path,
     taken_at  = excluded.taken_at,
-    mod_time  = excluded.mod_time,
-    size      = excluded.size`
+    mod_time  = excluded.mod_time`
 
 // Upsert は写真を登録または更新する。
 func (s *Store) Upsert(ctx context.Context, p photo.Photo) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
-		p.ID(), p.Path(), p.TakenAt().Unix(), p.ModTime().Unix(), p.Size())
+		p.ID(), p.Path(), p.TakenAt().Unix(), p.ModTime().Unix())
 	if err != nil {
 		return fmt.Errorf("写真を保存できません (%s): %w", p.Path(), err)
 	}
@@ -81,15 +79,15 @@ func (s *Store) Upsert(ctx context.Context, p photo.Photo) error {
 }
 
 // idは読まない。パスから導ける値なので、復元は photo.Restore に任せる。
-const selectCols = `path, taken_at, mod_time, size`
+const selectCols = `path, taken_at, mod_time`
 
 func scanPhoto(row interface{ Scan(...any) error }) (photo.Photo, error) {
 	var path string
-	var takenAt, modTime, size int64
-	if err := row.Scan(&path, &takenAt, &modTime, &size); err != nil {
+	var takenAt, modTime int64
+	if err := row.Scan(&path, &takenAt, &modTime); err != nil {
 		return photo.Photo{}, err
 	}
-	return photo.Restore(path, time.Unix(takenAt, 0), time.Unix(modTime, 0), size), nil
+	return photo.Restore(path, time.Unix(takenAt, 0), time.Unix(modTime, 0)), nil
 }
 
 // GetByID はIDで写真を引く。見つからない場合は ErrNotFound を返す。

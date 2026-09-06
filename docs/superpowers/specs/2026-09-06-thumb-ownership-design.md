@@ -108,7 +108,7 @@ XLへの差し替え、MIME。結果として `photo` は全パッケージが�
 
 - 派生画像（一覧用・拡大用、自前生成・借用を問わず）の所有者を1パッケージにする
 - 版（mtime）を1回だけ取得し、下へ渡す
-- `photo` を id / path / takenAt / modTime / size だけの素の型に戻す
+- `photo` を id / path / takenAt / modTime だけの素の型に戻す
 - 依存を一方向にし、`web` から配置設定（`thumbDir`）を消す
 
 ## 目標としないこと
@@ -129,7 +129,7 @@ XLへの差し替え、MIME。結果として `photo` は全パッケージが�
 | `config` | 引数の解析・検証（現状維持） | なし |
 | `imagefmt` **(新)** | 対応拡張子の表。MIMEとデコード可否 | なし |
 | `synology` | `@eaDir` の規約（現状維持） | なし |
-| `photo` | インデックスの1行。id / path / takenAt / modTime / size | なし |
+| `photo` | インデックスの1行。id / path / takenAt / modTime | なし |
 | `exif` | EXIFの読み取り（現状維持、置き場所は要検討） | なし |
 | `thumb` **(移動)** | 派生画像の唯一の所有者。生成・掃除・配信パスの決定 | `photo` `imagefmt` `synology` |
 | `store` | SQLite。`photo.Photo` を読み書きする入れ物 | `photo` |

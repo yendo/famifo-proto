@@ -114,7 +114,7 @@ func TestSmallPathSeesAThumbThatAppearsAfterIndexing(t *testing.T) {
 func TestSmallPathIgnoresAThumbFromAnotherVersion(t *testing.T) {
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.jpg")
-	stale := photo.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour), p.Size())
+	stale := photo.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour))
 	writeFileAt(t, f.pv.GeneratedPath(stale), "古い版のサムネイル")
 
 	got, _ := f.pv.SmallPath(p)
@@ -138,7 +138,7 @@ func TestGeneratedPathShardsByTheFirstTwoCharsOfTheID(t *testing.T) {
 func TestGeneratedPathVariesWithTheSourceVersion(t *testing.T) {
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.jpg")
-	older := photo.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour), p.Size())
+	older := photo.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour))
 
 	require.NotEqual(t, f.pv.GeneratedPath(p), f.pv.GeneratedPath(older),
 		"版が違えば別の名前になる")

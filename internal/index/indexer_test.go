@@ -31,7 +31,7 @@ func (f *fixture) thumbPath(t *testing.T, src string) string {
 	t.Helper()
 	fi, err := os.Stat(src)
 	require.NoError(t, err)
-	return f.thumbs.GeneratedPath(photo.Restore(src, fi.ModTime(), fi.ModTime(), fi.Size()))
+	return f.thumbs.GeneratedPath(photo.Restore(src, fi.ModTime(), fi.ModTime()))
 }
 
 func newFixture(t *testing.T) *fixture {

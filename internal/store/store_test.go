@@ -24,7 +24,7 @@ func openTestStore(t *testing.T) *store.Store {
 }
 
 func photoAt(path string, takenAt time.Time) photo.Photo {
-	return photo.Restore(path, takenAt, takenAt, 1234)
+	return photo.Restore(path, takenAt, takenAt)
 }
 
 // store.Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
@@ -67,7 +67,6 @@ func TestUpsertThenGetByID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, want.Path(), got.Path())
 	require.Equal(t, want.TakenAt().Unix(), got.TakenAt().Unix())
-	require.Equal(t, want.Size(), got.Size())
 	require.Equal(t, want.ModTime().Unix(), got.ModTime().Unix())
 }
 
@@ -136,7 +135,7 @@ func TestAllPaths(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 	p := photo.Restore("/photos/a.jpg",
-		time.Unix(1600000000, 0), time.Unix(1650000000, 0), 1234)
+		time.Unix(1600000000, 0), time.Unix(1650000000, 0))
 	require.NoError(t, s.Upsert(ctx, p))
 
 	got, err := s.AllPaths(ctx)

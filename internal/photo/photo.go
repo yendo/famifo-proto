@@ -26,7 +26,6 @@ type Photo struct {
 	path    string    // ディスク上の絶対パス
 	takenAt time.Time // EXIF撮影日時、無ければmtime
 	modTime time.Time // ファイルのmtime。再スキャン時の変更検知に使う
-	size    int64
 }
 
 // New はインデックスに載せる1枚を組み立てる。
@@ -43,7 +42,6 @@ func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
 		path:    path,
 		takenAt: resolveTakenAt(exifTakenAt, fi.ModTime()),
 		modTime: fi.ModTime(),
-		size:    fi.Size(),
 	}
 }
 
@@ -51,13 +49,12 @@ func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Photo {
 //
 // IDは保存された値ではなくパスから導き直す。導出の規則はこのパッケージにしか
 // なく、インデックスに入っていた値を信じると規則が二重化するため。
-func Restore(path string, takenAt, modTime time.Time, size int64) Photo {
+func Restore(path string, takenAt, modTime time.Time) Photo {
 	return Photo{
 		id:      IDFor(path),
 		path:    path,
 		takenAt: takenAt,
 		modTime: modTime,
-		size:    size,
 	}
 }
 
@@ -73,9 +70,6 @@ func (p Photo) TakenAt() time.Time { return p.takenAt }
 // ModTime はファイルのmtimeを返す。再スキャン時の変更検知と、
 // サムネイルがどの版から作られたかの判別に使う。
 func (p Photo) ModTime() time.Time { return p.modTime }
-
-// Size はファイルサイズを返す。
-func (p Photo) Size() int64 { return p.size }
 
 // IDFor はパスから安定したIDを導出する。
 // URLにファイルシステムのパスを露出させないためと、
