@@ -130,10 +130,10 @@ XLへの差し替え、MIME。結果として `photo` は全パッケージが�
 | `imagefmt` **(新)** | 対応拡張子の表。MIMEとデコード可否 | なし |
 | `synology` | `@eaDir` の規約（現状維持） | なし |
 | `photo` | インデックスの1行。id / path / takenAt / modTime | なし |
-| `exif` | EXIFの読み取り（現状維持、置き場所は要検討） | なし |
+| `index/exif` | EXIFの読み取り（現状維持） | なし |
 | `thumb` **(移動)** | 派生画像の唯一の所有者。生成・掃除・配信パスの決定 | `photo` `imagefmt` `synology` |
 | `store` | SQLite。`photo.Photo` を読み書きする入れ物 | `photo` |
-| `index` | ディスクとインデックスの同期 | `photo` `store` `thumb` `exif` `imagefmt` |
+| `index` | ディスクとインデックスの同期 | `photo` `store` `thumb` `index/exif` `imagefmt` |
 | `web` | HTTP配信のみ | `photo` `store` `thumb` |
 
 依存が全部下向きになる。`photo` は `synology` を知らなくなる。
@@ -283,10 +283,32 @@ func IsDecodable(name string) bool  // 自前で作れるか  (旧 photo.IsDecod
 func ContentType(name string) string
 ```
 
-## 未決の判断
+### `internal/index/exif` は動かさない
 
-- **`exif` の置き場所。** `index/exif` のままでよいか、`thumb` が向きを必要とする以上
-  同じ階層へ出すか
+`thumb` を `index` の下から出したのは、書き手（`index`）と読み手（`web`）の2人が
+いたからである。同じ問いを `exif` に当てると、利用者は `index` だけである。
+
+```
+$ go list -deps ./internal/thumb | grep famifo
+internal/imagefmt
+internal/photo
+internal/synology
+internal/thumb          ← exif は無い
+```
+
+`thumb` が受け取るのは `orientation uint16` という値であって、`exif` パッケージには
+依存していない。`photo` や `thumb` のコメントに `internal/index/exif` が出てくるのは
+出どころを説明しているだけである。
+
+したがって `index` のパッケージコメントが言う「取り込み時にしか使わないものは
+サブパッケージに置く」のとおりで、動かす理由がない。
+
+**動かす条件**は `index` 以外がEXIFを読みたくなったときで、現実的な引き金は拡大表示に
+撮影情報（カメラ・レンズ・絞り）を出す機能である。そのとき `web` が読み手になるので、
+`thumb` と同じ理由で `internal/exif` へ出す。
+
+`open` を1回に減らす件はこの判断を変えない。`exif.Read` の引数が `path` から `*os.File`
+に変わるだけで、呼ぶのは `index` のままである。
 
 ## 引き換えになるもの
 
