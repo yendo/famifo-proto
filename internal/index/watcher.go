@@ -14,6 +14,10 @@ import (
 	"github.com/yendo/famifo-proto/internal/synology"
 )
 
+// defaultDebounce は最後の書き込みイベントから実際にインデックスするまでの
+// 待ち時間。コピー途中のファイルをデコードしに行かないための猶予。
+const defaultDebounce = 2 * time.Second
+
 // Watcher はfsnotifyでディレクトリツリーを監視し、変更をインデックスに反映する。
 type Watcher struct {
 	ix       *Indexer
@@ -22,14 +26,13 @@ type Watcher struct {
 	debounce time.Duration
 }
 
-// NewWatcher はWatcherを作る。debounceは最後の書き込みイベントから実際に
-// インデックスするまでの待ち時間。ファイルのコピー中に読み込むのを避ける。
-func NewWatcher(ix *Indexer, log *slog.Logger, debounce time.Duration) (*Watcher, error) {
+// NewWatcher はWatcherを作る。
+func NewWatcher(ix *Indexer, log *slog.Logger) (*Watcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("監視を開始できません: %w", err)
 	}
-	return &Watcher{ix: ix, fsw: fsw, log: log, debounce: debounce}, nil
+	return &Watcher{ix: ix, fsw: fsw, log: log, debounce: defaultDebounce}, nil
 }
 
 func (w *Watcher) Close() error { return w.fsw.Close() }

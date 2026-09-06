@@ -82,10 +82,6 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 // pageSize は一覧1ページあたりの枚数。
 const pageSize = 60
 
-// watchDebounce はファイル書き込みが落ち着いたと判断するまでの待ち時間。
-// コピー途中のファイルをデコードしに行かないための猶予。
-const watchDebounce = 2 * time.Second
-
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -155,7 +151,7 @@ func run() error {
 			"indexed", stats.Indexed, "unchanged", stats.Unchanged,
 			"removed", stats.Removed, "skipped", stats.Skipped)
 
-		watcher, err := index.NewWatcher(ix, log, watchDebounce)
+		watcher, err := index.NewWatcher(ix, log)
 		if err != nil {
 			return err
 		}

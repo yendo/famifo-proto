@@ -13,14 +13,19 @@ import (
 	"github.com/yendo/famifo-proto/internal/index"
 )
 
+// testDebounce は本番（defaultDebounce）の2秒を待たずに済ませるための値。
+// 待ち時間そのものが結果を変えるわけではなく、短くしてもテストの内容は変わらない。
+// 本番と同じ2秒にすると、取り込みを待つテストがそれぞれ2〜3秒、増えないことを
+// 確かめるテストが6秒かかり、パッケージ全体で数十秒になる。
 const testDebounce = 100 * time.Millisecond
 
 // startWatcher はWatcherをバックグラウンドで動かし、停止まで面倒を見る。
 func startWatcher(t *testing.T, f *fixture) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	w, err := index.NewWatcher(f.ix, log, testDebounce)
+	w, err := index.NewWatcher(f.ix, log)
 	require.NoError(t, err)
+	w.SetDebounce(testDebounce)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
