@@ -296,11 +296,12 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	webSrv, err := web.NewServer(st, thumbDir, testChunkSize, log)
+	webSrv, err := web.NewServer(st, thumbDir, log)
 	if err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
 	}
+	webSrv.SetChunkSize(testChunkSize)
 
 	srv = httptest.NewServer(webSrv.Handler())
 	return tempDir, srv, func() { st.Close() }, nil
@@ -1777,8 +1778,9 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 
 	require.NoError(t, prepareManyTestPhotos(st, photoDir, thumbDir))
 
-	webSrv, err := web.NewServer(st, thumbDir, stallChunkSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	webSrv, err := web.NewServer(st, thumbDir, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
+	webSrv.SetChunkSize(stallChunkSize)
 
 	var items, dropped int64
 	h := webSrv.Handler()
