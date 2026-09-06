@@ -16,27 +16,35 @@ func TestValidateRejectsBadInput(t *testing.T) {
 
 	tests := map[string]config.Config{
 		"dirが未指定": {
-			DataDir: "./famifo-data", Addr: ":8080",
+			DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1,
 		},
 		"dirが存在しない": {
 			PhotoDirs: []string{filepath.Join(dir, "nope")},
-			DataDir:   "./famifo-data", Addr: ":8080",
+			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1,
 		},
 		"dirがディレクトリではない": {
 			PhotoDirs: []string{file},
-			DataDir:   "./famifo-data", Addr: ":8080",
+			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1,
 		},
 		"addrが空": {
 			PhotoDirs: []string{dir},
-			DataDir:   "./famifo-data", Addr: "",
+			DataDir:   "./famifo-data", Addr: "", ScanWorkers: 1,
 		},
 		"dataがdirの中": {
 			PhotoDirs: []string{dir},
-			DataDir:   filepath.Join(dir, "famifo-data"), Addr: ":8080",
+			DataDir:   filepath.Join(dir, "famifo-data"), Addr: ":8080", ScanWorkers: 1,
 		},
 		"dataがdirと同じ": {
 			PhotoDirs: []string{dir},
-			DataDir:   dir, Addr: ":8080",
+			DataDir:   dir, Addr: ":8080", ScanWorkers: 1,
+		},
+		"scan-workersが0": {
+			PhotoDirs: []string{dir},
+			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 0,
+		},
+		"scan-workersが負": {
+			PhotoDirs: []string{dir},
+			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: -1,
 		},
 	}
 	for name, c := range tests {
@@ -54,7 +62,7 @@ func TestValidateAcceptsSiblingDataDir(t *testing.T) {
 
 	// "photos-data" は文字列としては "photos" で始まるが、兄弟ディレクトリであり
 	// 中には無い。プレフィックス比較ではなくパス階層で判定できていることの確認。
-	c := config.Config{PhotoDirs: []string{dir}, DataDir: data, Addr: ":8080"}
+	c := config.Config{PhotoDirs: []string{dir}, DataDir: data, Addr: ":8080", ScanWorkers: 1}
 
 	require.NoError(t, c.Validate())
 }
@@ -69,7 +77,7 @@ func TestDerivedPaths(t *testing.T) {
 func TestValidateRejectsDuplicateRoots(t *testing.T) {
 	dir := t.TempDir()
 
-	c := config.Config{PhotoDirs: []string{dir, dir}, DataDir: "./famifo-data", Addr: ":8080"}
+	c := config.Config{PhotoDirs: []string{dir, dir}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1}
 
 	require.Error(t, c.Validate(), "同じルートを2回走査しても無駄なだけ")
 }
@@ -80,7 +88,7 @@ func TestValidateRejectsNestedRoots(t *testing.T) {
 	inner := filepath.Join(outer, "sub")
 	require.NoError(t, os.MkdirAll(inner, 0o755))
 
-	c := config.Config{PhotoDirs: []string{outer, inner}, DataDir: "./famifo-data", Addr: ":8080"}
+	c := config.Config{PhotoDirs: []string{outer, inner}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1}
 
 	require.Error(t, c.Validate())
 }
@@ -92,7 +100,7 @@ func TestValidateRejectsDataInsideAnyRoot(t *testing.T) {
 
 	c := config.Config{
 		PhotoDirs: []string{a, b},
-		DataDir:   filepath.Join(b, "famifo-data"), Addr: ":8080",
+		DataDir:   filepath.Join(b, "famifo-data"), Addr: ":8080", ScanWorkers: 1,
 	}
 
 	require.Error(t, c.Validate(), "2つ目のルートの中でも弾くこと")
