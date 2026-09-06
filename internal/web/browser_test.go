@@ -345,7 +345,7 @@ func writeTestPhoto(path string, i int, takenAt time.Time) error {
 // indexAll は本番と同じ取り込み経路でコーパスをインデックスに載せる。
 // 手でPhotoを組むと、Photoの構造が変わるたびにブラウザテストが巻き添えになる。
 func indexAll(st *store.Store, photoDir, thumbDir string) (index.Stats, error) {
-	ix, err := index.New([]string{photoDir}, st, thumbDir, 480,
+	ix, err := index.New([]string{photoDir}, st, thumbDir,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		return index.Stats{}, err

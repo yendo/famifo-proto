@@ -27,12 +27,13 @@ type Indexer struct {
 }
 
 // New はIndexerを作る。rootsは写真を収集するルートディレクトリ、
-// thumbDir は生成したサムネイルの置き場所、thumbSize は長辺の最大ピクセル数。
+// thumbDir は生成したサムネイルの置き場所。
 //
 // サムネイルの供給者はここで組み立てる。呼び出し側にとってサムネイルは
-// インデックス作成の副産物であって、単体で持ち回る道具ではない。
-func New(roots []string, st *store.Store, thumbDir string, thumbSize int, log *slog.Logger) (*Indexer, error) {
-	thumbProvider, err := thumb.NewProvider(thumbDir, thumbSize)
+// インデックス作成の副産物であって、単体で持ち回る道具ではない。寸法は
+// thumb の既定に任せる。利用者が変えられる設定ではない。
+func New(roots []string, st *store.Store, thumbDir string, log *slog.Logger) (*Indexer, error) {
+	thumbProvider, err := thumb.NewProvider(thumbDir)
 	if err != nil {
 		return nil, err
 	}

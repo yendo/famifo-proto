@@ -45,7 +45,7 @@ func newFixture(t *testing.T) *fixture {
 
 	thumbDir := filepath.Join(base, "thumbs")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix, err := index.New([]string{root}, st, thumbDir, 100, log)
+	ix, err := index.New([]string{root}, st, thumbDir, log)
 	require.NoError(t, err)
 
 	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: root, log: log}
@@ -69,7 +69,7 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 
 	thumbDir := filepath.Join(base, "thumbs")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix, err := index.New(roots, st, thumbDir, 100, log)
+	ix, err := index.New(roots, st, thumbDir, log)
 	require.NoError(t, err)
 
 	return &fixture{ix: ix, st: st, thumbDir: thumbDir, root: roots[0], log: log}, roots
