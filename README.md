@@ -110,7 +110,6 @@ nothing has to be passed in.
 
 ```bash
 docker run -d --restart unless-stopped -p 8080:8080 \
-  --user 1029:100 \
   -v /volume1/photo:/photos:ro \
   -v /volume1/famifo/data:/data \
   famifo
@@ -123,7 +122,6 @@ To index several separate locations, mount each one and name it as a root:
 
 ```bash
 docker run -d --restart unless-stopped -p 8080:8080 \
-  --user 1029:100 \
   -v /volume1/photo:/photos/main:ro \
   -v /mnt/usb:/photos/usb:ro \
   -v /volume1/famifo/data:/data \
@@ -145,18 +143,26 @@ until the first update.
 
 ### Running as a non-root user
 
-The container defaults to uid/gid `1029:100`. Docker cannot address a user by name here —
-a `scratch` image has no `/etc/passwd` — so the id is numeric. To match an account on
-the host:
+The container runs as uid/gid `65534:65534` — `nobody:nogroup`, the conventional
+unprivileged id, tied to no particular host. Docker cannot address a user by name here —
+a `scratch` image has no `/etc/passwd` — so the id is numeric. The data directory has to
+be owned by it:
 
 ```bash
-ssh nas 'id famifo'                                     # find the uid and gid
-ssh nas 'sudo chown 1029:100 /volume1/famifo/data'      # let it write there
-docker run --user 1029:100 ...                          # no rebuild needed
+sudo chown 65534:65534 /volume1/famifo/data
 ```
 
-`--build-arg UID=1029 --build-arg GID=100` bakes the same thing into the image, for
-environments whose UI cannot pass `--user`.
+To run as some other account instead, pass it at run time; no rebuild is needed:
+
+```bash
+id famifo                                  # find the uid and gid
+sudo chown 1000:1000 /volume1/famifo/data  # let it write there
+docker run --user 1000:1000 ...
+```
+
+Do not pick an id of 65536 or above. Under userns-remap and rootless Docker the subuid
+allocation is 65536 wide by default — container uids `0..65535` — and anything past it
+cannot be mapped, so the container fails to start.
 
 Ownership of a bind mount comes from the host directory and is not adjusted by Docker,
 so the directory has to be writable by that id beforehand. Named volumes behave

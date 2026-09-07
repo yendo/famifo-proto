@@ -14,20 +14,6 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 
 FROM scratch
 
-# 実行ユーザー。写真は :ro でマウントするので読み取りしか許していないが、
-# :ro を書き忘れたときの二段目の守りとして非rootで動かす。root だと
-# 書き忘れた瞬間に写真の共有フォルダへの全権を持つ。
-#
-# Docker はユーザー名では動かせない。scratch には /etc/passwd が無いので
-# uid/gid の数値で指定する。既定値は配置先の NAS で作った famifo ユーザーに
-# 合わせてある。別の環境で使うなら:
-#
-#   ssh nas 'id famifo'            → uid/gid を調べる
-#   docker run --user 1000:1000 ... → 実行時に指定（再ビルド不要）
-#   docker build --build-arg UID=1000 --build-arg GID=1000 ...  → 焼き込む
-ARG UID=1029
-ARG GID=100
-
 COPY --from=build /famifo /famifo
 
 # 日付の切り出しは time.Local に依存する。タイムゾーンデータベースはバイナリに
@@ -36,7 +22,21 @@ COPY --from=build /famifo /famifo
 # 起動ログの timezone= で確認できる。
 ENV TZ=Asia/Tokyo
 
-USER ${UID}:${GID}
+# 実行ユーザー。写真は :ro でマウントするので読み取りしか許していないが、
+# :ro を書き忘れたときの二段目の守りとして非rootで動かす。root だと
+# 書き忘れた瞬間に写真の共有フォルダへの全権を持つ。
+#
+# Docker はユーザー名では動かせない。scratch には /etc/passwd が無いので
+# uid/gid の数値で指定する。65534:65534 は nobody:nogroup の慣例値で、特定の
+# 環境に紐づかない。ホスト側のアカウントに合わせたければ実行時に渡す。
+# 再ビルドは要らない:
+#
+#   docker run --user 1000:1000 ...
+#
+# 65536 以上は選ばない。userns-remap や rootless Docker では subuid の割り当てが
+# 既定で 65536 個（コンテナ内 uid 0..65535）しかなく、範囲外の uid は起動時に
+# 解決できずに落ちる。
+USER 65534:65534
 
 # HEALTHCHECK は付けない。scratch にはシェルも curl も無いので、exec 形式で
 # 動かすには famifo 自身にヘルスチェック用のフラグを実装することになる。
@@ -49,7 +49,7 @@ EXPOSE 8080
 
 # 既定はマウントだけで動く形。写真は /photos の下に、データは /data に置く。
 #
-#   ssh nas 'sudo mkdir -p /volume1/famifo/data && sudo chown 1029:100 /volume1/famifo/data'
+#   ssh nas 'sudo mkdir -p /volume1/famifo/data && sudo chown 65534:65534 /volume1/famifo/data'
 #
 #   docker run -d --restart unless-stopped -p 8080:8080 \
 #     -v /volume1/photo:/photos:ro \
