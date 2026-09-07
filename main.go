@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sync"
 	"syscall"
 	"time"
 
@@ -81,6 +82,11 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	// 効くので、CPU数が最善とは限らない。実機で詰められるようフラグにしてある。
 	fs.IntVar(&c.ScanWorkers, "scan-workers", defaultScanWorkers(),
 		"同時に取り込む枚数（スキャンとfsnotifyの追従に共通）")
+	// fsnotify は取りこぼす。溢れたことは検知できるが、監視枠を使い切って
+	// 監視を張れなかったディレクトリのように、取りこぼしたと知る手立てが無い
+	// 経路もある。定期的に突き合わせ直せば、検知の可否によらず整合性が戻る。
+	fs.DurationVar(&c.ScanInterval, "scan-interval", time.Hour,
+		"インデックスをディスクの実態と突き合わせ直す間隔")
 	showVersion := fs.Bool("version", false, "バージョンを表示して終了する")
 
 	if err := fs.Parse(args); err != nil {
@@ -120,7 +126,7 @@ func run() error {
 	log.Info("起動", "version", versionString(),
 		"timezone", startupTimezone(time.Now()),
 		"dirs", cfg.PhotoDirs, "data", cfg.DataDir, "addr", cfg.Addr,
-		"scan-workers", cfg.ScanWorkers)
+		"scan-workers", cfg.ScanWorkers, "scan-interval", cfg.ScanInterval)
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {
 		return err
@@ -159,7 +165,36 @@ func run() error {
 
 	ix := index.New(cfg.PhotoDirs, st, thumbs, cfg.ScanWorkers, log)
 
+	// スキャンより先に監視を張る。逆にすると、スキャンが走査を終えてから監視が
+	// 張られるまでの間に置かれた写真を、どちらも拾えない。数千枚でスキャンが
+	// 数分かかる構成では、その窓のあいだの変更が次の起動まで反映されなくなる。
+	// NewWatcher が戻った時点で監視は張れている。
+	watcher, err := index.NewWatcher(ix, log)
+	if err != nil {
+		return err
+	}
+	defer watcher.Close()
+	log.Info("変更の監視を開始", "dirs", cfg.PhotoDirs)
+
+	// 取り込みを走らせる goroutine の終了を待ってから store を閉じる。待たずに
+	// 閉じると、あとから Upsert するワーカーが閉じたDBに書きに行く。
+	// defer の順序で st.Close() より先に走る。
+	var indexers sync.WaitGroup
+	defer func() {
+		stop() // 監視と定期スキャンに終わるよう伝える
+		indexers.Wait()
+	}()
+
+	indexers.Add(1)
+	go func() {
+		defer indexers.Done()
+		if err := watcher.Run(ctx); err != nil {
+			log.Error("監視が停止しました", "err", err)
+		}
+	}()
+
 	// fsnotifyは停止中の変更を検知できないので、起動のたびに実態と突き合わせる。
+	// 1回目はここで同期に走らせる。失敗したら起動を止めるためである。
 	log.Info("スキャンを開始", "dirs", cfg.PhotoDirs)
 	// 所要時間も出す。取り込みの重さを変える変更をしたとき、前後を突き合わせられる
 	// 記録がログにしか残らないため。
@@ -174,17 +209,13 @@ func run() error {
 			"indexed", stats.Indexed, "unchanged", stats.Unchanged,
 			"removed", stats.Removed, "skipped", stats.Skipped)
 
-		watcher, err := index.NewWatcher(ix, log)
-		if err != nil {
-			return err
-		}
-		defer watcher.Close()
+		// 2回目以降は間隔をおいて繰り返す。監視の取りこぼしはこれで回復する。
+		indexers.Add(1)
 		go func() {
-			if err := watcher.Run(ctx); err != nil {
-				log.Error("監視が停止しました", "err", err)
-			}
+			defer indexers.Done()
+			ix.RunScans(ctx, cfg.ScanInterval, watcher.ScanRequests())
 		}()
-		log.Info("変更の監視を開始", "dirs", cfg.PhotoDirs)
+		log.Info("定期スキャンを開始", "interval", cfg.ScanInterval)
 	}
 
 	// ListenAndServeの失敗はstop()経由でctx.Done()も閉じるため、どちらが

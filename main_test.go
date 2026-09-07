@@ -61,6 +61,8 @@ func TestParseArgsUsesDefaults(t *testing.T) {
 	require.Equal(t, ":8080", got.Addr)
 	require.Equal(t, max(runtime.NumCPU()/2, 1), got.ScanWorkers,
 		"既定はCPU数の半分。設定を書かなくても並行に取り込みつつ、CPUは使い切らない")
+	require.Equal(t, time.Hour, got.ScanInterval,
+		"監視が取りこぼしても既定で1時間以内に整合性が戻る")
 }
 
 func TestParseArgsOverridesEveryFlag(t *testing.T) {
@@ -68,13 +70,14 @@ func TestParseArgsOverridesEveryFlag(t *testing.T) {
 
 	got, _, err := parseArgs([]string{
 		"-dir", dir, "-data", "/var/famifo", "-addr", "192.168.1.10:9000",
-		"-scan-workers", "3",
+		"-scan-workers", "3", "-scan-interval", "10m",
 	}, io.Discard)
 
 	require.NoError(t, err)
 	require.Equal(t, "/var/famifo", got.DataDir)
 	require.Equal(t, "192.168.1.10:9000", got.Addr)
 	require.Equal(t, 3, got.ScanWorkers)
+	require.Equal(t, 10*time.Minute, got.ScanInterval)
 }
 
 func TestParseArgsSplitsDirOnTheListSeparator(t *testing.T) {

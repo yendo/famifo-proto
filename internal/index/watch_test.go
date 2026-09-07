@@ -2,6 +2,7 @@ package index_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/index"
 )
@@ -21,7 +23,7 @@ import (
 const testDebounce = 100 * time.Millisecond
 
 // startWatcher はWatcherをバックグラウンドで動かし、停止まで面倒を見る。
-func startWatcher(t *testing.T, f *fixture) {
+func startWatcher(t *testing.T, f *fixture) *index.Watcher {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	w, err := index.NewWatcher(f.ix, log)
@@ -40,6 +42,7 @@ func startWatcher(t *testing.T, f *fixture) {
 		require.NoError(t, w.Close())
 	})
 	time.Sleep(50 * time.Millisecond) // 監視の登録が終わるのを待つ
+	return w
 }
 
 // requireCount はDBの枚数が期待値になるまで待つ。
@@ -363,5 +366,99 @@ func TestWatcherLeavesNoRowForADirectoryMovedWhileBeingIndexed(t *testing.T) {
 	require.NoError(t, err)
 	for p := range paths {
 		require.Contains(t, p, "moved", "移動元のパスの行が残ってはいけない: %s", p)
+	}
+}
+
+func TestWatcherWatchesRootsBeforeRunStarts(t *testing.T) {
+	f := newFixture(t)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	w, err := index.NewWatcher(f.ix, log)
+	require.NoError(t, err)
+	w.SetDebounce(testDebounce)
+
+	// NewWatcher が戻った時点で監視が張れていること。起動時は「監視を張る →
+	// スキャン」の順にするので、Run の開始を待ってから張るのでは間に合わない。
+	// スキャンが走査を終えたあとに置かれた写真を、どちらも拾えなくなる。
+	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = w.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+		require.NoError(t, w.Close())
+	})
+
+	requireCount(t, f, 1)
+}
+
+func TestWatcherAsksForAScanWhenAPhotoDisappearsWhileBeingIndexed(t *testing.T) {
+	f := newFixture(t)
+	w := startWatcher(t, f)
+
+	// 取り込みの最中に消えた写真は、ワーカーが後から Upsert して存在しない
+	// パスの行を残しうる。スキャンだけがそれを回収できるので、次の1回を前倒す。
+	src := mkfifoPhoto(t, f.root, "a.heic")
+	fw := waitForIndexing(t, src)
+	t.Cleanup(func() { _ = fw.Close() })
+
+	// ルートの外へ移す。移動先のCreateを拾わせないため。
+	require.NoError(t, os.Rename(src, filepath.Join(t.TempDir(), "moved.heic")))
+
+	select {
+	case <-w.ScanRequests():
+	case <-time.After(2 * time.Second):
+		t.Fatal("スキャンの前倒しを要求しなかった")
+	}
+}
+
+func TestWatcherDoesNotAskForAScanWhenNothingIsBeingIndexed(t *testing.T) {
+	f := newFixture(t)
+	w := startWatcher(t, f)
+	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+	requireCount(t, f, 1)
+	time.Sleep(100 * time.Millisecond) // ワーカーが持ち場を空けるのを待つ
+
+	// 取り込みが走っていない間の削除は、監視だけで正しく反映できる。
+	require.NoError(t, os.Remove(path))
+	requireCount(t, f, 0)
+
+	select {
+	case <-w.ScanRequests():
+		t.Fatal("取り込みが走っていないのにスキャンを要求した")
+	default:
+	}
+}
+
+func TestWatcherAsksForAScanOnEventOverflow(t *testing.T) {
+	f := newFixture(t)
+	w := startWatcher(t, f)
+
+	// 溢れは、変更を取りこぼしたと確実に分かる唯一の合図である。
+	// 落ちたぶんを取り戻せるのはスキャンだけなので、次の1回を前倒す。
+	w.InjectWatchError(fsnotify.ErrEventOverflow)
+
+	select {
+	case <-w.ScanRequests():
+	case <-time.After(2 * time.Second):
+		t.Fatal("溢れを検知してもスキャンを要求しなかった")
+	}
+}
+
+func TestWatcherDoesNotAskForAScanOnOtherWatchErrors(t *testing.T) {
+	f := newFixture(t)
+	w := startWatcher(t, f)
+
+	w.InjectWatchError(errors.New("監視の別の失敗"))
+
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-w.ScanRequests():
+		t.Fatal("溢れ以外のエラーで走査をやり直してはいけない")
+	default:
 	}
 }

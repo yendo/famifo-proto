@@ -302,3 +302,109 @@ func TestScanWorksWithASingleWorker(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, stats.Indexed)
 }
+
+func TestScanDoesNotWaitForTheWatchersIndexing(t *testing.T) {
+	f := newFixture(t)
+
+	// 監視を張る前に置くのでCreateのイベントは飛ばない。この1枚はスキャンだけが拾う。
+	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+	startWatcher(t, f)
+
+	// 監視の側に終わらない取り込みを1件持たせる。
+	stuck := mkfifoPhoto(t, f.root, "stuck.heic")
+	w := waitForIndexing(t, stuck)
+	// 取り込みを解く係を先に登録する。HEICは自前でサムネイルを作らないので、
+	// 書き手を閉じてEOFを返すだけで取り込みは進む。ここで登録しておかないと、
+	// 検証に失敗して途中で終わったときに監視の停止が取り込みを待って固まる。
+	t.Cleanup(func() { _ = w.Close() })
+
+	// ルートの外へ移す。スキャンの走査はこれを見つけないので、
+	// executor に残るのはスキャンが自分では出していない仕事だけになる。
+	moved := filepath.Join(t.TempDir(), "stuck.heic")
+	require.NoError(t, os.Rename(stuck, moved))
+
+	type scanResult struct {
+		stats index.Stats
+		err   error
+	}
+	done := make(chan scanResult, 1)
+	go func() {
+		stats, err := f.ix.Scan(context.Background())
+		done <- scanResult{stats, err}
+	}()
+
+	select {
+	case r := <-done:
+		require.NoError(t, r.err)
+		require.Equal(t, 1, r.stats.Indexed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Scan が監視の側の取り込みの完了まで待っている")
+	}
+}
+
+func TestRunScansKeepsReconcilingOnItsInterval(t *testing.T) {
+	f := newFixture(t)
+	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.ix.RunScans(ctx, 50*time.Millisecond, nil)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	requireCount(t, f, 1)
+
+	// 監視は張っていないので、この1枚を拾えるのは定期スキャンだけである。
+	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
+	requireCount(t, f, 2)
+}
+
+func TestGhostRowFromAScanIsReclaimedByTheEarlyScan(t *testing.T) {
+	f := newFixture(t)
+	// ルートを空にしない。1枚も見つからないルートの配下は purge が見送るため。
+	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
+	album := filepath.Join(f.root, "album")
+	require.NoError(t, os.MkdirAll(album, 0o755))
+	src := mkfifoPhoto(t, album, "a.heic")
+
+	// 監視の前から在るファイルにはCreateのイベントが飛ばない。
+	// この2枚を取り込むのはスキャンだけである。
+	w := startWatcher(t, f)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	// 起動時のスキャン。main.go と同じく同期で1回走らせる。
+	scanDone := make(chan struct{})
+	go func() {
+		defer close(scanDone)
+		_, _ = f.ix.Scan(ctx)
+	}()
+	fw := waitForIndexing(t, src)
+	t.Cleanup(func() { _ = fw.Close() })
+
+	// 取り込みの最中にディレクトリごとルートの外へ移す。行が生まれるのは
+	// 取り込みの完了時なので、この時点の削除は空振りする。
+	require.NoError(t, os.Rename(album, filepath.Join(t.TempDir(), "album")))
+	time.Sleep(50 * time.Millisecond) // 削除が取り込みの完了より先に処理される順序を作る
+
+	require.NoError(t, fw.Close())
+	<-scanDone
+	requireCount(t, f, 2) // b.jpg と、存在しない album/a.heic の幽霊行
+
+	// スキャンのループを始める。定期実行は1時間後なので、削除の時点で積まれた
+	// 前倒しの要求が効かなければ幽霊行は残り続ける。
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		f.ix.RunScans(ctx, time.Hour, w.ScanRequests())
+	}()
+	t.Cleanup(func() { cancel(); <-loopDone })
+
+	requireCount(t, f, 1)
+}

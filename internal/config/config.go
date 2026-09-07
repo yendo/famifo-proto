@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Config はアプリの実行時設定。すべてコマンドライン引数から与えられる。
@@ -16,6 +17,9 @@ type Config struct {
 	DataDir     string   // DBとサムネイルの置き場
 	Addr        string   // HTTPの待ち受けアドレス
 	ScanWorkers int      // 同時に取り込む枚数（スキャンとfsnotifyの追従に共通）
+	// ScanInterval はインデックスをディスクの実態と突き合わせ直す間隔。
+	// fsnotify の取りこぼしはこれで回復する。
+	ScanInterval time.Duration
 }
 
 // Validate は設定の不備を報告する。ここでのエラーは起動を中止させる。
@@ -59,6 +63,11 @@ func (c Config) Validate() error {
 	// 黙って読み替えると、走査が始まらない設定を無言で書き換えることになる。
 	if c.ScanWorkers < 1 {
 		return fmt.Errorf("-scan-workers は1以上にしてください: %d", c.ScanWorkers)
+	}
+	// 0を「無効」と読み替えない。待たずに走査を繰り返すことになり、それが
+	// 止まらなくなる。回したくなければ十分に長い値を渡せばよい。
+	if c.ScanInterval <= 0 {
+		return fmt.Errorf("-scan-interval は正の値にしてください: %s", c.ScanInterval)
 	}
 	for _, dir := range c.PhotoDirs {
 		inside, err := dirContains(dir, c.DataDir)

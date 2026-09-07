@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/config"
@@ -16,35 +17,44 @@ func TestValidateRejectsBadInput(t *testing.T) {
 
 	tests := map[string]config.Config{
 		"dirが未指定": {
-			DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1,
+			DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"dirが存在しない": {
 			PhotoDirs: []string{filepath.Join(dir, "nope")},
-			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1,
+			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"dirがディレクトリではない": {
 			PhotoDirs: []string{file},
-			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1,
+			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"addrが空": {
 			PhotoDirs: []string{dir},
-			DataDir:   "./famifo-data", Addr: "", ScanWorkers: 1,
+			DataDir:   "./famifo-data", Addr: "", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"dataがdirの中": {
 			PhotoDirs: []string{dir},
-			DataDir:   filepath.Join(dir, "famifo-data"), Addr: ":8080", ScanWorkers: 1,
+			DataDir:   filepath.Join(dir, "famifo-data"), Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"dataがdirと同じ": {
 			PhotoDirs: []string{dir},
-			DataDir:   dir, Addr: ":8080", ScanWorkers: 1,
+			DataDir:   dir, Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"scan-workersが0": {
 			PhotoDirs: []string{dir},
-			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 0,
+			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 0, ScanInterval: time.Hour,
 		},
 		"scan-workersが負": {
 			PhotoDirs: []string{dir},
-			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: -1,
+			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: -1, ScanInterval: time.Hour,
+		},
+		// 0 だと待たずに回り続ける。走査が止まらなくなるので弾く。
+		"scan-intervalが0": {
+			PhotoDirs: []string{dir},
+			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: 0,
+		},
+		"scan-intervalが負": {
+			PhotoDirs: []string{dir},
+			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: -time.Second,
 		},
 	}
 	for name, c := range tests {
@@ -62,7 +72,7 @@ func TestValidateAcceptsSiblingDataDir(t *testing.T) {
 
 	// "photos-data" は文字列としては "photos" で始まるが、兄弟ディレクトリであり
 	// 中には無い。プレフィックス比較ではなくパス階層で判定できていることの確認。
-	c := config.Config{PhotoDirs: []string{dir}, DataDir: data, Addr: ":8080", ScanWorkers: 1}
+	c := config.Config{PhotoDirs: []string{dir}, DataDir: data, Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
 
 	require.NoError(t, c.Validate())
 }
@@ -77,7 +87,7 @@ func TestDerivedPaths(t *testing.T) {
 func TestValidateRejectsDuplicateRoots(t *testing.T) {
 	dir := t.TempDir()
 
-	c := config.Config{PhotoDirs: []string{dir, dir}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1}
+	c := config.Config{PhotoDirs: []string{dir, dir}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
 
 	require.Error(t, c.Validate(), "同じルートを2回走査しても無駄なだけ")
 }
@@ -88,7 +98,7 @@ func TestValidateRejectsNestedRoots(t *testing.T) {
 	inner := filepath.Join(outer, "sub")
 	require.NoError(t, os.MkdirAll(inner, 0o755))
 
-	c := config.Config{PhotoDirs: []string{outer, inner}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1}
+	c := config.Config{PhotoDirs: []string{outer, inner}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
 
 	require.Error(t, c.Validate())
 }
@@ -100,7 +110,7 @@ func TestValidateRejectsDataInsideAnyRoot(t *testing.T) {
 
 	c := config.Config{
 		PhotoDirs: []string{a, b},
-		DataDir:   filepath.Join(b, "famifo-data"), Addr: ":8080", ScanWorkers: 1,
+		DataDir:   filepath.Join(b, "famifo-data"), Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 	}
 
 	require.Error(t, c.Validate(), "2つ目のルートの中でも弾くこと")
