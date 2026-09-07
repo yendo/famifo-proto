@@ -189,7 +189,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// defer の順序で st.Close() より先に走る。
 	var indexers sync.WaitGroup
 	defer func() {
-		cancel() // 監視と定期スキャンに終わるよう伝える
+		cancel() // 監視とスキャンに終わるよう伝える
 		indexers.Wait()
 	}()
 
@@ -201,18 +201,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}()
 
-	if err := firstScan(ctx, ix, cfg.PhotoDirs, log); err != nil {
-		return err
-	}
-	if ctx.Err() == nil {
-		// 2回目以降は間隔をおいて繰り返す。監視の取りこぼしはこれで回復する。
-		indexers.Add(1)
-		go func() {
-			defer indexers.Done()
-			ix.RunScans(ctx, cfg.ScanInterval, watcher.ScanRequests())
-		}()
-		log.Info("定期スキャンを開始", "interval", cfg.ScanInterval)
-	}
+	// スキャンは間隔をおいて繰り返す。1回目は起動直後に走り、止まっていた間の
+	// 変更を取り戻す。2回目以降は監視の取りこぼしを回復する。
+	indexers.Add(1)
+	go func() {
+		defer indexers.Done()
+		ix.RunScans(ctx, cfg.ScanInterval, watcher.ScanRequests())
+	}()
 
 	// ListenAndServeの失敗はcancel()経由でctx.Done()も閉じるため、どちらが
 	// 先に見えるかは決まらない。両方をselectで待ち、失敗はrunの戻り値まで伝える。
@@ -225,29 +220,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	log.Info("シャットダウンします")
 
 	return shutdownHTTP(httpSrv, serveErr, listenErr)
-}
-
-// firstScan は起動時の突き合わせを同期に走らせる。fsnotifyは停止中の変更を
-// 検知できないので、起動のたびにディスクの実態と突き合わせる必要がある。
-// ここで失敗したら起動を止めるため、エラーは呼び出し側まで返す。
-// 停止の合図で打ち切られた場合は失敗として扱わない。
-func firstScan(ctx context.Context, ix *index.Indexer, dirs []string, log *slog.Logger) error {
-	log.Info("スキャンを開始", "dirs", dirs)
-	// 所要時間も出す。取り込みの重さを変える変更をしたとき、前後を突き合わせられる
-	// 記録がログにしか残らないため。
-	scanStart := time.Now()
-	stats, err := ix.Scan(ctx)
-	if err != nil && ctx.Err() == nil {
-		return err
-	}
-	if ctx.Err() != nil {
-		return nil
-	}
-	log.Info("スキャンが完了",
-		"elapsed", time.Since(scanStart).Round(time.Millisecond),
-		"indexed", stats.Indexed, "unchanged", stats.Unchanged,
-		"removed", stats.Removed, "skipped", stats.Skipped)
-	return nil
 }
 
 // shutdownHTTP は待ち受けを猶予付きで止め、待ち受けの失敗と停止の失敗を

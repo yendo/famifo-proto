@@ -236,24 +236,21 @@ func under(root, path string) bool {
 //
 // fsnotify は取りこぼす。キューが溢れたことは ErrEventOverflow で分かるが、
 // max_user_watches を使い切って監視を張れなかったディレクトリのように、
-// 取りこぼしたことを知る手立てが無い経路もある。定期的に突き合わせ直せば、
+// 取りこぼしたことを知る手立てが無い経路もある。繰り返し突き合わせ直せば、
 // 検知できたかどうかによらず整合性が戻る。
 //
 // kick は待ちを切り上げる要求である。スキャンの本数は増えず、次の1回が早まる
 // だけになる。ループが逐次なのでスキャンが重なることはなく、「今走っているか」を
 // 記録する必要もない。nil を渡せば時間だけで回る。
 //
-// 待ってから始める。起動時の1回目は呼び出し側が同期で走らせ、その失敗で起動を
-// 止められるようにしてあるので、ここで即座に走ると二重になる。
+// 待たずに始める。アプリが止まっていた間の変更も fsnotify は検知できないため、
+// 起動直後の1回目こそ必要になる。1回目を特別扱いせず、同じループの最初の回として
+// 走らせる。
 func (ix *Indexer) RunScans(ctx context.Context, interval time.Duration, kick <-chan struct{}) {
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(interval):
-		case <-kick:
-		}
-
+		// 大量の写真では1回目に時間がかかる。開始も残さないと、走査中なのか
+		// 止まっているのかがログから読めない。
+		ix.log.Info("スキャンを開始", "dirs", ix.roots)
 		start := time.Now()
 		stats, err := ix.Scan(ctx)
 		if ctx.Err() != nil {
@@ -261,11 +258,18 @@ func (ix *Indexer) RunScans(ctx context.Context, interval time.Duration, kick <-
 		}
 		if err != nil {
 			ix.log.Warn("スキャンに失敗", "err", err)
-			continue
+		} else {
+			ix.log.Info("スキャンが完了",
+				"elapsed", time.Since(start).Round(time.Millisecond),
+				"indexed", stats.Indexed, "unchanged", stats.Unchanged,
+				"removed", stats.Removed, "skipped", stats.Skipped)
 		}
-		ix.log.Info("スキャンが完了",
-			"elapsed", time.Since(start).Round(time.Millisecond),
-			"indexed", stats.Indexed, "unchanged", stats.Unchanged,
-			"removed", stats.Removed, "skipped", stats.Skipped)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		case <-kick:
+		}
 	}
 }
