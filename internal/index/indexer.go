@@ -50,6 +50,12 @@ func New(roots []string, st *store.Store, thumbs *thumb.Provider, workers int, l
 	return ix
 }
 
+// indexing は取り込みが1件でも走っているかを返す。誰が出した仕事かは区別しない。
+//
+// 取り込みの最中に写真が消えると、ワーカーが後から Upsert して存在しない
+// パスの行が残りうる。その気配を監視が知るために使う。
+func (ix *Indexer) indexing() bool { return ix.executor.busy() }
+
 // IndexFile は1ファイルをインデックスに反映する。
 //
 // 対象外の拡張子とディレクトリは黙って無視する（エラーではない）。

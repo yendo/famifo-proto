@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -26,10 +27,17 @@ type result struct {
 
 // Watcher はfsnotifyでディレクトリツリーを監視し、変更をインデックスに反映する。
 //
-// Run のループはイベントの受信と帳簿づけだけを行い、写真の取り込みそのものは
-// 決して自分では走らせない。取り込みには原本のデコードと縮小が含まれ、1枚で
-// 数百ミリ秒かかる。ループの中で待てばその間 fsnotify のイベントを読めず、
-// カーネルのキューが溢れて変更を取りこぼす。
+// Run のループは写真の取り込みそのものを決して自分では走らせない。取り込みには
+// 原本のデコードと縮小が含まれ、1枚で数百ミリ秒かかる。ループの中で待てばその間
+// fsnotify のイベントを読めず、カーネルのキューが溢れて変更を取りこぼす。
+//
+// 一方、ディレクトリ配下の走査（addTree と enqueueTree）はループの中で行う。
+// 所要時間はディレクトリの項目数に比例するが、1件あたりが取り込みとは桁違いに
+// 安い。実測で7,403件のディレクトリを両方歩いて10ms（ローカルディスク、
+// 2026-09-07）。inotify の既定のキューは16,384件なので、この停止で溢れることは
+// 考えにくい。避けるには歩きを別の goroutine に逃がすことになるが、ロックの無い
+// pending を触らせないための受け渡しと、歩行中の削除に備える帳簿が要る。
+// 停止時間に見合わないので、境界は取り込みに引いてある。
 type Watcher struct {
 	ix       *Indexer
 	fsw      *fsnotify.Watcher
@@ -42,32 +50,61 @@ type Watcher struct {
 	// inflight は取り込み中のパスと、その最中に消えたかどうか。同じ写真を2つの
 	// ワーカーに渡さないためと、取り込みの完了と削除がすれ違うのを防ぐためにある。
 	inflight map[string]bool
+	// jobs は監視が出した取り込みの集まり。スキャンが同時に走るため、
+	// 停止時に待つ相手を自分が出したぶんに限る。
+	jobs *jobs
+	// kick はスキャンの前倒しの要求。容量1で、連続した要求は1回にまとまる。
+	kick chan struct{}
 }
 
-// NewWatcher はWatcherを作る。
+// NewWatcher はWatcherを作り、ルート以下を監視対象に加える。
+//
+// 監視を張るのを Run まで遅らせない。起動時は「監視を張る → スキャン」の順に
+// することで、スキャンが走査を終えたあとに置かれた写真を監視が拾う。Run の
+// 開始を待ってから張ると、その順序が呼び出し側から保証できなくなる。
 func NewWatcher(ix *Indexer, log *slog.Logger) (*Watcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("監視を開始できません: %w", err)
 	}
-	return &Watcher{
+	w := &Watcher{
 		ix:       ix,
 		fsw:      fsw,
 		log:      log,
 		debounce: defaultDebounce,
 		done:     make(chan result, ix.workers),
 		inflight: make(map[string]bool),
-	}, nil
+		jobs:     ix.executor.newJobs(),
+		kick:     make(chan struct{}, 1),
+	}
+	if err := w.addRoots(); err != nil {
+		fsw.Close()
+		return nil, err
+	}
+	return w, nil
 }
 
 func (w *Watcher) Close() error { return w.fsw.Close() }
 
+// ScanRequests はスキャンの前倒しを求める要求を配る。Indexer.RunScans に渡す。
+//
+// 要求は容量1で積み置かれる。取り込みの完了より先に要求が出る経路があるため、
+// この積み置きが要る。取り込み中の写真が消えたことは削除のイベントで分かるが、
+// 消し損ねの行が生まれるのはワーカーが Upsert したときである。要求を積んで
+// おけば、走っているスキャンが終わったあとの1回で回収できる。
+func (w *Watcher) ScanRequests() <-chan struct{} { return w.kick }
+
+// requestScan はスキャンの前倒しを要求する。
+// 既に積まれていれば捨てる。受け手が居なくてもここで詰まらない。
+func (w *Watcher) requestScan() {
+	select {
+	case w.kick <- struct{}{}:
+	default:
+	}
+}
+
 // Run はコンテキストがキャンセルされるまで監視を続ける。
 func (w *Watcher) Run(ctx context.Context) error {
-	if err := w.addRoots(); err != nil {
-		return err
-	}
-
 	// path -> 最後にイベントを受けた時刻
 	pending := make(map[string]time.Time)
 	tick := time.NewTicker(w.debounce / 2)
@@ -78,7 +115,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			// 走っている取り込みの完了まで待つ。待たずに戻ると、呼び出し側が
 			// Close やDBの後始末に進んだあとでワーカーが書き込むことになる。
-			w.ix.executor.wait()
+			w.jobs.wait()
 			return nil
 
 		case ev, ok := <-w.fsw.Events:
@@ -92,6 +129,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 				return nil
 			}
 			w.log.Warn("監視エラー", "err", err)
+			if errors.Is(err, fsnotify.ErrEventOverflow) {
+				// カーネルのキューが溢れた。落ちたイベントは二度と来ないので、
+				// 取り戻せるのはスキャンだけである。溢れは連続して届くが、
+				// 要求は1回にまとまる。
+				w.requestScan()
+			}
 
 		case r := <-w.done:
 			removed := w.inflight[r.path]
@@ -129,16 +172,30 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 		//（mv album ../elsewhere や mv album album2 のケース）ので、
 		// RemoveTreeで配下の行をパスの前方一致でまとめて消す。
 		delete(pending, ev.Name)
-		if _, ok := w.inflight[ev.Name]; ok {
-			// 取り込み中に消えた写真。行が生まれるのは取り込みの完了時なので、
-			// ここで消しても空振りする。完了を受けてから消す。
-			w.inflight[ev.Name] = true
+		// 取り込み中に消えた写真には印を付ける。行が生まれるのは取り込みの
+		// 完了時なので、ここで消しても空振りする。完了を受けてから消す。
+		// ディレクトリが消えた場合、イベントのパスはディレクトリのもので、
+		// 控えてあるのは配下の個々のパスなので前方一致で拾う。
+		// inflight はワーカー数を超えないので、毎回回しても高が知れている。
+		for p := range w.inflight {
+			if under(ev.Name, p) {
+				w.inflight[p] = true
+			}
 		}
 		if err := w.ix.RemoveFile(ctx, ev.Name); err != nil {
 			w.log.Warn("削除の反映に失敗", "path", ev.Name, "err", err)
 		}
 		if err := w.ix.RemoveTree(ctx, ev.Name); err != nil {
 			w.log.Warn("ディレクトリ配下の削除の反映に失敗", "path", ev.Name, "err", err)
+		}
+		if w.ix.indexing() {
+			// 取り込みの最中に消えた写真は、ワーカーが後から Upsert して
+			// 存在しないパスの行を残しうる。監視が出したぶんは上の墓標で
+			// 取り消せるが、スキャンが出したぶんには手が届かない。回収できる
+			// のはスキャンだけなので、次の1回を前倒す。誰の仕事かは見ない。
+			// 見分けるには入口をまたぐ帳簿が要るうえ、余分な前倒しは走査が
+			// 1回増えるだけで済む。
+			w.requestScan()
 		}
 
 	case ev.Has(fsnotify.Create):
@@ -177,7 +234,7 @@ func (w *Watcher) flush(ctx context.Context, pending map[string]time.Time, now t
 			// 取り込み中に書き換えられた写真。完了を待ってから渡し直す。
 			continue
 		}
-		if !w.ix.executor.trySubmit(ctx, path, func(err error) {
+		if !w.jobs.trySubmit(ctx, path, func(err error) {
 			w.done <- result{path: path, err: err}
 		}) {
 			// ワーカーが全部埋まっている。残りは保留のままにして次のtickで渡す。

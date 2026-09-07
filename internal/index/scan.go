@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/synology"
@@ -25,6 +26,9 @@ type Stats struct {
 // 1回のスキャンごとに作って捨てる。Scan の外には出ない。
 type scanner struct {
 	ix *Indexer
+	// jobs はこのスキャンが出した取り込みの集まり。監視が同時に走るため、
+	// 完了を待つ相手を自分が出したぶんに限る。
+	jobs *jobs
 
 	// known は登録済みのパスとそのmtime。走査で見つけたぶんを消し込み、
 	// 残ったものが削除されたファイルになる。
@@ -54,6 +58,7 @@ func (ix *Indexer) Scan(ctx context.Context) (Stats, error) {
 	}
 	s := &scanner{
 		ix:    ix,
+		jobs:  ix.executor.newJobs(),
 		known: known,
 		found: make(map[string]int, len(ix.roots)),
 	}
@@ -76,7 +81,7 @@ func (ix *Indexer) Scan(ctx context.Context) (Stats, error) {
 // 戻る前に、中断であってもワーカーの完了まで待つ。待たずに戻ると、まだ動いて
 // いるワーカーが indexed を書いている最中の値を呼び出し側が読むことになる。
 func (s *scanner) walkAll(ctx context.Context) error {
-	defer s.ix.executor.wait()
+	defer s.jobs.wait()
 
 	for _, root := range s.ix.roots {
 		if err := s.walk(ctx, root); err != nil {
@@ -153,7 +158,7 @@ func (s *scanner) walk(ctx context.Context, root string) error {
 // 持ち場が埋まっていればここで待つ。走査だけが先に走って数千件のパスを
 // 溜め込むことがない。
 func (s *scanner) submit(ctx context.Context, path string) {
-	s.ix.executor.submit(ctx, path, func(err error) {
+	s.jobs.submit(ctx, path, func(err error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		switch {
@@ -225,4 +230,42 @@ func under(root, path string) bool {
 		root += string(filepath.Separator)
 	}
 	return strings.HasPrefix(path, root)
+}
+
+// RunScans は interval ごとにスキャンを繰り返す。ctx がキャンセルされるまで戻らない。
+//
+// fsnotify は取りこぼす。キューが溢れたことは ErrEventOverflow で分かるが、
+// max_user_watches を使い切って監視を張れなかったディレクトリのように、
+// 取りこぼしたことを知る手立てが無い経路もある。定期的に突き合わせ直せば、
+// 検知できたかどうかによらず整合性が戻る。
+//
+// kick は待ちを切り上げる要求である。スキャンの本数は増えず、次の1回が早まる
+// だけになる。ループが逐次なのでスキャンが重なることはなく、「今走っているか」を
+// 記録する必要もない。nil を渡せば時間だけで回る。
+//
+// 待ってから始める。起動時の1回目は呼び出し側が同期で走らせ、その失敗で起動を
+// 止められるようにしてあるので、ここで即座に走ると二重になる。
+func (ix *Indexer) RunScans(ctx context.Context, interval time.Duration, kick <-chan struct{}) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		case <-kick:
+		}
+
+		start := time.Now()
+		stats, err := ix.Scan(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			ix.log.Warn("スキャンに失敗", "err", err)
+			continue
+		}
+		ix.log.Info("スキャンが完了",
+			"elapsed", time.Since(start).Round(time.Millisecond),
+			"indexed", stats.Indexed, "unchanged", stats.Unchanged,
+			"removed", stats.Removed, "skipped", stats.Skipped)
+	}
 }

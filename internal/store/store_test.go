@@ -131,6 +131,36 @@ func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
 	require.Equal(t, 1, n, "album2 の行は残る")
 }
 
+// LIKEのワイルドカードは、パスに現れると兄弟を巻き込む。範囲比較へ
+// 置き換えたあとも同じ性質が要るので、置き換えの前後で緑であることを見る。
+func TestDeleteByPathPrefixTreatsWildcardsAsLiterals(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		other  string
+	}{
+		{"underscore", "/p/a_b", "/p/axb"},
+		{"percent", "/p/a%b", "/p/azzb"},
+		{"backslash", `/p/a\b`, `/p/a\\b`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := openTestStore(t)
+			ctx := context.Background()
+			a := photoAt(tt.prefix+"/a.jpg", time.Unix(1600000000, 0))
+			b := photoAt(tt.other+"/b.jpg", time.Unix(1600000001, 0))
+			require.NoError(t, s.Upsert(ctx, a))
+			require.NoError(t, s.Upsert(ctx, b))
+
+			deleted, err := s.DeleteByPathPrefix(ctx, tt.prefix)
+
+			require.NoError(t, err)
+			require.Len(t, deleted, 1, "%s まで巻き込んではいけない", tt.other)
+			require.Equal(t, a.Path(), deleted[0].Path())
+		})
+	}
+}
+
 func TestAllPaths(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
