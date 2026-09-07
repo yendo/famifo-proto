@@ -15,7 +15,7 @@ type Config struct {
 	PhotoDirs   []string // 写真を収集するルートディレクトリ（複数可）
 	DataDir     string   // DBとサムネイルの置き場
 	Addr        string   // HTTPの待ち受けアドレス
-	ScanWorkers int      // フルスキャンでサムネイルを並行生成する数
+	ScanWorkers int      // 同時に取り込む枚数（スキャンとfsnotifyの追従に共通）
 }
 
 // Validate は設定の不備を報告する。ここでのエラーは起動を中止させる。

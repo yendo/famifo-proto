@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -197,4 +198,138 @@ func TestWatcherSkipsSynologyDirsInMovedDirectory(t *testing.T) {
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "移動後に遅れて取り込まれないこと")
+}
+
+// mkfifoPhoto は取り込みを途中で止められる「写真」を作る。名前付きパイプは
+// 拡張子の上では写真なので取り込みの対象になり、読み手は書き手が現れるまで
+// open(2) で止まる。取り込みの進み方を実時間の当て推量なしに操れる。
+func mkfifoPhoto(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	require.NoError(t, syscall.Mkfifo(path, 0o600))
+	return path
+}
+
+// waitForIndexing は path の取り込みが読み取りを始めるまで待ち、書き込み側を返す。
+// FIFOのopen(2)は反対側が開くまで返らないため、返ってきたこと自体が
+// 「取り込みがこのファイルを開いた」ことの証拠になる。返ったファイルを開いたままに
+// しておけば、読み手はデータ待ちで止まり続ける。
+func waitForIndexing(t *testing.T, path string) *os.File {
+	t.Helper()
+	opened := make(chan *os.File, 1)
+	go func() {
+		if w, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+			opened <- w
+		}
+	}()
+	select {
+	case w := <-opened:
+		return w
+	case <-time.After(3 * time.Second):
+		t.Fatalf("取り込みが %s を読み始めなかった", path)
+		return nil
+	}
+}
+
+// serveFifo は path に読み手が現れるたびにJPEGを流し込む係を置く。
+// 1枚の取り込みは原本を2度開く。EXIFの読み取りとサムネイルの生成である。
+// どちらの open(2) にも応じる必要があるうえ、1度目の読み手が閉じる時刻は
+// こちらから見えないので、回数を数えずに応じ続ける。
+//
+// 取り込みが最後まで通ればDBに行が増える。呼び出し側はそれを待つことで、
+// 係を片付けてよい時点を実時間の当て推量なしに知れる。
+func serveFifo(t *testing.T, path string, data []byte) {
+	t.Helper()
+	stop := make(chan struct{})
+	go func() {
+		for {
+			w, err := os.OpenFile(path, os.O_WRONLY, 0)
+			if err != nil {
+				return
+			}
+			w.Write(data) // 読み手が途中で閉じればEPIPEになる。応じるのが仕事なので見ない
+			w.Close()
+			select {
+			case <-stop:
+				return
+			default:
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		// 読み手を待って止まっている係を返らせる。非ブロッキングなら
+		// 書き手がいなくても読み取り側を開ける。
+		if r, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0); err == nil {
+			r.Close()
+		}
+	})
+}
+
+func TestWatcherKeepsHandlingEventsWhileAPhotoIsStuck(t *testing.T) {
+	f := newFixture(t)
+	startWatcher(t, f)
+
+	// 1枚の取り込みが終わらない状態を作る。取り込みを監視ループの中で
+	// 直列に走らせていると、ここでループごと止まり、以降のイベントを読めない。
+	stuck := mkfifoPhoto(t, f.root, "stuck.jpg")
+	w := waitForIndexing(t, stuck)
+
+	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
+
+	requireCount(t, f, 1) // 止まっている1枚に巻き込まれない
+
+	// 止めていた取り込みを最後まで通してから監視を止める。
+	require.NoError(t, w.Close())
+	serveFifo(t, stuck, testJPEG(t, 40, 20))
+	requireCount(t, f, 2)
+}
+
+func TestWatcherIndexesUpToWorkersInParallel(t *testing.T) {
+	f := newFixtureWorkers(t, 2)
+	startWatcher(t, f)
+
+	a := mkfifoPhoto(t, f.root, "a.jpg")
+	b := mkfifoPhoto(t, f.root, "b.jpg")
+
+	// 2枚が同時に読まれるまで待つ。1枚ずつしか取り込まないなら、先に開いた
+	// ほうを閉じていない以上、もう一方のopenは返らない。
+	wa := waitForIndexing(t, a)
+	wb := waitForIndexing(t, b)
+
+	// 2枚とも最後まで通してから監視を止める。
+	require.NoError(t, wa.Close())
+	require.NoError(t, wb.Close())
+	serveFifo(t, a, testJPEG(t, 40, 20))
+	serveFifo(t, b, testJPEG(t, 40, 20))
+	requireCount(t, f, 2)
+}
+
+func TestWatcherLeavesNoRowForAPhotoMovedWhileBeingIndexed(t *testing.T) {
+	f := newFixture(t)
+	startWatcher(t, f)
+
+	// HEICは自前でサムネイルを作らないので原本を1度しか開かない。EXIFの読み取りで
+	// 止めれば、取り込みの途中という状態を保ったまま写真を動かせる。
+	src := mkfifoPhoto(t, f.root, "a.heic")
+	w := waitForIndexing(t, src)
+
+	// 取り込み中に別名へ移す。行が生まれるのは取り込みの完了時なので、
+	// このときの削除は空振りする。
+	moved := filepath.Join(f.root, "moved.heic")
+	require.NoError(t, os.Rename(src, moved))
+	time.Sleep(50 * time.Millisecond) // 削除が取り込みの完了より先に処理される順序を作る
+
+	require.NoError(t, w.Close())
+	serveFifo(t, moved, testJPEG(t, 40, 20))
+
+	// 移動先の1枚だけが残る。遅れて増えないことの確認なので待ってから数える。
+	time.Sleep(3 * testDebounce)
+	requireCount(t, f, 1)
+
+	paths, err := f.st.AllPaths(context.Background())
+	require.NoError(t, err)
+	for p := range paths {
+		require.Contains(t, p, "moved.heic", "消えたパスの行が残ってはいけない: %s", p)
+	}
 }

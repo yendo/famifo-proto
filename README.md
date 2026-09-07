@@ -74,7 +74,7 @@ every one of them.
 | `-dir` | (required) | Directories to collect photos from, `:`-separated |
 | `-data` | `./famifo-data` | Where the database and generated thumbnails are stored |
 | `-addr` | `:8080` | HTTP listen address |
-| `-scan-workers` | half the CPUs | How many photos the full scan takes in at once |
+| `-scan-workers` | half the CPUs | How many photos are taken in at once, both by the scan and by the watcher |
 | `-version` | | Print the build version and exit |
 
 The version comes from the build itself: a tagged build reports the tag, any
@@ -221,7 +221,7 @@ skipping.
   port.
 - **A root that scans empty loses nothing.** Starting up while an external drive is unmounted
   produces an empty scan of that root, which looks exactly like "everything under it was
-  deleted". `FullScan` therefore judges each root separately: a root that turns up no photos
+  deleted". `Scan` therefore judges each root separately: a root that turns up no photos
   keeps its existing entries, even when the other roots are healthy, and logs a
   `走査結果が空のルートがあるため削除をスキップした` warning. A root it cannot read at all is
   skipped the same way, with `ルートを読めないため飛ばした`, rather than aborting the scan and

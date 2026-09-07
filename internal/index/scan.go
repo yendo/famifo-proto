@@ -11,7 +11,7 @@ import (
 	"github.com/yendo/famifo-proto/internal/synology"
 )
 
-// Stats はフルスキャンの結果。
+// Stats はスキャンの結果。
 type Stats struct {
 	Indexed   int // 新規登録または更新した枚数
 	Unchanged int // mtimeが変わらず再処理しなかった枚数
@@ -19,161 +19,190 @@ type Stats struct {
 	Skipped   int // 破損・権限エラーで飛ばした枚数
 }
 
-// FullScan はルートディレクトリを走査してインデックスをディスクの実態に合わせる。
+// scanner は1回のスキャンが持ち回る帳簿。走査・集計・削除の3フェーズが同じ
+// マップを見るため、フェーズをメソッドに割ってもこれらが共有され続ける。
+//
+// 1回のスキャンごとに作って捨てる。Scan の外には出ない。
+type scanner struct {
+	ix *Indexer
+
+	// known は登録済みのパスとそのmtime。走査で見つけたぶんを消し込み、
+	// 残ったものが削除されたファイルになる。
+	known map[string]int64
+	// found はルートごとの発見数。空/未マウントかどうかをルート単位で判定する
+	// ために使う。合計で数えると、生きているルートに写真がある限りガードが
+	// 発動しない。
+	found map[string]int
+	// st は走査側だけが書く。ワーカー側の集計は下の indexed/failed に分けてある。
+	st Stats
+
+	// ワーカーは st を直接触らない。走査側も Unchanged と Skipped を数えており、
+	// 同じ構造体を両側から書くと、片方だけロックを忘れたときに気づけないため。
+	mu              sync.Mutex
+	indexed, failed int
+}
+
+// Scan はルートディレクトリを走査してインデックスをディスクの実態に合わせる。
 //
 // fsnotifyはアプリが停止していた間の変更を検知できないため、起動のたびにこれを
 // 実行して整合性を取り直す。個々のファイルのエラーは記録して走査を続け、
 // コンテキストのキャンセルだけが全体を中断させる。
-func (ix *Indexer) FullScan(ctx context.Context) (Stats, error) {
+func (ix *Indexer) Scan(ctx context.Context) (Stats, error) {
 	known, err := ix.st.AllPaths(ctx)
 	if err != nil {
 		return Stats{}, err
 	}
-
-	var st Stats
-	// ルートごとの発見数。空/未マウントかどうかをルート単位で判定するために使う。
-	// 合計で数えると、生きているルートに写真がある限りガードが発動しない。
-	found := make(map[string]int, len(ix.roots))
-
-	// 1枚の取り込み（EXIFの読み取りとサムネイルの生成）だけをワーカーに出す。
-	// 大半の時間は原本のデコードと縮小で、写真ごとに独立しているため。
-	//
-	// walk 自体は直列のままにする。known の消し込みも found の計上も、共有する
-	// マップの上での帳簿づけであり、並行にしても速くならないのに壊れる余地だけ
-	// が増える。
-	//
-	// sem はワーカーの持ち場で、埋まっていれば walk がそこで待つ。走査だけが
-	// 先に走って数千件のパスを溜め込むことがない。
-	sem := make(chan struct{}, ix.workers)
-	var wg sync.WaitGroup
-	// ワーカーは st を直接触らない。walk 側も Unchanged と Skipped を数えており、
-	// 同じ構造体を両側から書くと、片方だけロックを忘れたときに気づけないため。
-	var mu sync.Mutex
-	var indexed, failed int
-
-	dispatch := func(path string) {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			err := ix.IndexFile(ctx, path)
-			mu.Lock()
-			defer mu.Unlock()
-			switch {
-			case err == nil:
-				indexed++
-			case ctx.Err() != nil:
-				// 中断で落ちたぶんを破損として数えない。Ctrl-Cのたびに身に
-				// 覚えのないスキップ件数が出ることになるため、記録もしない。
-			default:
-				ix.log.Warn("インデックスをスキップ", "path", path, "err", err)
-				failed++
-			}
-		}()
+	s := &scanner{
+		ix:    ix,
+		known: known,
+		found: make(map[string]int, len(ix.roots)),
 	}
 
-	walk := func(root string) error {
-		return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
-			}
-			if err != nil {
-				if path == root {
-					// ルート自体が読めない場合は「中身が空だった」と区別できないため
-					// 削除フェーズに進まず、走査全体を中断する。
-					return err
-				}
-				// 読めないディレクトリやファイルは飛ばす（権限エラーなど）
-				ix.log.Warn("走査をスキップ", "path", path, "err", err)
-				st.Skipped++
-				return nil
-			}
-			if d.IsDir() {
-				if synology.IsManagedDir(d.Name()) {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if !imagefmt.IsSupported(path) {
-				return nil
-			}
-			found[root]++
+	walkErr := s.walkAll(ctx)
 
-			fi, err := d.Info()
-			if err != nil {
-				ix.log.Warn("ファイル情報を取得できずスキップ", "path", path, "err", err)
-				st.Skipped++
-				return nil
-			}
-
-			// 見つかったパスは消し込む。走査後に残ったものが削除されたファイル。
-			modTime, wasKnown := known[path]
-			delete(known, path)
-			if wasKnown && modTime == fi.ModTime().Unix() {
-				st.Unchanged++
-				return nil
-			}
-
-			dispatch(path)
-			return nil
-		})
-	}
-
-	// 走査を終えたら、中断であってもワーカーの完了まで待つ。待たずに戻ると、
-	// まだ動いているワーカーが indexed を書いている最中の値を返すことになる。
-	walkErr := func() error {
-		defer wg.Wait()
-		for _, root := range ix.roots {
-			if err := walk(root); err != nil {
-				if ctx.Err() != nil {
-					return err
-				}
-				// ルート自体を読めない（ボリュームが外れた等）。1つのドライブが
-				// 外れただけで走査全体を止めると、生きているルートの更新まで
-				// 反映されなくなる。このルートは found が0のままなので、配下の
-				// 削除は下のガードが自動的に見送る。
-				ix.log.Warn("ルートを読めないため飛ばした", "root", root, "err", err)
-			}
-		}
-		return nil
-	}()
-
-	// wg.Wait のあとなので、ワーカーの書き込みはすべて見えている。
-	st.Indexed = indexed
-	st.Skipped += failed
+	// 取り込みの完了を待ったあとなので、ワーカーの書き込みはすべて見えている。
+	s.st.Indexed = s.indexed
+	s.st.Skipped += s.failed
 	if walkErr != nil {
-		return st, walkErr
+		return s.st, walkErr
 	}
 
-	// 1件も見つからなかったルートは、ドライブが未マウントで「たまたま空に
-	// 見える」のか、本当に全部消されたのかを区別できない。安全側に倒して、
-	// そのルート配下の削除を見送る。
-	var empty []string
-	for _, root := range ix.roots {
-		if found[root] == 0 {
-			empty = append(empty, root)
+	s.purge(ctx)
+	return s.st, nil
+}
+
+// walkAll はすべてのルートを走査する。
+//
+// 戻る前に、中断であってもワーカーの完了まで待つ。待たずに戻ると、まだ動いて
+// いるワーカーが indexed を書いている最中の値を呼び出し側が読むことになる。
+func (s *scanner) walkAll(ctx context.Context) error {
+	defer s.ix.executor.wait()
+
+	for _, root := range s.ix.roots {
+		if err := s.walk(ctx, root); err != nil {
+			if ctx.Err() != nil {
+				return err
+			}
+			// ルート自体を読めない（ボリュームが外れた等）。1つのドライブが
+			// 外れただけで走査全体を止めると、生きているルートの更新まで
+			// 反映されなくなる。このルートは found が0のままなので、配下の
+			// 削除は purge のガードが自動的に見送る。
+			s.ix.log.Warn("ルートを読めないため飛ばした", "root", root, "err", err)
 		}
 	}
+	return nil
+}
+
+// walk は1つのルート以下を走査する。
+//
+// 走査自体は直列のままにする。known の消し込みも found の計上も、共有する
+// マップの上での帳簿づけであり、並行にしても速くならないのに壊れる余地だけが
+// 増える。時間を食う1枚の取り込みだけを submit でワーカーに出す。
+func (s *scanner) walk(ctx context.Context, root string) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if err != nil {
+			if path == root {
+				// ルート自体が読めない場合は「中身が空だった」と区別できないため
+				// 削除フェーズに進まず、走査全体を中断する。
+				return err
+			}
+			// 読めないディレクトリやファイルは飛ばす（権限エラーなど）
+			s.ix.log.Warn("走査をスキップ", "path", path, "err", err)
+			s.st.Skipped++
+			return nil
+		}
+		if d.IsDir() {
+			if synology.IsManagedDir(d.Name()) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !imagefmt.IsSupported(path) {
+			return nil
+		}
+		s.found[root]++
+
+		fi, err := d.Info()
+		if err != nil {
+			s.ix.log.Warn("ファイル情報を取得できずスキップ", "path", path, "err", err)
+			s.st.Skipped++
+			return nil
+		}
+
+		// 見つかったパスは消し込む。走査後に残ったものが削除されたファイル。
+		modTime, wasKnown := s.known[path]
+		delete(s.known, path)
+		if wasKnown && modTime == fi.ModTime().Unix() {
+			s.st.Unchanged++
+			return nil
+		}
+
+		s.submit(ctx, path)
+		return nil
+	})
+}
+
+// submit は1枚の取り込みをワーカーに出す。
+//
+// ワーカーに出すのは取り込み（EXIFの読み取りとサムネイルの生成）だけである。
+// 大半の時間は原本のデコードと縮小で、写真ごとに独立しているため。
+//
+// 持ち場が埋まっていればここで待つ。走査だけが先に走って数千件のパスを
+// 溜め込むことがない。
+func (s *scanner) submit(ctx context.Context, path string) {
+	s.ix.executor.submit(ctx, path, func(err error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		switch {
+		case err == nil:
+			s.indexed++
+		case ctx.Err() != nil:
+			// 中断で落ちたぶんを破損として数えない。Ctrl-Cのたびに身に
+			// 覚えのないスキップ件数が出ることになるため、記録もしない。
+		default:
+			s.ix.log.Warn("インデックスをスキップ", "path", path, "err", err)
+			s.failed++
+		}
+	})
+}
+
+// purge は走査で見つからなかった写真をインデックスから消す。
+func (s *scanner) purge(ctx context.Context) {
+	empty := s.emptyRoots()
 
 	guarded := 0
-	for path := range known {
+	for path := range s.known {
 		if underAny(empty, path) {
 			guarded++
 			continue
 		}
-		if err := ix.RemoveFile(ctx, path); err != nil {
-			ix.log.Warn("削除の反映に失敗", "path", path, "err", err)
+		if err := s.ix.RemoveFile(ctx, path); err != nil {
+			s.ix.log.Warn("削除の反映に失敗", "path", path, "err", err)
 			continue
 		}
-		st.Removed++
+		s.st.Removed++
 	}
 	if guarded > 0 {
-		ix.log.Warn("走査結果が空のルートがあるため削除をスキップした",
+		s.ix.log.Warn("走査結果が空のルートがあるため削除をスキップした",
 			"roots", empty, "remaining", guarded)
 	}
-	return st, nil
+}
+
+// emptyRoots は1枚も見つからなかったルートを返す。
+//
+// そのルートは、ドライブが未マウントで「たまたま空に見える」のか、本当に全部
+// 消されたのかを区別できない。安全側に倒して、配下の削除を見送るために使う。
+func (s *scanner) emptyRoots() []string {
+	var empty []string
+	for _, root := range s.ix.roots {
+		if s.found[root] == 0 {
+			empty = append(empty, root)
+		}
+	}
+	return empty
 }
 
 // underAny は path がいずれかのルート配下にあるかを返す。

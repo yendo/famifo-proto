@@ -12,12 +12,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testJPEG は指定サイズのJPEGのバイト列を返す。
+func testJPEG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h)), nil))
+	return buf.Bytes()
+}
+
 // writeTestJPEG は指定サイズのJPEGを書き出してそのパスを返す。
 func writeTestJPEG(t *testing.T, dir, name string, w, h int) string {
 	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	var buf bytes.Buffer
-	require.NoError(t, jpeg.Encode(&buf, img, nil))
+	buf := bytes.NewBuffer(testJPEG(t, w, h))
 	path := filepath.Join(dir, name)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, buf.Bytes(), 0o644))

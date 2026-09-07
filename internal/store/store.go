@@ -181,7 +181,7 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]photo.Photo
 	return out, rows.Err()
 }
 
-// AllPaths は登録済みの全パスとそのmtimeを返す。フルスキャンでの差分検出に使う。
+// AllPaths は登録済みの全パスとそのmtimeを返す。スキャンでの差分検出に使う。
 func (s *Store) AllPaths(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT path, mod_time FROM photos`)
 	if err != nil {
