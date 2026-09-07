@@ -53,7 +53,7 @@ func startupTimezone(t time.Time) string {
 	return t.Format("MST-07:00")
 }
 
-// defaultScanWorkers はフルスキャンの既定の並行数を返す。
+// defaultScanWorkers は取り込みの既定の並行数を返す。
 //
 // CPUを全部使うと同じマシンの他の仕事とHTTPの応答を圧迫するので、半分に留める。
 // 1未満にはしない。足りなければ -scan-workers で上げられる。
@@ -80,7 +80,7 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	// 適正値はCPU数とストレージの待ち時間の両方で決まる。NASでは読み込み待ちが
 	// 効くので、CPU数が最善とは限らない。実機で詰められるようフラグにしてある。
 	fs.IntVar(&c.ScanWorkers, "scan-workers", defaultScanWorkers(),
-		"フルスキャンで同時に取り込む枚数")
+		"同時に取り込む枚数（スキャンとfsnotifyの追従に共通）")
 	showVersion := fs.Bool("version", false, "バージョンを表示して終了する")
 
 	if err := fs.Parse(args); err != nil {
@@ -160,16 +160,16 @@ func run() error {
 	ix := index.New(cfg.PhotoDirs, st, thumbs, cfg.ScanWorkers, log)
 
 	// fsnotifyは停止中の変更を検知できないので、起動のたびに実態と突き合わせる。
-	log.Info("フルスキャンを開始", "dirs", cfg.PhotoDirs)
+	log.Info("スキャンを開始", "dirs", cfg.PhotoDirs)
 	// 所要時間も出す。取り込みの重さを変える変更をしたとき、前後を突き合わせられる
 	// 記録がログにしか残らないため。
 	scanStart := time.Now()
-	stats, err := ix.FullScan(ctx)
+	stats, err := ix.Scan(ctx)
 	if err != nil && ctx.Err() == nil {
 		return err
 	}
 	if ctx.Err() == nil {
-		log.Info("フルスキャンが完了",
+		log.Info("スキャンが完了",
 			"elapsed", time.Since(scanStart).Round(time.Millisecond),
 			"indexed", stats.Indexed, "unchanged", stats.Unchanged,
 			"removed", stats.Removed, "skipped", stats.Skipped)

@@ -18,12 +18,30 @@ import (
 // 待ち時間。コピー途中のファイルをデコードしに行かないための猶予。
 const defaultDebounce = 2 * time.Second
 
+// result は終わった取り込み1件。ワーカーから監視ループへ返す。
+type result struct {
+	path string
+	err  error
+}
+
 // Watcher はfsnotifyでディレクトリツリーを監視し、変更をインデックスに反映する。
+//
+// Run のループはイベントの受信と帳簿づけだけを行い、写真の取り込みそのものは
+// 決して自分では走らせない。取り込みには原本のデコードと縮小が含まれ、1枚で
+// 数百ミリ秒かかる。ループの中で待てばその間 fsnotify のイベントを読めず、
+// カーネルのキューが溢れて変更を取りこぼす。
 type Watcher struct {
 	ix       *Indexer
 	fsw      *fsnotify.Watcher
 	log      *slog.Logger
 	debounce time.Duration
+	// done は取り込みの完了通知。ワーカーは通知を渡し終えるまで持ち場を空けない
+	// ので、渡し待ちがワーカー数を超えることはない。容量をそれに合わせておけば
+	// ワーカーがここで止まらず、停止時に完了を待つ側と睨み合うこともない。
+	done chan result
+	// inflight は取り込み中のパスと、その最中に消えたかどうか。同じ写真を2つの
+	// ワーカーに渡さないためと、取り込みの完了と削除がすれ違うのを防ぐためにある。
+	inflight map[string]bool
 }
 
 // NewWatcher はWatcherを作る。
@@ -32,7 +50,14 @@ func NewWatcher(ix *Indexer, log *slog.Logger) (*Watcher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("監視を開始できません: %w", err)
 	}
-	return &Watcher{ix: ix, fsw: fsw, log: log, debounce: defaultDebounce}, nil
+	return &Watcher{
+		ix:       ix,
+		fsw:      fsw,
+		log:      log,
+		debounce: defaultDebounce,
+		done:     make(chan result, ix.workers),
+		inflight: make(map[string]bool),
+	}, nil
 }
 
 func (w *Watcher) Close() error { return w.fsw.Close() }
@@ -51,6 +76,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			// 走っている取り込みの完了まで待つ。待たずに戻ると、呼び出し側が
+			// Close やDBの後始末に進んだあとでワーカーが書き込むことになる。
+			w.ix.executor.wait()
 			return nil
 
 		case ev, ok := <-w.fsw.Events:
@@ -64,6 +92,22 @@ func (w *Watcher) Run(ctx context.Context) error {
 				return nil
 			}
 			w.log.Warn("監視エラー", "err", err)
+
+		case r := <-w.done:
+			removed := w.inflight[r.path]
+			delete(w.inflight, r.path)
+			if removed {
+				// 取り込んでいる間に消えていた。今しがた入った行を取り消す。
+				if err := w.ix.RemoveFile(ctx, r.path); err != nil {
+					w.log.Warn("削除の反映に失敗", "path", r.path, "err", err)
+				}
+				break
+			}
+			if r.err != nil {
+				w.log.Warn("インデックスをスキップ", "path", r.path, "err", r.err)
+				break
+			}
+			w.log.Info("インデックスを更新", "path", r.path)
 
 		case now := <-tick.C:
 			w.flush(ctx, pending, now)
@@ -85,6 +129,11 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 		//（mv album ../elsewhere や mv album album2 のケース）ので、
 		// RemoveTreeで配下の行をパスの前方一致でまとめて消す。
 		delete(pending, ev.Name)
+		if _, ok := w.inflight[ev.Name]; ok {
+			// 取り込み中に消えた写真。行が生まれるのは取り込みの完了時なので、
+			// ここで消しても空振りする。完了を受けてから消す。
+			w.inflight[ev.Name] = true
+		}
 		if err := w.ix.RemoveFile(ctx, ev.Name); err != nil {
 			w.log.Warn("削除の反映に失敗", "path", ev.Name, "err", err)
 		}
@@ -117,18 +166,26 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 	}
 }
 
-// flush はdebounce時間が経過した保留中のファイルをインデックスする。
+// flush はdebounce時間が経過した保留中のファイルをワーカーに渡す。
+// 取り込みの完了は待たず、結果は w.done で受ける。
 func (w *Watcher) flush(ctx context.Context, pending map[string]time.Time, now time.Time) {
 	for path, last := range pending {
 		if now.Sub(last) < w.debounce {
 			continue
 		}
-		delete(pending, path)
-		if err := w.ix.IndexFile(ctx, path); err != nil {
-			w.log.Warn("インデックスをスキップ", "path", path, "err", err)
+		if _, ok := w.inflight[path]; ok {
+			// 取り込み中に書き換えられた写真。完了を待ってから渡し直す。
 			continue
 		}
-		w.log.Info("インデックスを更新", "path", path)
+		if !w.ix.executor.trySubmit(ctx, path, func(err error) {
+			w.done <- result{path: path, err: err}
+		}) {
+			// ワーカーが全部埋まっている。残りは保留のままにして次のtickで渡す。
+			// ここで空くのを待つと、その間イベントを読めなくなる。
+			return
+		}
+		delete(pending, path)
+		w.inflight[path] = false
 	}
 }
 

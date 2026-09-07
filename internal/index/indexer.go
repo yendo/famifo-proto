@@ -1,5 +1,5 @@
 // Package index はディスク上の写真とSQLiteインデックスを同期させる。
-// 起動時のフルスキャンとfsnotifyによる追従の両方をここで担う。
+// 起動時のスキャンとfsnotifyによる追従の両方をここで担う。
 //
 // 1枚を取り込む手順のうち、EXIFの読み取りは exif が担う。取り込み時にしか
 // 使わないのでサブパッケージに置く。
@@ -23,11 +23,12 @@ import (
 
 // Indexer は1ファイル単位でインデックスを更新する。
 type Indexer struct {
-	roots   []string
-	st      *store.Store
-	thumbs  *thumb.Provider
-	workers int
-	log     *slog.Logger
+	roots    []string
+	st       *store.Store
+	thumbs   *thumb.Provider
+	workers  int
+	executor *executor
+	log      *slog.Logger
 }
 
 // New はIndexerを作る。rootsは写真を収集するルートディレクトリ。
@@ -35,14 +36,18 @@ type Indexer struct {
 // thumbs は配信側と共有する。同じ置き場所を指す設定値を2経路に配ると、
 // ずれても誰も気づけないため、組み立てたものを1つ受け取る。
 //
-// workers はフルスキャンが同時に取り込む枚数。1未満は1として扱う。適正値は
-// CPU数とストレージの待ち時間で決まり、NASとローカルで違うため設定から来る。
-// fsnotifyの追従は1件ずつ来るので、こちらは workers を見ない。
+// workers は同時に取り込む枚数。1未満は1として扱う。適正値はCPU数とストレージの
+// 待ち時間で決まり、NASとローカルで違うため設定から来る。
+//
+// スキャンも監視も同じ executor を通すので、この上限は取り込みの入口に
+// よらず効く。ディレクトリごと移動された場合、監視にも一度に数百件が来る。
 func New(roots []string, st *store.Store, thumbs *thumb.Provider, workers int, log *slog.Logger) *Indexer {
 	if workers < 1 {
 		workers = 1
 	}
-	return &Indexer{roots: roots, st: st, thumbs: thumbs, workers: workers, log: log}
+	ix := &Indexer{roots: roots, st: st, thumbs: thumbs, workers: workers, log: log}
+	ix.executor = newExecutor(ix)
+	return ix
 }
 
 // IndexFile は1ファイルをインデックスに反映する。

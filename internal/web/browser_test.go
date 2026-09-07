@@ -352,7 +352,7 @@ func writeTestPhoto(path string, i int, takenAt time.Time) error {
 func indexAll(st *store.Store, photoDir string, thumbs *thumb.Provider) (index.Stats, error) {
 	ix := index.New([]string{photoDir}, st, thumbs, 4,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
-	return ix.FullScan(context.Background())
+	return ix.Scan(context.Background())
 }
 
 // writeTestJPEG はi番目の写真用に、色だけが違う小さな正方形JPEGを作る。
@@ -1728,7 +1728,7 @@ const (
 	manyPerDay     = 20
 	stallChunkSize = 20
 
-	// stallItemDelay は /items 1本あたりの応答時間。フルスキャンでCPUが
+	// stallItemDelay は /items 1本あたりの応答時間。スキャンでCPUが
 	// 埋まったNASを模す。直列化と併せて「1本ずつ、250msかけて捌く」になる。
 	// 全60塊で15秒ぶん。下まで降りるスクロール自体は5秒ほどなので、
 	// 通り過ぎた塊を取り続ける限り、着いた先の塊はその後ろで待たされる。
@@ -1761,7 +1761,7 @@ func prepareManyTestPhotos(st *store.Store, photoDir string, thumbs *thumb.Provi
 	return nil
 }
 
-// startStallGallery はフルスキャン中のNASを模したギャラリーを起動する。
+// startStallGallery はスキャン中のNASを模したギャラリーを起動する。
 // CPUが埋まって同時に1本しか捌けない状態を、/items を直列化したうえで
 // 1本あたり stallItemDelay かけることで作る。サムネイルは遅くしない
 // （滞留の実測では29秒のうち /items が273本、/thumb が10本だった）。
