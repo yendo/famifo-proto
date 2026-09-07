@@ -122,17 +122,19 @@ func (s *Store) DeleteByPath(ctx context.Context, path string) (photo.Photo, boo
 // DeleteByPathPrefix はディレクトリ配下の写真をまとめて削除し、削除した行を返す。
 // prefixにセパレータを1つ補ってから前方一致させるため、"album" が
 // "album2" のような兄弟ディレクトリを巻き込むことはない。
+//
+// 前方一致は LIKE ではなく範囲比較で書く。LIKE の前方一致の最適化は
+// ESCAPE 句があると効かず、削除1回ごとに photos の全行を舐めることになる。
+// path は UNIQUE なので暗黙の索引があり、範囲比較ならそれが使われる。
 func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]photo.Photo, error) {
 	dirPrefix := prefix
 	if !strings.HasSuffix(dirPrefix, string(filepath.Separator)) {
 		dirPrefix += string(filepath.Separator)
 	}
-	// LIKEのワイルドカード（% _）をエスケープしたうえで前方一致させる。
-	escaped := likeEscaper.Replace(dirPrefix)
 
 	rows, err := s.db.QueryContext(ctx,
-		`DELETE FROM photos WHERE path LIKE ? ESCAPE '\' RETURNING `+selectCols,
-		escaped+"%")
+		`DELETE FROM photos WHERE path >= ? AND path < ? RETURNING `+selectCols,
+		dirPrefix, upperBound(dirPrefix))
 	if err != nil {
 		return nil, fmt.Errorf("ディレクトリ配下の写真を削除できません (%s): %w", prefix, err)
 	}
@@ -149,7 +151,15 @@ func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]photo.
 	return out, rows.Err()
 }
 
-var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+// upperBound は前方一致の上限を返す。末尾のバイトを1つ進めた値は、
+// prefixで始まるどの文字列よりも大きい最小の値になる。TEXTの既定の照合順序は
+// BINARYなので、バイト単位で進めれば比較と食い違わない。
+// prefixはセパレータで終わっているため、末尾が0xFFで桁上がりすることはない。
+func upperBound(prefix string) string {
+	b := []byte(prefix)
+	b[len(b)-1]++
+	return string(b)
+}
 
 // ListRange は撮影日時の新しい順で offset 番目から limit 件を返す。
 // 仮想スクロールは任意の位置へ飛ぶため、カーソルではなくオフセットで引く。
