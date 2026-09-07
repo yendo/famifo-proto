@@ -333,3 +333,35 @@ func TestWatcherLeavesNoRowForAPhotoMovedWhileBeingIndexed(t *testing.T) {
 		require.Contains(t, p, "moved.heic", "消えたパスの行が残ってはいけない: %s", p)
 	}
 }
+
+func TestWatcherLeavesNoRowForADirectoryMovedWhileBeingIndexed(t *testing.T) {
+	f := newFixture(t)
+	startWatcher(t, f)
+
+	album := filepath.Join(f.root, "album")
+	require.NoError(t, os.MkdirAll(album, 0o755))
+	time.Sleep(50 * time.Millisecond) // 監視登録を待つ
+
+	// 単体の移動と同じ仕掛け。止められる写真をディレクトリの中に置く。
+	src := mkfifoPhoto(t, album, "a.heic")
+	w := waitForIndexing(t, src)
+
+	// 取り込み中にディレクトリごと移す。イベントのパスは album で、
+	// 取り込み中として控えてあるのは album/a.heic である。
+	moved := filepath.Join(f.root, "moved")
+	require.NoError(t, os.Rename(album, moved))
+	time.Sleep(50 * time.Millisecond) // 移動が取り込みの完了より先に処理される順序を作る
+
+	require.NoError(t, w.Close())
+	serveFifo(t, filepath.Join(moved, "a.heic"), testJPEG(t, 40, 20))
+
+	requireCount(t, f, 1)
+	time.Sleep(3 * testDebounce) // 遅れて移動元の行が増えないこと
+	requireCount(t, f, 1)
+
+	paths, err := f.st.AllPaths(context.Background())
+	require.NoError(t, err)
+	for p := range paths {
+		require.Contains(t, p, "moved", "移動元のパスの行が残ってはいけない: %s", p)
+	}
+}

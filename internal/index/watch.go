@@ -129,10 +129,15 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 		//（mv album ../elsewhere や mv album album2 のケース）ので、
 		// RemoveTreeで配下の行をパスの前方一致でまとめて消す。
 		delete(pending, ev.Name)
-		if _, ok := w.inflight[ev.Name]; ok {
-			// 取り込み中に消えた写真。行が生まれるのは取り込みの完了時なので、
-			// ここで消しても空振りする。完了を受けてから消す。
-			w.inflight[ev.Name] = true
+		// 取り込み中に消えた写真には印を付ける。行が生まれるのは取り込みの
+		// 完了時なので、ここで消しても空振りする。完了を受けてから消す。
+		// ディレクトリが消えた場合、イベントのパスはディレクトリのもので、
+		// 控えてあるのは配下の個々のパスなので前方一致で拾う。
+		// inflight はワーカー数を超えないので、毎回回しても高が知れている。
+		for p := range w.inflight {
+			if under(ev.Name, p) {
+				w.inflight[p] = true
+			}
 		}
 		if err := w.ix.RemoveFile(ctx, ev.Name); err != nil {
 			w.log.Warn("削除の反映に失敗", "path", ev.Name, "err", err)
