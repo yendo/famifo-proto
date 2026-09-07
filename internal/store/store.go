@@ -55,7 +55,29 @@ func Open(dbPath string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("スキーマを作成できません: %w", err)
 	}
+	// スキーマを作れたことと読めることは別である。CREATE ... IF NOT EXISTS は
+	// 既にある表と索引に触れないので、列を変えた古いDBが残っていると、ここまで
+	// 成功したうえで最初の読み取りで落ちる。移行は書かず作り直す運用なので、
+	// その取り違えは起こる。配信を始めてから気づくのでは遅い。
+	if err := probeReadable(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
+}
+
+// probeReadable はアプリが読む列をひと通り選んで、DBが実際に読めることを
+// 確かめる。行の有無は問わないので LIMIT 1 で足り、値も取り出さない。
+func probeReadable(db *sql.DB) error {
+	rows, err := db.Query(`SELECT id, ` + selectCols + ` FROM photos LIMIT 1`)
+	if err != nil {
+		return fmt.Errorf("DBを読めません: %w", err)
+	}
+	defer rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("DBを読めません: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }

@@ -344,3 +344,31 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 		}
 	}
 }
+
+// 列を変えたらDBを消して作り直す運用なので、古いDBが残ったまま起動する取り違えは
+// 起こる。CREATE ... IF NOT EXISTS は既にある表と索引に触れないためスキーマ作成は
+// 素通りし、最初の読み取りではじめて落ちる。配信を始めてから気づくのでは遅いので
+// Open で弾く。
+func TestOpenRejectsADatabaseWhoseColumnsHaveChanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stale.db")
+
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	// taken_at を別名にした古い世代のDB。索引の名前は今と同じなので、
+	// CREATE INDEX IF NOT EXISTS も作り直さない。
+	_, err = db.Exec(`
+CREATE TABLE photos (
+    id       TEXT PRIMARY KEY,
+    path     TEXT NOT NULL UNIQUE,
+    shot_at  INTEGER NOT NULL,
+    mod_time INTEGER NOT NULL
+);
+CREATE INDEX idx_photos_order ON photos(shot_at DESC, id DESC);`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	_, err = store.Open(path)
+
+	require.Error(t, err, "読めないDBで起動させない")
+	require.Contains(t, err.Error(), "DBを読めません")
+}
