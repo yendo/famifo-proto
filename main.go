@@ -103,21 +103,27 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 }
 
 func main() {
-	if err := run(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+// run は起動から停止までを担う。プロセスに属するもの（シグナル、コマンドライン
+// 引数、標準出力）は main から引数で受け取り、run 自身は os を直接読まない。
+// テストから引数と出力を差し替えて呼べるようにするためである。
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	log := slog.New(slog.NewTextHandler(stderr, nil))
 
-	cfg, showVersion, err := parseArgs(os.Args[1:], os.Stderr)
+	cfg, showVersion, err := parseArgs(args, stderr)
 	if err != nil {
 		return err
 	}
 	if showVersion {
-		fmt.Println("famifo-proto", versionString())
+		fmt.Fprintln(stdout, "famifo-proto", versionString())
 		return nil
 	}
 	// 常駐プロセスなので、どのビルドが動いているかはログでしか確認できない。
@@ -145,8 +151,10 @@ func run() error {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	// シグナルの捕捉は main の役目。ここでは渡された ctx から cancel を派生させ、
+	// HTTPの失敗や終了処理から取り込みを止められるようにする。
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	// スキャンの完了を待たずに配信を始める。大量の写真でも、
 	// インデックスができた分から順に見られるほうがよい。
@@ -159,7 +167,7 @@ func run() error {
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("HTTPサーバーが停止しました", "err", err)
 			serveErr <- err
-			stop()
+			cancel()
 		}
 	}()
 
@@ -181,7 +189,7 @@ func run() error {
 	// defer の順序で st.Close() より先に走る。
 	var indexers sync.WaitGroup
 	defer func() {
-		stop() // 監視と定期スキャンに終わるよう伝える
+		cancel() // 監視と定期スキャンに終わるよう伝える
 		indexers.Wait()
 	}()
 
