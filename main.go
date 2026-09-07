@@ -201,22 +201,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}()
 
-	// fsnotifyは停止中の変更を検知できないので、起動のたびに実態と突き合わせる。
-	// 1回目はここで同期に走らせる。失敗したら起動を止めるためである。
-	log.Info("スキャンを開始", "dirs", cfg.PhotoDirs)
-	// 所要時間も出す。取り込みの重さを変える変更をしたとき、前後を突き合わせられる
-	// 記録がログにしか残らないため。
-	scanStart := time.Now()
-	stats, err := ix.Scan(ctx)
-	if err != nil && ctx.Err() == nil {
+	if err := firstScan(ctx, ix, cfg.PhotoDirs, log); err != nil {
 		return err
 	}
 	if ctx.Err() == nil {
-		log.Info("スキャンが完了",
-			"elapsed", time.Since(scanStart).Round(time.Millisecond),
-			"indexed", stats.Indexed, "unchanged", stats.Unchanged,
-			"removed", stats.Removed, "skipped", stats.Skipped)
-
 		// 2回目以降は間隔をおいて繰り返す。監視の取りこぼしはこれで回復する。
 		indexers.Add(1)
 		go func() {
@@ -226,7 +214,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Info("定期スキャンを開始", "interval", cfg.ScanInterval)
 	}
 
-	// ListenAndServeの失敗はstop()経由でctx.Done()も閉じるため、どちらが
+	// ListenAndServeの失敗はcancel()経由でctx.Done()も閉じるため、どちらが
 	// 先に見えるかは決まらない。両方をselectで待ち、失敗はrunの戻り値まで伝える。
 	var listenErr error
 	select {
@@ -236,6 +224,36 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	log.Info("シャットダウンします")
 
+	return shutdownHTTP(httpSrv, serveErr, listenErr)
+}
+
+// firstScan は起動時の突き合わせを同期に走らせる。fsnotifyは停止中の変更を
+// 検知できないので、起動のたびにディスクの実態と突き合わせる必要がある。
+// ここで失敗したら起動を止めるため、エラーは呼び出し側まで返す。
+// 停止の合図で打ち切られた場合は失敗として扱わない。
+func firstScan(ctx context.Context, ix *index.Indexer, dirs []string, log *slog.Logger) error {
+	log.Info("スキャンを開始", "dirs", dirs)
+	// 所要時間も出す。取り込みの重さを変える変更をしたとき、前後を突き合わせられる
+	// 記録がログにしか残らないため。
+	scanStart := time.Now()
+	stats, err := ix.Scan(ctx)
+	if err != nil && ctx.Err() == nil {
+		return err
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	log.Info("スキャンが完了",
+		"elapsed", time.Since(scanStart).Round(time.Millisecond),
+		"indexed", stats.Indexed, "unchanged", stats.Unchanged,
+		"removed", stats.Removed, "skipped", stats.Skipped)
+	return nil
+}
+
+// shutdownHTTP は待ち受けを猶予付きで止め、待ち受けの失敗と停止の失敗を
+// 1つのエラーにまとめる。listenErrは停止を待つ前に受け取っていた失敗で、
+// 受け取っていなければnilが渡る。
+func shutdownHTTP(httpSrv *http.Server, serveErr <-chan error, listenErr error) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	shutErr := httpSrv.Shutdown(shutCtx)
