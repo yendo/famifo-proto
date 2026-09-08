@@ -55,6 +55,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, "famifo-proto", versionString())
 		return nil
 	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
 	// 常駐プロセスなので、どのビルドが動いているかはログでしか確認できない。
 	// timezone を出すのは、TZ の渡し忘れが静かに UTC になるため。
 	// 誤ったまま本番のインデックスを作ると、全件やり直しになる。
@@ -151,7 +154,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return shutdownHTTP(httpSrv, listenErrCh, listenErr)
 }
 
-// parseArgs はコマンドライン引数を解析して検証済みの設定を返す。
+// parseArgs はコマンドライン引数を解析して設定を返す。解析だけを担い、
+// 値の妥当性は見ない。
 // argsにはプログラム名を含めない。2つ目の戻り値は -version が指定されたことを表す。
 func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	fs := flag.NewFlagSet("famifo", flag.ContinueOnError)
@@ -178,14 +182,9 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	if err := fs.Parse(args); err != nil {
 		return config.Config{}, false, err
 	}
-	// バージョンを表示するだけなので -dir は要らない。検証まで進めない。
-	if *showVersion {
-		return config.Config{}, true, nil
-	}
-	// 空文字を SplitList に渡すと [""] ではなく [] が返るので、
-	// 「未指定」は Validate 側の「1つ以上必須」で捕まる。
+	// 空文字を SplitList に渡すと [""] ではなく [] が返る。
 	c.PhotoDirs = filepath.SplitList(dirs)
-	return c, false, c.Validate()
+	return c, *showVersion, nil
 }
 
 // defaultScanWorkers は取り込みの既定の並行数を返す。
