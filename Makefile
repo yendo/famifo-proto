@@ -8,11 +8,11 @@ vet:
 
 .PHONY: unit-test
 unit-test:
-	go test -cover -shuffle=on ./...
+	go test -coverprofile cover-ut.out -shuffle=on ./...
 
 .PHONY: unit-test-race
 unit-test-race:
-	go test -cover -shuffle=on -race ./...
+	go test -coverprofile cover-ut.out -shuffle=on -race ./...
 
 .PHONY: browser-test
 browser-test:
