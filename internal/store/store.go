@@ -204,6 +204,36 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]photo.Photo
 	return out, rows.Err()
 }
 
+// RankOf は一覧の並びでその写真が何番目かを返す（先頭が0）。写真ごとのURLから
+// 開くとき、クライアントは通し番号で位置を決めるため、IDから番号へ引き直す経路が要る。
+// 該当が無い場合は ErrNotFound を返す。
+//
+// 並びは ListRange と同じ taken_at DESC, id DESC でなければならない。順序式が
+// 二重になるが、片方だけ変えるとURLが別の写真の位置を指すため、
+// TestRankOfLocatesThePhotoInListRange が両者の一致を縛っている。
+func (s *Store) RankOf(ctx context.Context, id string) (int, error) {
+	var takenAt int64
+	err := s.db.QueryRowContext(ctx, `SELECT taken_at FROM photos WHERE id = ?`, id).Scan(&takenAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("cannot get the photo: %w", err)
+	}
+
+	// 自分より前に並ぶ行を数える。OFFSET で数えるのと違い、途中の行を読まずに
+	// 索引だけで答えが出る。
+	var rank int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM photos
+		 WHERE taken_at > ? OR (taken_at = ? AND id > ?)`,
+		takenAt, takenAt, id).Scan(&rank)
+	if err != nil {
+		return 0, fmt.Errorf("cannot count the photos before the photo: %w", err)
+	}
+	return rank, nil
+}
+
 // AllPaths は登録済みの全パスとそのmtimeを返す。スキャンでの差分検出に使う。
 func (s *Store) AllPaths(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT path, mod_time FROM photos`)

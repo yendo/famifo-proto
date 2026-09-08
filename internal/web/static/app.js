@@ -9,6 +9,9 @@ const famifo = (() => {
 
 	const total = Number(gallery.dataset.total || 0);
 	const chunkSize = Number(gallery.dataset.chunk || 60);
+	// 写真ごとのURL(/item/<id>)で開かれたとき、サーバーが埋めた「開く写真の
+	// 通し番号」。閉じたまま開く場合は -1。
+	const openIndex = Number(gallery.dataset.open ?? -1);
 	const OVERSCAN_ROWS = 4; // 可視範囲の上下に余分に描く行数
 
 	// スクロールしているのは #gallery ではなく文書全体。
@@ -28,14 +31,16 @@ const famifo = (() => {
 	let renderedKey = ""; // 「どの塊を何個貼ったか」。同じなら描き直さない
 
 	// サーバが返したHTML断片を、タイル1枚ずつに割る。取得時に1回だけパースし、
-	// 以降はここから必要な範囲を切り出して組み立てる。data-full 属性がURL、
-	// data-date 属性が日付。
+	// 以降はここから必要な範囲を切り出して組み立てる。data-full 属性が画像のURL、
+	// data-date 属性が日付、href がその写真のページ（ライトボックスを開いた
+	// ときにアドレス欄へ出すURL）。
 	function parseTiles(html) {
 		const tmp = document.createElement("div");
 		tmp.innerHTML = html;
 		return [...tmp.querySelectorAll(".tile")].map((a) => ({
 			html: a.outerHTML,
 			url: a.dataset.full,
+			page: a.getAttribute("href"),
 			date: a.dataset.date,
 		}));
 	}
@@ -244,7 +249,7 @@ const famifo = (() => {
 		const controller = new AbortController();
 		const job = (async () => {
 			const res = await fetch(
-				`/items?offset=${ci * chunkSize}&limit=${chunkSize}`,
+				`/tiles?offset=${ci * chunkSize}&limit=${chunkSize}`,
 				{ signal: controller.signal },
 			);
 			if (!res.ok) throw new Error(`items ${res.status}`);
@@ -283,6 +288,12 @@ const famifo = (() => {
 	function tileAt(i) {
 		const tiles = chunks.get(Math.floor(i / chunkSize));
 		return tiles ? (tiles[i % chunkSize] ?? null) : null;
+	}
+
+	// その写真のページURL。取得済みの塊からしか引けないので、表示中の写真に
+	// 対してだけ使う。
+	function pageAt(i) {
+		return tileAt(i)?.page ?? null;
 	}
 
 	function ensureChunk(i) {
@@ -397,6 +408,14 @@ const famifo = (() => {
 		return `${head}${Number(m)}月${Number(day)}日`;
 	}
 
+	// jumpTo は通し番号の写真が見える位置までスクロールする。写真ごとのURLで
+	// 開かれたときに、背後の一覧をその写真の位置に合わせるために使う。
+	function jumpTo(i) {
+		if (!L || L.height <= 0) return;
+		scroller.scrollTop = toDocY(yForIndex(L, i));
+		render();
+	}
+
 	function onResize() {
 		// 回転やリサイズで列数が変わるとレイアウト全体の高さが変わるため、
 		// scrollTop をそのまま残すと別の写真の位置に飛ぶ。いま先頭に見えていた
@@ -446,7 +465,10 @@ const famifo = (() => {
 	return {
 		total,
 		chunkSize,
+		openIndex,
 		urlAt,
+		pageAt,
+		jumpTo,
 		ensureChunk,
 		scroller,
 		maxScroll,
@@ -464,6 +486,14 @@ const famifo = (() => {
 
 // ライトボックス。仮想スクロールではDOM上に可視範囲のタイルしか無いため、
 // 全体の通し番号で動かす。そうしないと窓枠の端でスワイプが止まる。
+//
+// 開いている写真はアドレス欄にも出る（/item/<id>）。ページは遷移させず履歴だけを
+// 積むので、一覧のスクロール位置は保たれる。閉じる操作は自分で閉じずに
+// history.back() を呼び、実際に閉じるのは popstate の1箇所だけにする。2経路で
+// 閉じると履歴を二重に消費し、閉じたのにURLが写真のまま残る。
+//
+// history.scrollRestoration は既定のままにする。リロードでスクロール位置が
+// 戻るのはブラウザのその働きによるもので、manualにすると失われる。
 (() => {
 	const box = document.querySelector("#lightbox");
 	if (!box || !famifo) return;
@@ -474,32 +504,73 @@ const famifo = (() => {
 
 	let idx = -1;
 	let requestSeq = 0; // 連続スワイプで古いurlAtの解決が新しいものを上書きしないための世代番号
+	// 自分で積んだ履歴エントリの上にいるか。写真のURLを直接開いた場合は積んで
+	// いないので、閉じるときに戻る先が無い。
+	let pushed = false;
 
-	async function show(i) {
+	// mode は履歴の扱い。"push" は新しいエントリを積む（一覧から開いたとき）、
+	// "replace" はいまのエントリのURLだけ差し替える（送りと、写真のURLで
+	// 開かれたとき）、"none" は履歴に触らない（popstateから復元するとき）。
+	async function show(i, mode) {
 		if (i < 0 || i >= famifo.total) return;
 		const mySeq = ++requestSeq;
 		const url = await famifo.urlAt(i);
 		if (!url || mySeq !== requestSeq) return; // 待っている間に追い越されたら破棄
 		idx = i;
 		img.src = url;
+		// 送りで積むと、めくった枚数だけ戻るボタンを押さないとギャラリーへ
+		// 帰れなくなる。URLは追随させるが履歴には積まない。
+		const page = famifo.pageAt(i) ?? location.pathname;
+		if (mode === "push") {
+			history.pushState({ i }, "", page);
+			pushed = true;
+		} else if (mode === "replace") {
+			history.replaceState({ i }, "", page);
+		}
 		famifo.ensureChunk(i + 1); // 次を先読みしておく
 		famifo.ensureChunk(i - 1);
 	}
 
-	async function open(i) {
-		await show(i);
+	async function open(i, mode) {
+		await show(i, mode);
 		if (idx < 0) return;
 		box.hidden = false;
 		document.body.classList.add("locked");
 	}
 
+	// close は閉じるだけで履歴には触らない。呼ぶのは popstate と、戻る先を
+	// 持たない requestClose だけである。
 	function close() {
 		box.hidden = true;
 		img.removeAttribute("src");
 		document.body.classList.remove("locked");
 		idx = -1;
 		requestSeq++; // 閉じた後に届く古い解決を破棄する
+		pushed = false;
 	}
+
+	// requestClose は「閉じたい」という要求。積んだエントリがあるなら1つ戻り、
+	// popstate に閉じさせる。戻る先が無い（写真のURLを直接開いた）ときだけ、
+	// URLをギャラリーに直してから自分で閉じる。
+	function requestClose() {
+		if (pushed) {
+			history.back();
+			return;
+		}
+		history.replaceState(null, "", "/");
+		close();
+	}
+
+	window.addEventListener("popstate", (e) => {
+		const i = e.state?.i;
+		if (Number.isInteger(i)) {
+			// 「進む」で写真のエントリに戻ってきた場合。
+			pushed = true;
+			open(i, "none").catch(() => {});
+			return;
+		}
+		if (!box.hidden) close();
+	});
 
 	document.addEventListener("click", (e) => {
 		const tile = e.target.closest("#window .tile");
@@ -509,26 +580,26 @@ const famifo = (() => {
 		if (!Number.isInteger(i)) return; // 通し番号が無いタイルは無視する。
 		// NaN は i < 0 も i >= total も満たさず、
 		// offset=NaN のリクエストまで素通りする
-		open(i).catch(() => {});
+		open(i, "push").catch(() => {});
 	});
 
 	box.addEventListener("click", (e) => {
 		if (e.target.closest(".lb-prev")) {
-			show(idx - 1);
+			show(idx - 1, "replace");
 			return;
 		}
 		if (e.target.closest(".lb-next")) {
-			show(idx + 1);
+			show(idx + 1, "replace");
 			return;
 		}
-		close();
+		requestClose();
 	});
 
 	document.addEventListener("keydown", (e) => {
 		if (box.hidden) return;
-		if (e.key === "Escape") close();
-		else if (e.key === "ArrowRight") show(idx + 1);
-		else if (e.key === "ArrowLeft") show(idx - 1);
+		if (e.key === "Escape") requestClose();
+		else if (e.key === "ArrowRight") show(idx + 1, "replace");
+		else if (e.key === "ArrowLeft") show(idx - 1, "replace");
 	});
 
 	let startX = 0;
@@ -557,13 +628,20 @@ const famifo = (() => {
 			const dy = t.clientY - startY;
 
 			if (Math.abs(dx) > SWIPE_X && Math.abs(dx) > Math.abs(dy)) {
-				show(dx < 0 ? idx + 1 : idx - 1);
+				show(dx < 0 ? idx + 1 : idx - 1, "replace");
 			} else if (dy > SWIPE_Y && Math.abs(dy) > Math.abs(dx)) {
-				close();
+				requestClose();
 			}
 		},
 		{ passive: true },
 	);
+
+	// 写真ごとのURLで開かれた場合。サーバーが通し番号を埋めているので、背後の
+	// 一覧をその位置に合わせてから開く。閉じたときにその写真の場所が見える。
+	if (famifo.openIndex >= 0) {
+		famifo.jumpTo(famifo.openIndex);
+		open(famifo.openIndex, "replace").catch(() => {});
+	}
 })();
 
 // 日付スクラバー。ドラッグで全期間の任意の位置へ飛ぶ。

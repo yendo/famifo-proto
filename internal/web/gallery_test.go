@@ -87,13 +87,13 @@ func TestGalleryOrdersNewestFirst(t *testing.T) {
 		"ordered by capture time, newest first")
 }
 
-func TestItemsReturnsFragmentOnly(t *testing.T) {
+func TestTilesReturnsFragmentOnly(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 1)
 	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 	last := f.addPhoto(t, "b.jpg", time.Unix(1700000000, 0), famifoThumb)
 
-	rec := doGet(t, f.h, "/items?t=1700000000&id="+last.ID())
+	rec := doGet(t, f.h, "/tiles?t=1700000000&id="+last.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
@@ -102,7 +102,7 @@ func TestItemsReturnsFragmentOnly(t *testing.T) {
 	require.Contains(t, body, "/photo/")
 }
 
-func TestItemsReturnsRequestedWindow(t *testing.T) {
+func TestTilesReturnsRequestedWindow(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
 	var ids []string
@@ -111,7 +111,7 @@ func TestItemsReturnsRequestedWindow(t *testing.T) {
 		ids = append(ids, p.ID())
 	}
 
-	body := doGet(t, f.h, "/items?offset=1&limit=2").Body.String()
+	body := doGet(t, f.h, "/tiles?offset=1&limit=2").Body.String()
 
 	// 新しい順は p4,p3,p2,p1,p0 なので offset=1 の2件は p3,p2
 	require.Contains(t, body, ids[3])
@@ -120,25 +120,25 @@ func TestItemsReturnsRequestedWindow(t *testing.T) {
 	require.NotContains(t, body, ids[1])
 }
 
-func TestItemsHasNoSentinel(t *testing.T) {
+func TestTilesHasNoSentinel(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
 	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	body := doGet(t, f.h, "/items?offset=0&limit=1").Body.String()
+	body := doGet(t, f.h, "/tiles?offset=0&limit=1").Body.String()
 
 	require.NotContains(t, body, "hx-", "no htmx attributes are left behind")
 	require.NotContains(t, body, "sentinel")
 }
 
-func TestItemsRejectsBadOffset(t *testing.T) {
+func TestTilesRejectsBadOffset(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
 	for _, target := range []string{
-		"/items?offset=abc&limit=10",
-		"/items?offset=-1&limit=10",
-		"/items?offset=0&limit=abc",
-		"/items?offset=0&limit=-1",
+		"/tiles?offset=abc&limit=10",
+		"/tiles?offset=-1&limit=10",
+		"/tiles?offset=0&limit=abc",
+		"/tiles?offset=0&limit=-1",
 	} {
 		t.Run(target, func(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, doGet(t, f.h, target).Code)
@@ -146,12 +146,12 @@ func TestItemsRejectsBadOffset(t *testing.T) {
 	}
 }
 
-func TestItemsDefaultsToFirstWindow(t *testing.T) {
+func TestTilesDefaultsToFirstWindow(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	body := doGet(t, f.h, "/items").Body.String()
+	body := doGet(t, f.h, "/tiles").Body.String()
 
 	require.Contains(t, body, p.ID())
 }
@@ -214,7 +214,7 @@ func TestDatesEndpointIsGone(t *testing.T) {
 		"the per-day table ships in the first HTML, so there is no endpoint for it")
 }
 
-func TestItemsTagsEachTileWithLocalDate(t *testing.T) {
+func TestTilesTagsEachTileWithLocalDate(t *testing.T) {
 	// time.Local はプロセス全体で1つしかない。書き換えるテストが並列に走ると、
 	// 同時に走っている他のテストの時刻解釈まで巻き添えで変わる。実際 -race が
 	// 競合として検出する。このテストは t.Parallel() を呼ばない。
@@ -227,7 +227,7 @@ func TestItemsTagsEachTileWithLocalDate(t *testing.T) {
 	// ローカルで2月8日の未明。UTCに直すと2月7日になる時刻。
 	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 0, 30, 0, 0, time.Local), famifoThumb)
 
-	body := doGet(t, f.h, "/items?offset=0&limit=60").Body.String()
+	body := doGet(t, f.h, "/tiles?offset=0&limit=60").Body.String()
 
 	require.Contains(t, body, `data-date="2026-02-08"`,
 		"cutting in UTC would give 2026-02-07; group by local time")
@@ -253,4 +253,60 @@ func TestGalleryUsesTheBorrowedThumbForHEIC(t *testing.T) {
 
 	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`,
 		"a HEIC that can borrow from @eaDir uses the thumbnail")
+}
+
+// 写真ごとのURLは、その写真を開いた状態のギャラリーを返す。クライアントは
+// 埋め込まれた通し番号でその位置へ飛ぶので、番号が一覧の並びと一致していること。
+func TestItemOpensTheGalleryAtThePhoto(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	var photos []string
+	for i, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+		p := f.addPhoto(t, name, time.Unix(int64(1600000000+i), 0), famifoThumb)
+		photos = append(photos, p.ID())
+	}
+
+	// 新しい順に並ぶので c, b, a。真ん中の b は1番目。
+	rec := doGet(t, f.h, "/item/"+photos[1])
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
+	body := rec.Body.String()
+	require.Contains(t, body, `data-open="1"`)
+	require.Contains(t, body, `data-total="3"`)
+}
+
+// 消えた写真のURLを共有されても、壊れた画面ではなくギャラリーを出す。
+func TestItemUnknownPhotoRedirectsToTheGallery(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+
+	rec := doGet(t, f.h, "/item/nosuchphoto")
+
+	require.Equal(t, http.StatusFound, rec.Code)
+	require.Equal(t, "/", rec.Header().Get("Location"))
+}
+
+func TestGalleryOpensNoPhoto(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `data-open="-1"`)
+}
+
+// タイルのリンク先は画像そのものではなく写真のページである。新しいタブで開く
+// 操作や、リンクのコピーが意味のあるURLを返すようにするため。
+func TestTilesLinkToThePhotoPage(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `href="/item/`+p.ID()+`"`)
+	require.Contains(t, body, `data-full="/photo/`+p.ID()+`"`)
 }
