@@ -226,7 +226,7 @@ func (s *scanner) purge(ctx context.Context) {
 			guarded++
 			continue
 		}
-		if err := s.ix.RemoveFile(ctx, path); err != nil {
+		if err := s.ix.removeFile(ctx, path); err != nil {
 			s.ix.log.Warn("削除の反映に失敗", "path", path, "err", err)
 			continue
 		}

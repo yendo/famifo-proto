@@ -132,7 +132,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			delete(w.inflight, r.path)
 			if removed {
 				// 取り込んでいる間に消えていた。今しがた入った行を取り消す。
-				if err := w.ix.RemoveFile(ctx, r.path); err != nil {
+				if err := w.ix.removeFile(ctx, r.path); err != nil {
 					w.log.Warn("削除の反映に失敗", "path", r.path, "err", err)
 				}
 				break
@@ -161,7 +161,7 @@ func (w *Watcher) handleEvent(ctx context.Context, ev fsnotify.Event, pending ma
 		// 両方呼ぶ。該当しない方は何もマッチせずno-opになるだけなので安全。
 		// ディレクトリの場合、中の個々のファイルにはイベントが来ない
 		//（mv album ../elsewhere や mv album album2 のケース）ので、
-		// RemoveTreeで配下の行をパスの前方一致でまとめて消す。
+		// removeTreeで配下の行をパスの前方一致でまとめて消す。
 		delete(pending, ev.Name)
 		// 取り込み中に消えた写真には印を付ける。行が生まれるのは取り込みの
 		// 完了時なので、ここで消しても空振りする。完了を受けてから消す。
@@ -173,10 +173,10 @@ func (w *Watcher) handleEvent(ctx context.Context, ev fsnotify.Event, pending ma
 				w.inflight[p] = true
 			}
 		}
-		if err := w.ix.RemoveFile(ctx, ev.Name); err != nil {
+		if err := w.ix.removeFile(ctx, ev.Name); err != nil {
 			w.log.Warn("削除の反映に失敗", "path", ev.Name, "err", err)
 		}
-		if err := w.ix.RemoveTree(ctx, ev.Name); err != nil {
+		if err := w.ix.removeTree(ctx, ev.Name); err != nil {
 			w.log.Warn("ディレクトリ配下の削除の反映に失敗", "path", ev.Name, "err", err)
 		}
 		if w.ix.indexing() {
