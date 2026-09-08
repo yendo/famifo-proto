@@ -65,7 +65,7 @@ type Watcher struct {
 func NewWatcher(ix *Indexer, log *slog.Logger) (*Watcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
-		return nil, fmt.Errorf("監視を開始できません: %w", err)
+		return nil, fmt.Errorf("cannot start watching: %w", err)
 	}
 	w := &Watcher{
 		ix:       ix,
@@ -119,7 +119,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			w.log.Warn("監視エラー", "err", err)
+			w.log.Warn("watch error", "err", err)
 			if errors.Is(err, fsnotify.ErrEventOverflow) {
 				// カーネルのキューが溢れた。落ちたイベントは二度と来ないので、
 				// 取り戻せるのはスキャンだけである。溢れは連続して届くが、
@@ -133,15 +133,15 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if removed {
 				// 取り込んでいる間に消えていた。今しがた入った行を取り消す。
 				if err := w.ix.removeFile(ctx, r.path); err != nil {
-					w.log.Warn("削除の反映に失敗", "path", r.path, "err", err)
+					w.log.Warn("failed to apply a deletion", "path", r.path, "err", err)
 				}
 				break
 			}
 			if r.err != nil {
-				w.log.Warn("インデックスをスキップ", "path", r.path, "err", r.err)
+				w.log.Warn("skipped indexing", "path", r.path, "err", r.err)
 				break
 			}
-			w.log.Info("インデックスを更新", "path", r.path)
+			w.log.Info("index updated", "path", r.path)
 
 		case now := <-tick.C:
 			w.flush(ctx, pending, now)
@@ -174,10 +174,10 @@ func (w *Watcher) handleEvent(ctx context.Context, ev fsnotify.Event, pending ma
 			}
 		}
 		if err := w.ix.removeFile(ctx, ev.Name); err != nil {
-			w.log.Warn("削除の反映に失敗", "path", ev.Name, "err", err)
+			w.log.Warn("failed to apply a deletion", "path", ev.Name, "err", err)
 		}
 		if err := w.ix.removeTree(ctx, ev.Name); err != nil {
-			w.log.Warn("ディレクトリ配下の削除の反映に失敗", "path", ev.Name, "err", err)
+			w.log.Warn("failed to apply the deletion of a directory", "path", ev.Name, "err", err)
 		}
 		if w.ix.indexing() {
 			// 取り込みの最中に消えた写真は、ワーカーが後から Upsert して
@@ -203,7 +203,7 @@ func (w *Watcher) handleEvent(ctx context.Context, ev fsnotify.Event, pending ma
 		// 新しいディレクトリ: 監視に加えたうえで、既に入っている中身も拾う。
 		// ディレクトリごとmvされた場合、中のファイルには個別のイベントが来ない。
 		if err := w.addTree(ev.Name); err != nil {
-			w.log.Warn("監視対象の追加に失敗", "path", ev.Name, "err", err)
+			w.log.Warn("failed to add a watch", "path", ev.Name, "err", err)
 		}
 		w.enqueueTree(ev.Name, pending)
 
@@ -252,7 +252,7 @@ func (w *Watcher) addRoots() error {
 func (w *Watcher) addTree(root string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			w.log.Warn("監視対象をスキップ", "path", path, "err", err)
+			w.log.Warn("skipped a watch", "path", path, "err", err)
 			return nil
 		}
 		if !d.IsDir() {
@@ -265,7 +265,7 @@ func (w *Watcher) addTree(root string) error {
 			return fs.SkipDir
 		}
 		if err := w.fsw.Add(path); err != nil {
-			w.log.Warn("監視対象を追加できません", "path", path, "err", err)
+			w.log.Warn("cannot add a watch", "path", path, "err", err)
 		}
 		return nil
 	})

@@ -38,16 +38,16 @@ func (ix *Indexer) RunScans(ctx context.Context, interval time.Duration, kicks <
 	for {
 		// 大量の写真では1回目に時間がかかる。開始も残さないと、走査中なのか
 		// 止まっているのかがログから読めない。
-		ix.log.Info("スキャンを開始", "dirs", ix.roots)
+		ix.log.Info("scan started", "dirs", ix.roots)
 		start := time.Now()
 		stats, err := ix.Scan(ctx)
 		if ctx.Err() != nil {
 			return
 		}
 		if err != nil {
-			ix.log.Warn("スキャンに失敗", "err", err)
+			ix.log.Warn("scan failed", "err", err)
 		} else {
-			ix.log.Info("スキャンが完了",
+			ix.log.Info("scan finished",
 				"elapsed", time.Since(start).Round(time.Millisecond),
 				"indexed", stats.Indexed, "unchanged", stats.Unchanged,
 				"removed", stats.Removed, "skipped", stats.Skipped)
@@ -134,7 +134,7 @@ func (s *scanner) walkAll(ctx context.Context) error {
 			// 外れただけで走査全体を止めると、生きているルートの更新まで
 			// 反映されなくなる。このルートは foundByRoot が0のままなので、配下の
 			// 削除は purge のガードが自動的に見送る。
-			s.ix.log.Warn("ルートを読めないため飛ばした", "root", root, "err", err)
+			s.ix.log.Warn("skipped an unreadable root", "root", root, "err", err)
 		}
 	}
 	return nil
@@ -157,7 +157,7 @@ func (s *scanner) walk(ctx context.Context, root string) error {
 				return err
 			}
 			// 読めないディレクトリやファイルは飛ばす（権限エラーなど）
-			s.ix.log.Warn("走査をスキップ", "path", path, "err", err)
+			s.ix.log.Warn("skipped while walking", "path", path, "err", err)
 			s.stats.Skipped++
 			return nil
 		}
@@ -174,7 +174,7 @@ func (s *scanner) walk(ctx context.Context, root string) error {
 
 		fi, err := d.Info()
 		if err != nil {
-			s.ix.log.Warn("ファイル情報を取得できずスキップ", "path", path, "err", err)
+			s.ix.log.Warn("skipped, cannot stat the file", "path", path, "err", err)
 			s.stats.Skipped++
 			return nil
 		}
@@ -210,7 +210,7 @@ func (s *scanner) submit(ctx context.Context, path string) {
 			// 中断で落ちたぶんを破損として数えない。Ctrl-Cのたびに身に
 			// 覚えのないスキップ件数が出ることになるため、記録もしない。
 		default:
-			s.ix.log.Warn("インデックスをスキップ", "path", path, "err", err)
+			s.ix.log.Warn("skipped indexing", "path", path, "err", err)
 			s.failed++
 		}
 	})
@@ -227,13 +227,13 @@ func (s *scanner) purge(ctx context.Context) {
 			continue
 		}
 		if err := s.ix.removeFile(ctx, path); err != nil {
-			s.ix.log.Warn("削除の反映に失敗", "path", path, "err", err)
+			s.ix.log.Warn("failed to apply a deletion", "path", path, "err", err)
 			continue
 		}
 		s.stats.Removed++
 	}
 	if guarded > 0 {
-		s.ix.log.Warn("走査結果が空のルートがあるため削除をスキップした",
+		s.ix.log.Warn("skipped deletions because a root scanned empty",
 			"roots", empty, "remaining", guarded)
 	}
 }

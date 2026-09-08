@@ -115,7 +115,7 @@ func TestDeleteByPath(t *testing.T) {
 
 	_, ok, err = s.DeleteByPath(ctx, p.Path())
 	require.NoError(t, err)
-	require.False(t, ok, "2回目の削除は見つからないと報告する")
+	require.False(t, ok, "a second delete reports not found")
 }
 
 func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
@@ -130,12 +130,12 @@ func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
 	deleted, err := s.DeleteByPathPrefix(ctx, "/p/album")
 
 	require.NoError(t, err)
-	require.Len(t, deleted, 1, "album2 まで巻き込んではいけない")
+	require.Len(t, deleted, 1, "album2 must not be caught up in it")
 	require.Equal(t, a.Path(), deleted[0].Path())
 
 	n, err := s.Count(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 1, n, "album2 の行は残る")
+	require.Equal(t, 1, n, "the album2 row stays")
 }
 
 // LIKEのワイルドカードは、パスに現れると兄弟を巻き込む。範囲比較へ
@@ -163,7 +163,7 @@ func TestDeleteByPathPrefixTreatsWildcardsAsLiterals(t *testing.T) {
 			deleted, err := s.DeleteByPathPrefix(ctx, tt.prefix)
 
 			require.NoError(t, err)
-			require.Len(t, deleted, 1, "%s まで巻き込んではいけない", tt.other)
+			require.Len(t, deleted, 1, "%s must not be caught up in it", tt.other)
 			require.Equal(t, a.Path(), deleted[0].Path())
 		})
 	}
@@ -310,7 +310,7 @@ func TestDayGroupsUsesLocalTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Equal(t, "2022-11-01", got[0].Date,
-		"UTCで切ると2022-10-31になる。ローカル時刻で分類すること")
+		"cutting in UTC would give 2022-10-31; group by local time")
 }
 
 func TestDayGroupsEmptyStore(t *testing.T) {
@@ -349,7 +349,7 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 	for _, g := range groups {
 		sum += g.Count
 	}
-	require.Equal(t, total, sum, "枚数の合計がCountと一致すること")
+	require.Equal(t, total, sum, "the per-day counts add up to Count")
 
 	// 区切り位置が ListRange の並びと合うこと
 	all, err := s.ListRange(ctx, 0, total)
@@ -358,7 +358,7 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 	for _, g := range groups {
 		for k := 0; k < g.Count; k++ {
 			require.Equal(t, g.Date, all[offset].TakenAt().Format("2006-01-02"),
-				"offset=%d の写真は %s のはず", offset, g.Date)
+				"the photo at offset=%d should be from %s", offset, g.Date)
 			offset++
 		}
 	}
@@ -389,6 +389,6 @@ CREATE INDEX idx_photos_order ON photos(shot_at DESC, id DESC);`)
 
 	_, err = store.Open(path)
 
-	require.Error(t, err, "読めないDBで起動させない")
-	require.Contains(t, err.Error(), "DBを読めません")
+	require.Error(t, err, "an unreadable database must not start up")
+	require.Contains(t, err.Error(), "cannot read the database")
 }

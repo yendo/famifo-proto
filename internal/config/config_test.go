@@ -17,43 +17,43 @@ func TestValidateRejectsBadInput(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
 
 	tests := map[string]config.Config{
-		"dirが未指定": {
+		"dir is missing": {
 			DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
-		"dirが存在しない": {
+		"dir does not exist": {
 			PhotoDirs: []string{filepath.Join(dir, "nope")},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
-		"dirがディレクトリではない": {
+		"dir is not a directory": {
 			PhotoDirs: []string{file},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
-		"addrが空": {
+		"addr is empty": {
 			PhotoDirs: []string{dir},
 			DataDir:   "./famifo-data", Addr: "", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
-		"dataがdirの中": {
+		"data is inside dir": {
 			PhotoDirs: []string{dir},
 			DataDir:   filepath.Join(dir, "famifo-data"), Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
-		"dataがdirと同じ": {
+		"data is dir itself": {
 			PhotoDirs: []string{dir},
 			DataDir:   dir, Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
-		"scan-workersが0": {
+		"scan-workers is 0": {
 			PhotoDirs: []string{dir},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 0, ScanInterval: time.Hour,
 		},
-		"scan-workersが負": {
+		"scan-workers is negative": {
 			PhotoDirs: []string{dir},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: -1, ScanInterval: time.Hour,
 		},
 		// 0 だと待たずに回り続ける。走査が止まらなくなるので弾く。
-		"scan-intervalが0": {
+		"scan-interval is 0": {
 			PhotoDirs: []string{dir},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: 0,
 		},
-		"scan-intervalが負": {
+		"scan-interval is negative": {
 			PhotoDirs: []string{dir},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: -time.Second,
 		},
@@ -93,7 +93,7 @@ func TestValidateRejectsDuplicateRoots(t *testing.T) {
 
 	c := config.Config{PhotoDirs: []string{dir, dir}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
 
-	require.Error(t, c.Validate(), "同じルートを2回走査しても無駄なだけ")
+	require.Error(t, c.Validate(), "scanning the same root twice is pure waste")
 }
 
 // 入れ子のルートは同じファイルを2回走査し、サムネイルを2回作る。
@@ -119,5 +119,5 @@ func TestValidateRejectsDataInsideAnyRoot(t *testing.T) {
 		DataDir:   filepath.Join(b, "famifo-data"), Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 	}
 
-	require.Error(t, c.Validate(), "2つ目のルートの中でも弾くこと")
+	require.Error(t, c.Validate(), "rejected inside the second root too")
 }

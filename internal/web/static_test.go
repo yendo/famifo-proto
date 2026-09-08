@@ -55,10 +55,10 @@ func TestGridTracksAreSharedByWindowAndProbe(t *testing.T) {
 		}
 		found++
 		open := strings.LastIndex(block, "{")
-		require.GreaterOrEqual(t, open, 0, "セレクタが見つからない: %q", block)
+		require.GreaterOrEqual(t, open, 0, "no selector found: %q", block)
 		sel := block[:open]
-		require.Contains(t, sel, "#window", "セレクタ: %q", sel)
-		require.Contains(t, sel, "#colprobe", "セレクタ: %q", sel)
+		require.Contains(t, sel, "#window", "selector: %q", sel)
+		require.Contains(t, sel, "#colprobe", "selector: %q", sel)
 	}
-	require.GreaterOrEqual(t, found, 3, "基本 + breakpoint 2つで最低3つあるはず")
+	require.GreaterOrEqual(t, found, 3, "the base plus two breakpoints should make at least three")
 }

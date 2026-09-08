@@ -22,7 +22,7 @@ func TestScanIndexesNestedPhotos(t *testing.T) {
 	stats, err := f.ix.Scan(context.Background())
 
 	require.NoError(t, err)
-	require.Equal(t, 3, stats.Indexed, "サブディレクトリも再帰的に走査する")
+	require.Equal(t, 3, stats.Indexed, "subdirectories are walked recursively")
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 3, n)
@@ -39,7 +39,7 @@ func TestScanIgnoresNonPhotos(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Indexed)
-	require.Equal(t, 0, stats.Skipped, "対象外拡張子はスキップとして数えない")
+	require.Equal(t, 0, stats.Skipped, "an unsupported extension is not counted as skipped")
 }
 
 func TestScanSkipsBrokenFilesAndContinues(t *testing.T) {
@@ -51,7 +51,7 @@ func TestScanSkipsBrokenFilesAndContinues(t *testing.T) {
 
 	stats, err := f.ix.Scan(context.Background())
 
-	require.NoError(t, err, "1ファイルの破損で全体を止めない")
+	require.NoError(t, err, "one broken file does not stop the whole scan")
 	require.Equal(t, 2, stats.Indexed)
 	require.Equal(t, 1, stats.Skipped)
 }
@@ -69,7 +69,7 @@ func TestScanSkipsUnchangedFiles(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 0, second.Indexed)
-	require.Equal(t, 1, second.Unchanged, "mtimeが同じなら再インデックスしない")
+	require.Equal(t, 1, second.Unchanged, "not reindexed while the mtime is unchanged")
 }
 
 func TestScanReindexesModifiedFiles(t *testing.T) {
@@ -109,7 +109,7 @@ func TestScanRemovesDeletedPhotos(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Removed)
-	require.Len(t, f.generatedThumbs(t), 1, "サムネイルもハードデリートする")
+	require.Len(t, f.generatedThumbs(t), 1, "the thumbnail is hard-deleted too")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
@@ -147,11 +147,11 @@ func TestScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 	stats, err := f.ix.Scan(ctx)
 
 	require.NoError(t, err)
-	require.Equal(t, 0, stats.Removed, "走査結果が空のときはインデックスを消さない")
+	require.Equal(t, 0, stats.Removed, "an empty scan does not clear the index")
 	n2, err := f.st.Count(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 2, n2, "未マウントの可能性があるため既存の登録は残す")
-	require.Len(t, f.generatedThumbs(t), 2, "サムネイルも残る")
+	require.Equal(t, 2, n2, "existing entries stay, since the root may be unmounted")
+	require.Len(t, f.generatedThumbs(t), 2, "the thumbnails stay too")
 }
 
 func TestScanIndexesEveryRoot(t *testing.T) {
@@ -164,7 +164,7 @@ func TestScanIndexesEveryRoot(t *testing.T) {
 	stats, err := f.ix.Scan(ctx)
 
 	require.NoError(t, err)
-	require.Equal(t, 2, stats.Indexed, "すべてのルートを走査すること")
+	require.Equal(t, 2, stats.Indexed, "every root is walked")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
@@ -192,11 +192,11 @@ func TestScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 0, stats.Removed,
-		"空に見えるルートの写真は消さない（bobに写真が残っていても）")
+		"photos under a root that looks empty are kept, even with bob's photos still there")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
-	require.Len(t, f.generatedThumbs(t), 2, "サムネイルも残る")
+	require.Len(t, f.generatedThumbs(t), 2, "the thumbnails stay too")
 }
 
 // 引数からルートが外れたら、その配下の写真はインデックスから消す。
@@ -216,11 +216,11 @@ func TestScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 	stats, err := f2.Scan(ctx)
 
 	require.NoError(t, err)
-	require.Equal(t, 1, stats.Removed, "どのルートの配下でもない写真は消す")
+	require.Equal(t, 1, stats.Removed, "photos under no root are removed")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
-	require.Len(t, f.generatedThumbs(t), 1, "サムネイルも消える")
+	require.Len(t, f.generatedThumbs(t), 1, "the thumbnail goes too")
 }
 
 // ルートのパスごと消えている（ボリュームが外れた等）ときは、そのルートを
@@ -242,9 +242,9 @@ func TestScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
 
 	stats, err := f.ix.Scan(ctx)
 
-	require.NoError(t, err, "読めないルートがあっても走査全体は失敗しない")
-	require.Equal(t, 1, stats.Indexed, "生きているルートの新しい写真は取り込む")
-	require.Equal(t, 0, stats.Removed, "読めないルートの写真は消さない")
+	require.NoError(t, err, "an unreadable root does not fail the whole scan")
+	require.Equal(t, 1, stats.Indexed, "new photos under a healthy root are taken in")
+	require.Equal(t, 0, stats.Removed, "photos under an unreadable root are kept")
 	require.Len(t, f.generatedThumbs(t), 3)
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
@@ -267,14 +267,14 @@ func TestScanSkipsSynologyMetadataDirs(t *testing.T) {
 	stats, err := f.ix.Scan(context.Background())
 
 	require.NoError(t, err)
-	require.Equal(t, 1, stats.Indexed, "本物の1枚だけを取り込む")
-	require.Equal(t, 0, stats.Skipped, "除外はスキップとして数えない")
+	require.Equal(t, 1, stats.Indexed, "only the one real photo is taken in")
+	require.Equal(t, 0, stats.Skipped, "an exclusion is not counted as skipped")
 
 	paths, err := f.st.AllPaths(context.Background())
 	require.NoError(t, err)
 	require.Len(t, paths, 1)
 	_, ok := paths[filepath.Join(f.root, "IMG_0001.jpg")]
-	require.True(t, ok, "本物が残っていること")
+	require.True(t, ok, "the real one is still there")
 }
 
 // 並行してサムネイルを作っても取りこぼしが出ないことを確かめる。ワーカーの完了を
@@ -348,7 +348,7 @@ func TestScanDoesNotWaitForTheWatchersIndexing(t *testing.T) {
 		require.NoError(t, r.err)
 		require.Equal(t, 1, r.stats.Indexed)
 	case <-time.After(2 * time.Second):
-		t.Fatal("Scan が監視の側の取り込みの完了まで待っている")
+		t.Fatal("Scan is waiting for the watcher to finish indexing")
 	}
 }
 

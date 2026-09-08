@@ -37,7 +37,7 @@ func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
 	require.Contains(t, body, `data-total="3"`)
 	require.Contains(t, body, `id="spacer"`)
 	require.Contains(t, body, `id="window"`)
-	require.Equal(t, 3, strings.Count(body, `class="tile"`), "先頭の塊を埋めて返すこと")
+	require.Equal(t, 3, strings.Count(body, `class="tile"`), "the first chunk comes back filled")
 }
 
 func TestGalleryDropsHtmx(t *testing.T) {
@@ -71,7 +71,7 @@ func TestGalleryPointsEveryTileAtThumb(t *testing.T) {
 	body := doGet(t, f.h, "/").Body.String()
 
 	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`,
-		"サムネイルが無くてもタイルは /thumb/ を指す（ハンドラが原本に落ちる）")
+		"a tile points at /thumb/ even with no thumbnail; the handler falls back to the original")
 	require.NotContains(t, body, `src="/photo/`+p.ID()+`"`)
 }
 
@@ -84,7 +84,7 @@ func TestGalleryOrdersNewestFirst(t *testing.T) {
 	body := doGet(t, f.h, "/").Body.String()
 
 	require.Less(t, strings.Index(body, recent.ID()), strings.Index(body, old.ID()),
-		"撮影日時の新しい順に並べる")
+		"ordered by capture time, newest first")
 }
 
 func TestItemsReturnsFragmentOnly(t *testing.T) {
@@ -97,7 +97,7 @@ func TestItemsReturnsFragmentOnly(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
-	require.NotContains(t, body, "<html", "断片なので完全なページを返さない")
+	require.NotContains(t, body, "<html", "a fragment, not a whole page")
 	require.NotContains(t, body, "<body")
 	require.Contains(t, body, "/photo/")
 }
@@ -127,7 +127,7 @@ func TestItemsHasNoSentinel(t *testing.T) {
 
 	body := doGet(t, f.h, "/items?offset=0&limit=1").Body.String()
 
-	require.NotContains(t, body, "hx-", "htmxの属性は残さない")
+	require.NotContains(t, body, "hx-", "no htmx attributes are left behind")
 	require.NotContains(t, body, "sentinel")
 }
 
@@ -164,10 +164,10 @@ func embeddedDayGroups(t *testing.T, body string) []struct {
 	t.Helper()
 	const open = `<script type="application/json" id="daygroups">`
 	i := strings.Index(body, open)
-	require.GreaterOrEqual(t, i, 0, "日ごとの表が埋め込まれていない")
+	require.GreaterOrEqual(t, i, 0, "the per-day table is not embedded")
 	rest := body[i+len(open):]
 	j := strings.Index(rest, "</script>")
-	require.GreaterOrEqual(t, j, 0, "script タグが閉じていない")
+	require.GreaterOrEqual(t, j, 0, "the script tag is not closed")
 
 	var out []struct {
 		Date  string `json:"d"`
@@ -200,7 +200,7 @@ func TestGalleryEmbedsEmptyDayGroupsForEmptyLibrary(t *testing.T) {
 
 	got := embeddedDayGroups(t, doGet(t, f.h, "/").Body.String())
 
-	require.Empty(t, got, "空でも配列として埋め込むこと（JSON.parse が落ちないように）")
+	require.Empty(t, got, "embedded as an array even when empty, so JSON.parse does not fail")
 }
 
 func TestDatesEndpointIsGone(t *testing.T) {
@@ -211,7 +211,7 @@ func TestDatesEndpointIsGone(t *testing.T) {
 	rec := doGet(t, f.h, "/dates")
 
 	require.Equal(t, http.StatusNotFound, rec.Code,
-		"日ごとの表は初回HTMLに埋め込むので、この口は持たない")
+		"the per-day table ships in the first HTML, so there is no endpoint for it")
 }
 
 func TestItemsTagsEachTileWithLocalDate(t *testing.T) {
@@ -230,7 +230,7 @@ func TestItemsTagsEachTileWithLocalDate(t *testing.T) {
 	body := doGet(t, f.h, "/items?offset=0&limit=60").Body.String()
 
 	require.Contains(t, body, `data-date="2026-02-08"`,
-		"UTCで切ると2026-02-07になる。ローカル時刻で分類すること")
+		"cutting in UTC would give 2026-02-07; group by local time")
 }
 
 func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
@@ -241,7 +241,7 @@ func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
 	body := doGet(t, f.h, "/").Body.String()
 
 	require.Contains(t, body, `data-date="2026-02-08"`,
-		"初回HTMLの先頭の塊にも日付が要る")
+		"the first chunk of the initial HTML needs its date too")
 }
 
 func TestGalleryUsesTheBorrowedThumbForHEIC(t *testing.T) {
@@ -252,5 +252,5 @@ func TestGalleryUsesTheBorrowedThumbForHEIC(t *testing.T) {
 	body := doGet(t, f.h, "/").Body.String()
 
 	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`,
-		"@eaDir から借りられるHEICはサムネイルを使う")
+		"a HEIC that can borrow from @eaDir uses the thumbnail")
 }

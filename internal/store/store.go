@@ -39,21 +39,21 @@ func Open(dbPath string) (*Store, error) {
 	// 成功し、db.Ping() が "unable to open database file" で落ちる。原因の読めない
 	// エラーになるうえ、呼び出し順への暗黙の依存を残すのでここで作る。
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-		return nil, fmt.Errorf("DBディレクトリを作れません: %w", err)
+		return nil, fmt.Errorf("cannot create the database directory: %w", err)
 	}
 
 	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("DBを開けません: %w", err)
+		return nil, fmt.Errorf("cannot open the database: %w", err)
 	}
 	if err := db.Ping(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("DBに接続できません: %w", err)
+		return nil, fmt.Errorf("cannot connect to the database: %w", err)
 	}
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("スキーマを作成できません: %w", err)
+		return nil, fmt.Errorf("cannot create the schema: %w", err)
 	}
 	// スキーマを作れたことと読めることは別である。CREATE ... IF NOT EXISTS は
 	// 既にある表と索引に触れないので、列を変えた古いDBが残っていると、ここまで
@@ -71,11 +71,11 @@ func Open(dbPath string) (*Store, error) {
 func probeReadable(db *sql.DB) error {
 	rows, err := db.Query(`SELECT id, ` + selectCols + ` FROM photos LIMIT 1`)
 	if err != nil {
-		return fmt.Errorf("DBを読めません: %w", err)
+		return fmt.Errorf("cannot read the database: %w", err)
 	}
 	defer rows.Close()
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("DBを読めません: %w", err)
+		return fmt.Errorf("cannot read the database: %w", err)
 	}
 	return nil
 }
@@ -95,7 +95,7 @@ func (s *Store) Upsert(ctx context.Context, p photo.Photo) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
 		p.ID(), p.Path(), p.TakenAt().Unix(), p.ModTime().Unix())
 	if err != nil {
-		return fmt.Errorf("写真を保存できません (%s): %w", p.Path(), err)
+		return fmt.Errorf("cannot save the photo (%s): %w", p.Path(), err)
 	}
 	return nil
 }
@@ -111,7 +111,7 @@ func (s *Store) GetByID(ctx context.Context, id string) (photo.Photo, error) {
 		return photo.Photo{}, ErrNotFound
 	}
 	if err != nil {
-		return photo.Photo{}, fmt.Errorf("写真を取得できません: %w", err)
+		return photo.Photo{}, fmt.Errorf("cannot get the photo: %w", err)
 	}
 	return p, nil
 }
@@ -127,7 +127,7 @@ func (s *Store) DeleteByPath(ctx context.Context, path string) (photo.Photo, boo
 		return photo.Photo{}, false, nil
 	}
 	if err != nil {
-		return photo.Photo{}, false, fmt.Errorf("写真を削除できません (%s): %w", path, err)
+		return photo.Photo{}, false, fmt.Errorf("cannot delete the photo (%s): %w", path, err)
 	}
 	return p, true, nil
 }
@@ -149,7 +149,7 @@ func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]photo.
 		`DELETE FROM photos WHERE path >= ? AND path < ? RETURNING `+selectCols,
 		dirPrefix, upperBound(dirPrefix))
 	if err != nil {
-		return nil, fmt.Errorf("ディレクトリ配下の写真を削除できません (%s): %w", prefix, err)
+		return nil, fmt.Errorf("cannot delete the photos under the directory (%s): %w", prefix, err)
 	}
 	defer rows.Close()
 
@@ -157,7 +157,7 @@ func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]photo.
 	for rows.Next() {
 		p, err := scanPhoto(rows)
 		if err != nil {
-			return nil, fmt.Errorf("削除結果を読めません: %w", err)
+			return nil, fmt.Errorf("cannot read the deletion result: %w", err)
 		}
 		out = append(out, p)
 	}
@@ -178,10 +178,10 @@ func upperBound(prefix string) string {
 // 仮想スクロールは任意の位置へ飛ぶため、カーソルではなくオフセットで引く。
 func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]photo.Photo, error) {
 	if offset < 0 {
-		return nil, fmt.Errorf("offset は0以上で指定してください: %d", offset)
+		return nil, fmt.Errorf("offset must be 0 or greater: %d", offset)
 	}
 	if limit < 0 {
-		return nil, fmt.Errorf("limit は0以上で指定してください: %d", limit)
+		return nil, fmt.Errorf("limit must be 0 or greater: %d", limit)
 	}
 
 	rows, err := s.db.QueryContext(ctx,
@@ -189,7 +189,7 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]photo.Photo
 		 ORDER BY taken_at DESC, id DESC
 		 LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
-		return nil, fmt.Errorf("一覧を取得できません: %w", err)
+		return nil, fmt.Errorf("cannot list the photos: %w", err)
 	}
 	defer rows.Close()
 
@@ -197,7 +197,7 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]photo.Photo
 	for rows.Next() {
 		p, err := scanPhoto(rows)
 		if err != nil {
-			return nil, fmt.Errorf("一覧を読めません: %w", err)
+			return nil, fmt.Errorf("cannot read the photo list: %w", err)
 		}
 		out = append(out, p)
 	}
@@ -208,7 +208,7 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]photo.Photo
 func (s *Store) AllPaths(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT path, mod_time FROM photos`)
 	if err != nil {
-		return nil, fmt.Errorf("パス一覧を取得できません: %w", err)
+		return nil, fmt.Errorf("cannot list the paths: %w", err)
 	}
 	defer rows.Close()
 
@@ -217,7 +217,7 @@ func (s *Store) AllPaths(ctx context.Context) (map[string]int64, error) {
 		var path string
 		var modTime int64
 		if err := rows.Scan(&path, &modTime); err != nil {
-			return nil, fmt.Errorf("パス一覧を読めません: %w", err)
+			return nil, fmt.Errorf("cannot read the path list: %w", err)
 		}
 		out[path] = modTime
 	}
@@ -228,7 +228,7 @@ func (s *Store) AllPaths(ctx context.Context) (map[string]int64, error) {
 func (s *Store) Count(ctx context.Context) (int, error) {
 	var n int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photos`).Scan(&n); err != nil {
-		return 0, fmt.Errorf("枚数を取得できません: %w", err)
+		return 0, fmt.Errorf("cannot count the photos: %w", err)
 	}
 	return n, nil
 }
@@ -247,7 +247,7 @@ func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT taken_at FROM photos ORDER BY taken_at DESC, id DESC`)
 	if err != nil {
-		return nil, fmt.Errorf("撮影日時を取得できません: %w", err)
+		return nil, fmt.Errorf("cannot get the capture dates: %w", err)
 	}
 	defer rows.Close()
 
@@ -255,7 +255,7 @@ func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 	for rows.Next() {
 		var takenAt int64
 		if err := rows.Scan(&takenAt); err != nil {
-			return nil, fmt.Errorf("撮影日時を読めません: %w", err)
+			return nil, fmt.Errorf("cannot read the capture dates: %w", err)
 		}
 		day := time.Unix(takenAt, 0).Format("2006-01-02")
 		if len(out) > 0 && out[len(out)-1].Date == day {
