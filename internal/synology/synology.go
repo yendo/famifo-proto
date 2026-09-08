@@ -21,11 +21,6 @@ const thumbMName = "SYNOPHOTO_THUMB_M.jpg"
 // 一覧には過大だが1枚だけ見せる場面では妥当な大きさになる。
 const thumbXLName = "SYNOPHOTO_THUMB_XL.jpg"
 
-// entryPath は @eaDir の中の1ファイルのパスを組み立てる。
-func entryPath(srcPath, name string) string {
-	return filepath.Join(filepath.Dir(srcPath), eaDir, filepath.Base(srcPath), name)
-}
-
 // ThumbMPath はSynologyがsrcPathの写真用に持つ一覧用サムネイル（M）のパスを返す。
 // 実在するとは限らない。あるかどうかは HasThumbM で確かめる。
 func ThumbMPath(srcPath string) string { return entryPath(srcPath, thumbMName) }
@@ -43,6 +38,11 @@ func ThumbXLPath(srcPath string) string { return entryPath(srcPath, thumbXLName)
 func HasThumbM(srcPath string) bool {
 	fi, err := os.Stat(ThumbMPath(srcPath))
 	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
+}
+
+// entryPath は @eaDir の中の1ファイルのパスを組み立てる。
+func entryPath(srcPath, name string) string {
+	return filepath.Join(filepath.Dir(srcPath), eaDir, filepath.Base(srcPath), name)
 }
 
 // managedDirs はSynologyが写真ディレクトリの中に作る管理用ディレクトリ。

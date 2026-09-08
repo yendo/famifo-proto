@@ -56,12 +56,12 @@ func New(roots []string, st *store.Store, thumbs *thumb.Provider, workers int, l
 // パスの行が残りうる。その気配を監視が知るために使う。
 func (ix *Indexer) indexing() bool { return ix.executor.busy() }
 
-// IndexFile は1ファイルをインデックスに反映する。
+// indexFile は1ファイルをインデックスに反映する。
 //
 // 対象外の拡張子とディレクトリは黙って無視する（エラーではない）。
 // 自前で作るしかないファイルでサムネイルを作れなかった場合はエラーを返し、
 // DBには登録しない。壊れた画像を登録すると一覧に読み込めない <img> が並ぶため。
-func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
+func (ix *Indexer) indexFile(ctx context.Context, path string) error {
 	if !imagefmt.IsSupported(path) {
 		return nil
 	}
@@ -87,9 +87,9 @@ func (ix *Indexer) IndexFile(ctx context.Context, path string) error {
 	return ix.st.Upsert(ctx, p)
 }
 
-// RemoveFile はインデックスとサムネイルの両方から写真を消す。
+// removeFile はインデックスとサムネイルの両方から写真を消す。
 // 未登録のパスに対しては何もしない。
-func (ix *Indexer) RemoveFile(ctx context.Context, path string) error {
+func (ix *Indexer) removeFile(ctx context.Context, path string) error {
 	p, ok, err := ix.st.DeleteByPath(ctx, path)
 	if err != nil {
 		return err
@@ -106,11 +106,11 @@ func (ix *Indexer) RemoveFile(ctx context.Context, path string) error {
 	return nil
 }
 
-// RemoveTree はdir配下に登録されている写真を、まとめてインデックスと
+// removeTree はdir配下に登録されている写真を、まとめてインデックスと
 // サムネイルの置き場から消す。ディレクトリのリネーム/移動はfsnotifyでは子ファイルごとの
 // イベントが来ないため、パスの前方一致で一括削除する必要がある。
 // 該当が無いパスに対しては何もしない。
-func (ix *Indexer) RemoveTree(ctx context.Context, dir string) error {
+func (ix *Indexer) removeTree(ctx context.Context, dir string) error {
 	photos, err := ix.st.DeleteByPathPrefix(ctx, dir)
 	if err != nil {
 		return err

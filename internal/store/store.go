@@ -103,15 +103,6 @@ func (s *Store) Upsert(ctx context.Context, p photo.Photo) error {
 // idは読まない。パスから導ける値なので、復元は photo.Restore に任せる。
 const selectCols = `path, taken_at, mod_time`
 
-func scanPhoto(row interface{ Scan(...any) error }) (photo.Photo, error) {
-	var path string
-	var takenAt, modTime int64
-	if err := row.Scan(&path, &takenAt, &modTime); err != nil {
-		return photo.Photo{}, err
-	}
-	return photo.Restore(path, time.Unix(takenAt, 0), time.Unix(modTime, 0)), nil
-}
-
 // GetByID はIDで写真を引く。見つからない場合は ErrNotFound を返す。
 func (s *Store) GetByID(ctx context.Context, id string) (photo.Photo, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+selectCols+` FROM photos WHERE id = ?`, id)
@@ -274,4 +265,13 @@ func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 		out = append(out, DayGroup{Date: day, Count: 1})
 	}
 	return out, rows.Err()
+}
+
+func scanPhoto(row interface{ Scan(...any) error }) (photo.Photo, error) {
+	var path string
+	var takenAt, modTime int64
+	if err := row.Scan(&path, &takenAt, &modTime); err != nil {
+		return photo.Photo{}, err
+	}
+	return photo.Restore(path, time.Unix(takenAt, 0), time.Unix(modTime, 0)), nil
 }

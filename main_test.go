@@ -99,9 +99,8 @@ func TestParseArgsSplitsDirOnTheListSeparator(t *testing.T) {
 	require.Equal(t, []string{a, b}, got.PhotoDirs)
 }
 
-// -version はバージョンを表示して終わるだけなので、-dir を要求しない。
-// 設定の検証まで進むと「-dir は必須です」で落ちてしまう。
-func TestParseArgsVersionShortCircuitsValidation(t *testing.T) {
+// parseArgs は -version を報告するだけで、表示も検証も呼び出し側に任せる。
+func TestParseArgsReportsTheVersionFlag(t *testing.T) {
 	t.Parallel()
 	_, showVersion, err := parseArgs([]string{"-version"}, io.Discard)
 
@@ -110,9 +109,10 @@ func TestParseArgsVersionShortCircuitsValidation(t *testing.T) {
 }
 
 // ':' を含むパスを渡すと分割で壊れる。なぜそうなったか読めるエラーにする。
-func TestParseArgsExplainsHowDirWasSplit(t *testing.T) {
+func TestRunExplainsHowDirWasSplit(t *testing.T) {
 	t.Parallel()
-	_, _, err := parseArgs([]string{"-dir", "/no/such/2024:05:24"}, io.Discard)
+	err := run(context.Background(), []string{"-dir", "/no/such/2024:05:24"},
+		io.Discard, io.Discard)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "2024",
@@ -188,9 +188,9 @@ func TestRunRejectsInvalidArgs(t *testing.T) {
 	require.Error(t, err, "-dir が無ければ起動しない")
 }
 
-// runArgs は run に渡す最小の引数を組み立てる。-data は -dir の外に置く必要が
-// あるため（Config.Validate が自己増殖を防ぐために弾く）、一時ディレクトリの
-// 下に並べて作る。-data 自体は store と thumb が作るので用意しない。
+// runArgs は run に渡す最小の引数を組み立てる。-data を -dir の下に置くと run が
+// 弾くので、一時ディレクトリの下に並べて作る。-data 自体は store と thumb が
+// 作るので用意しない。
 func runArgs(t *testing.T, addr string) []string {
 	t.Helper()
 

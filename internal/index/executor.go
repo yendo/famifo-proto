@@ -75,7 +75,7 @@ func (j *jobs) start(ctx context.Context, path string, done func(error)) {
 	go func() {
 		defer j.wg.Done()
 		defer func() { <-j.e.sem }()
-		done(j.e.ix.IndexFile(ctx, path))
+		done(j.e.ix.indexFile(ctx, path))
 	}()
 }
 

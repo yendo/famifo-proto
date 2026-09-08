@@ -3,6 +3,7 @@ package index_test
 import (
 	"context"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,20 +19,44 @@ import (
 )
 
 type fixture struct {
-	ix     *index.Indexer
-	st     *store.Store
-	thumbs *thumb.Provider
-	root   string
-	log    *slog.Logger
+	ix       *index.Indexer
+	st       *store.Store
+	thumbs   *thumb.Provider
+	root     string
+	thumbDir string
+	log      *slog.Logger
 }
 
-// thumbPath は src の写真のサムネイルが置かれるパスを返す。
-// 名前には元画像の版が入るので、srcのmtimeから引く。
-func (f *fixture) thumbPath(t *testing.T, src string) string {
+// generatedThumbs は自前で生成したサムネイルをすべて返す。
+//
+// パスを組み立てるのではなく置き場の中を数える。置き場の名前の付け方（IDによる
+// 分割と、名前に入る元画像の版）はthumbの取り決めであり、取り込み側のテストが
+// 知っていると、名前を変えただけでこちらが巻き添えになる。
+//
+// 借りたサムネイルは写真の隣の @eaDir に置かれるので、ここに入るのは自前の
+// ものだけである。件数で見るため「余計なものを作っていない」ことまで言える。
+func (f *fixture) generatedThumbs(t *testing.T) []string {
 	t.Helper()
-	fi, err := os.Stat(src)
+	var out []string
+	err := filepath.WalkDir(f.thumbDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			out = append(out, path)
+		}
+		return nil
+	})
 	require.NoError(t, err)
-	return f.thumbs.GeneratedPath(photo.Restore(src, fi.ModTime(), fi.ModTime()))
+	return out
+}
+
+// onlyGeneratedThumb は生成物がちょうど1つであることを確かめ、そのパスを返す。
+func (f *fixture) onlyGeneratedThumb(t *testing.T) string {
+	t.Helper()
+	got := f.generatedThumbs(t)
+	require.Len(t, got, 1)
+	return got[0]
 }
 
 // newFixture は既定のワーカー数で fixture を作る。1より大きいのは、
@@ -49,12 +74,13 @@ func newFixtureWorkers(t *testing.T, workers int) *fixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	thumbs, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
+	thumbDir := filepath.Join(base, "thumbs")
+	thumbs, err := thumb.NewProvider(thumbDir)
 	require.NoError(t, err)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ix := index.New([]string{root}, st, thumbs, workers, log)
 
-	return &fixture{ix: ix, st: st, thumbs: thumbs, root: root, log: log}
+	return &fixture{ix: ix, st: st, thumbs: thumbs, root: root, thumbDir: thumbDir, log: log}
 }
 
 // newFixtureRoots は複数のルートを持つ fixture を作る。roots[0] が f.root。
@@ -73,12 +99,13 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	thumbs, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
+	thumbDir := filepath.Join(base, "thumbs")
+	thumbs, err := thumb.NewProvider(thumbDir)
 	require.NoError(t, err)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ix := index.New(roots, st, thumbs, 4, log)
 
-	return &fixture{ix: ix, st: st, thumbs: thumbs, root: roots[0], log: log}, roots
+	return &fixture{ix: ix, st: st, thumbs: thumbs, root: roots[0], thumbDir: thumbDir, log: log}, roots
 }
 
 func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
@@ -91,7 +118,7 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path())
-	require.FileExists(t, f.thumbPath(t, path), "借りられないので自前で作る")
+	require.Len(t, f.generatedThumbs(t), 1, "借りられないので自前で作る")
 }
 
 // TestIndexFileAppliesTheEXIFOrientationToTheThumbnail はEXIFから読んだ向きが
@@ -105,7 +132,7 @@ func TestIndexFileAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	cfg := decodeThumbConfig(t, f.thumbPath(t, path))
+	cfg := decodeThumbConfig(t, f.onlyGeneratedThumb(t))
 	require.Equal(t, 8, cfg.Width, "Orientation=6 なら縦横が入れ替わる")
 	require.Equal(t, 16, cfg.Height)
 }
@@ -122,7 +149,7 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path(), "サムネイルが無くてもインデックスには載せる")
-	require.NoFileExists(t, f.thumbPath(t, path), "HEICはデコードできない")
+	require.Empty(t, f.generatedThumbs(t), "HEICはデコードできない")
 }
 
 func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
@@ -171,12 +198,11 @@ func TestRemoveFileDeletesRowAndThumb(t *testing.T) {
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
 	require.NoError(t, f.ix.IndexFile(ctx, path))
-	thumbPath := f.thumbPath(t, path)
-	require.FileExists(t, thumbPath)
+	require.Len(t, f.generatedThumbs(t), 1)
 
 	require.NoError(t, f.ix.RemoveFile(ctx, path))
 
-	require.NoFileExists(t, thumbPath)
+	require.Empty(t, f.generatedThumbs(t))
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
@@ -207,7 +233,7 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.NoFileExists(t, f.thumbPath(t, path), "借りられるなら自前では作らない")
+	require.Empty(t, f.generatedThumbs(t), "借りられるなら自前では作らない")
 	small, _, _ := f.thumbs.SmallPath(got)
 	require.Equal(t, synology.ThumbMPath(path), small, "一覧には借りたものが出る")
 }
@@ -244,7 +270,7 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.NoFileExists(t, f.thumbPath(t, path))
+	require.Empty(t, f.generatedThumbs(t))
 	_, _, ok := f.thumbs.SmallPath(got)
 	require.False(t, ok, ".fail しか無ければ一覧に出せるものが無い")
 }

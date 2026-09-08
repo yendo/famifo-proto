@@ -100,8 +100,7 @@ func TestScanRemovesDeletedPhotos(t *testing.T) {
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
 	_, err := f.ix.Scan(ctx)
 	require.NoError(t, err)
-	thumbPath := f.thumbPath(t, path)
-	require.FileExists(t, thumbPath)
+	require.Len(t, f.generatedThumbs(t), 2)
 
 	// アプリ停止中に消されたことを模す
 	require.NoError(t, os.Remove(path))
@@ -110,7 +109,7 @@ func TestScanRemovesDeletedPhotos(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Removed)
-	require.NoFileExists(t, thumbPath, "サムネイルもハードデリートする")
+	require.Len(t, f.generatedThumbs(t), 1, "サムネイルもハードデリートする")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
@@ -139,10 +138,7 @@ func TestScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
-	thumbA := f.thumbPath(t, pathA)
-	thumbB := f.thumbPath(t, pathB)
-	require.FileExists(t, thumbA)
-	require.FileExists(t, thumbB)
+	require.Len(t, f.generatedThumbs(t), 2)
 
 	// ドライブが未マウントで中身が空に見えるケースを模す：ファイルだけ消してルートは残す
 	require.NoError(t, os.Remove(pathA))
@@ -155,8 +151,7 @@ func TestScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 	n2, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n2, "未マウントの可能性があるため既存の登録は残す")
-	require.FileExists(t, thumbA, "サムネイルも残る")
-	require.FileExists(t, thumbB)
+	require.Len(t, f.generatedThumbs(t), 2, "サムネイルも残る")
 }
 
 func TestScanIndexesEveryRoot(t *testing.T) {
@@ -188,8 +183,7 @@ func TestScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
 	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
 	_, err := f.ix.Scan(ctx)
 	require.NoError(t, err)
-	thumbGone := f.thumbPath(t, gone)
-	require.FileExists(t, thumbGone)
+	require.Len(t, f.generatedThumbs(t), 2)
 
 	// aliceのドライブが未マウントになった状況を模す：中身だけ消してルートは残す
 	require.NoError(t, os.Remove(gone))
@@ -202,7 +196,7 @@ func TestScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
-	require.FileExists(t, thumbGone, "サムネイルも残る")
+	require.Len(t, f.generatedThumbs(t), 2, "サムネイルも残る")
 }
 
 // 引数からルートが外れたら、その配下の写真はインデックスから消す。
@@ -212,7 +206,7 @@ func TestScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 	f, roots := newFixtureRoots(t, "alice", "bob")
 	ctx := context.Background()
 	writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
-	dropped := writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
+	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
 	_, err := f.ix.Scan(ctx)
 	require.NoError(t, err)
 
@@ -226,7 +220,7 @@ func TestScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
-	require.NoFileExists(t, f.thumbPath(t, dropped), "サムネイルも消える")
+	require.Len(t, f.generatedThumbs(t), 1, "サムネイルも消える")
 }
 
 // ルートのパスごと消えている（ボリュームが外れた等）ときは、そのルートを
@@ -237,7 +231,7 @@ func TestScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
 	f, roots := newFixtureRoots(t, "alice", "bob")
 	ctx := context.Background()
 	writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
-	kept := writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
+	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
 	_, err := f.ix.Scan(ctx)
 	require.NoError(t, err)
 
@@ -251,7 +245,7 @@ func TestScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
 	require.NoError(t, err, "読めないルートがあっても走査全体は失敗しない")
 	require.Equal(t, 1, stats.Indexed, "生きているルートの新しい写真は取り込む")
 	require.Equal(t, 0, stats.Removed, "読めないルートの写真は消さない")
-	require.FileExists(t, f.thumbPath(t, kept))
+	require.Len(t, f.generatedThumbs(t), 3)
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 3, n)

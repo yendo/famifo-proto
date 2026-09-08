@@ -35,8 +35,6 @@ var supportedExts = map[string]format{
 	".heif": {"image/heif", false},
 }
 
-func ext(name string) string { return strings.ToLower(filepath.Ext(name)) }
-
 // IsSupported はインデックス対象にすべきファイルかを報告する。
 // 判定は拡張子だけに基づくので、ベース名でもフルパスでも渡せる。
 func IsSupported(name string) bool {
@@ -59,3 +57,5 @@ func ContentType(name string) string {
 	}
 	return "application/octet-stream"
 }
+
+func ext(name string) string { return strings.ToLower(filepath.Ext(name)) }
