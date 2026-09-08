@@ -8,7 +8,7 @@ vet:
 
 .PHONY: unit-test
 unit-test:
-	go test -cover ./...
+	go test -cover -shuffle=on ./...
 
 .PHONY: browser-test
 browser-test:
