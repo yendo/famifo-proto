@@ -34,7 +34,7 @@ jobs:
         run: make build
 
       - name: Unit test
-        run: make unit-test
+        run: make unit-test-race
 
       - name: Browser test
         run: |
