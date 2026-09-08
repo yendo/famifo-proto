@@ -410,18 +410,18 @@ func TestGhostRowFromAScanIsReclaimedByTheNextScan(t *testing.T) {
 	requireCount(t, f, 1)
 }
 
-// kick はスキャンを前倒しする要求である。interval を1時間にしてあるので、
+// kicks はスキャンを前倒しする要求である。interval を1時間にしてあるので、
 // 時間で回るのを待っていては2枚目を拾えない。要求が効いていることだけを見る。
 func TestRunScansIsBroughtForwardByARequest(t *testing.T) {
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 
-	kick := make(chan struct{}, 1)
+	kicks := make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		f.ix.RunScans(ctx, time.Hour, kick)
+		f.ix.RunScans(ctx, time.Hour, kicks)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -432,7 +432,7 @@ func TestRunScansIsBroughtForwardByARequest(t *testing.T) {
 
 	// 監視は張っていないので、この1枚を拾えるのは前倒しされたスキャンだけである。
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
-	kick <- struct{}{}
+	kicks <- struct{}{}
 
 	requireCount(t, f, 2)
 }

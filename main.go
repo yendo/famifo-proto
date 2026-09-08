@@ -158,15 +158,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	// スキャンの完了を待たずに配信を始める。大量の写真でも、
 	// インデックスができた分から順に見られるほうがよい。
-	// serveErrは1要素バッファ: ListenAndServeの失敗をrunの戻り値まで伝え、
+	// listenErrChは1要素バッファ: ListenAndServeの失敗をrunの戻り値まで伝え、
 	// プロセスが異常終了時に0で終了しないようにする。
-	serveErr := make(chan error, 1)
+	listenErrCh := make(chan error, 1)
 	httpSrv := &http.Server{Addr: cfg.Addr, Handler: srv.Handler()}
 	go func() {
 		log.Info("HTTPサーバーを開始", "addr", cfg.Addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("HTTPサーバーが停止しました", "err", err)
-			serveErr <- err
+			listenErrCh <- err
 			cancel()
 		}
 	}()
@@ -214,18 +214,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	var listenErr error
 	select {
 	case <-ctx.Done():
-	case err := <-serveErr:
+	case err := <-listenErrCh:
 		listenErr = err
 	}
 	log.Info("シャットダウンします")
 
-	return shutdownHTTP(httpSrv, serveErr, listenErr)
+	return shutdownHTTP(httpSrv, listenErrCh, listenErr)
 }
 
 // shutdownHTTP は待ち受けを猶予付きで止め、待ち受けの失敗と停止の失敗を
 // 1つのエラーにまとめる。listenErrは停止を待つ前に受け取っていた失敗で、
 // 受け取っていなければnilが渡る。
-func shutdownHTTP(httpSrv *http.Server, serveErr <-chan error, listenErr error) error {
+func shutdownHTTP(httpSrv *http.Server, listenErrCh <-chan error, listenErr error) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	shutErr := httpSrv.Shutdown(shutCtx)
@@ -233,7 +233,7 @@ func shutdownHTTP(httpSrv *http.Server, serveErr <-chan error, listenErr error) 
 	if listenErr == nil {
 		// ctx.Done()側が先に選ばれていた場合に備えて、取りこぼしが無いか確認する。
 		select {
-		case err := <-serveErr:
+		case err := <-listenErrCh:
 			listenErr = err
 		default:
 		}

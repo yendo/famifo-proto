@@ -16,7 +16,7 @@ func TestStaticAssetsAreServed(t *testing.T) {
 	}
 	for target, wantType := range tests {
 		t.Run(target, func(t *testing.T) {
-			rec := do(t, f.h, target)
+			rec := doGet(t, f.h, target)
 
 			require.Equal(t, http.StatusOK, rec.Code)
 			require.Contains(t, rec.Header().Get("Content-Type"), wantType)
@@ -28,7 +28,7 @@ func TestStaticAssetsAreServed(t *testing.T) {
 func TestAppJSImplementsVirtualScroll(t *testing.T) {
 	f := newWebFixture(t, 10)
 
-	body := do(t, f.h, "/static/app.js").Body.String()
+	body := doGet(t, f.h, "/static/app.js").Body.String()
 
 	require.Contains(t, body, "#spacer")
 	require.Contains(t, body, "#window")
@@ -47,7 +47,7 @@ func TestAppJSImplementsVirtualScroll(t *testing.T) {
 func TestAppCSSDefinesDayCards(t *testing.T) {
 	f := newWebFixture(t, 10)
 
-	body := do(t, f.h, "/static/app.css").Body.String()
+	body := doGet(t, f.h, "/static/app.css").Body.String()
 
 	require.Contains(t, body, "--label-h", "ラベル高の定義はここ1箇所だけ")
 	require.Contains(t, body, ".daycard")
@@ -58,7 +58,7 @@ func TestAppCSSDefinesDayCards(t *testing.T) {
 func TestAppJSLightboxUsesGlobalIndex(t *testing.T) {
 	f := newWebFixture(t, 10)
 
-	body := do(t, f.h, "/static/app.js").Body.String()
+	body := doGet(t, f.h, "/static/app.js").Body.String()
 
 	require.Contains(t, body, "#lightbox")
 	require.Contains(t, body, "urlAt", "DOMではなく通し番号でURLを引く")
@@ -73,7 +73,7 @@ func TestAppJSLightboxUsesGlobalIndex(t *testing.T) {
 func TestAppJSImplementsScrubber(t *testing.T) {
 	f := newWebFixture(t, 10)
 
-	body := do(t, f.h, "/static/app.js").Body.String()
+	body := doGet(t, f.h, "/static/app.js").Body.String()
 
 	require.Contains(t, body, "#scrubber")
 	require.Contains(t, body, "daygroups", "日ごとの表は埋め込みから読む")
@@ -87,7 +87,7 @@ func TestAppJSImplementsScrubber(t *testing.T) {
 func TestAppCSSIsResponsive(t *testing.T) {
 	f := newWebFixture(t, 10)
 
-	body := do(t, f.h, "/static/app.css").Body.String()
+	body := doGet(t, f.h, "/static/app.css").Body.String()
 
 	require.Contains(t, body, "@media", "画面幅に応じて列数を変える")
 	require.Contains(t, body, "grid-template-columns")
@@ -103,7 +103,7 @@ func TestAppCSSIsResponsive(t *testing.T) {
 func TestGridTracksAreSharedByWindowAndProbe(t *testing.T) {
 	f := newWebFixture(t, 10)
 
-	body := do(t, f.h, "/static/app.css").Body.String()
+	body := doGet(t, f.h, "/static/app.css").Body.String()
 
 	found := 0
 	for _, block := range strings.Split(body, "}") {
@@ -123,7 +123,7 @@ func TestGridTracksAreSharedByWindowAndProbe(t *testing.T) {
 func TestAppJSRestoresPositionByPhotoIndex(t *testing.T) {
 	f := newWebFixture(t, 10)
 
-	body := do(t, f.h, "/static/app.js").Body.String()
+	body := doGet(t, f.h, "/static/app.js").Body.String()
 
 	require.Contains(t, body, "yForIndex(L, topIndex)",
 		"復元先は通し番号から引く。行の高さが不均一なので掛け算では出ない")

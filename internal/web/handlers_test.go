@@ -98,7 +98,7 @@ func wellFormedXML(b []byte) error {
 	}
 }
 
-func do(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
+func doGet(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
@@ -109,7 +109,7 @@ func TestServeThumb(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	rec := do(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "thumb-a.jpg", rec.Body.String())
@@ -118,7 +118,7 @@ func TestServeThumb(t *testing.T) {
 func TestServeThumbNotFoundForUnknownID(t *testing.T) {
 	f := newWebFixture(t, 10)
 
-	rec := do(t, f.h, "/thumb/deadbeef")
+	rec := doGet(t, f.h, "/thumb/deadbeef")
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
@@ -128,7 +128,7 @@ func TestServeThumbFallsBackToTheOriginal(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), noThumb)
 
-	rec := do(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String())
@@ -142,7 +142,7 @@ func TestServeThumbServesAPlaceholderWhenNothingCanBeShown(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
-	rec := do(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "image/svg+xml", rec.Header().Get("Content-Type"))
@@ -160,11 +160,11 @@ func TestServeThumbPicksUpAThumbThatAppearsAfterIndexing(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 	require.Equal(t, "image/svg+xml",
-		do(t, f.h, "/thumb/"+p.ID()).Header().Get("Content-Type"), "この時点ではまだ何も無い")
+		doGet(t, f.h, "/thumb/"+p.ID()).Header().Get("Content-Type"), "この時点ではまだ何も無い")
 
 	writeFileAt(t, synology.ThumbMPath(p.Path()), "eadir-a.heic")
 
-	rec := do(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-a.heic", rec.Body.String(), "取り込み直さなくても切り替わる")
@@ -174,7 +174,7 @@ func TestServeOriginal(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	rec := do(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String())
@@ -185,7 +185,7 @@ func TestServeOriginalSetsHEICContentType(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
-	rec := do(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.heic", rec.Body.String(),
@@ -197,7 +197,7 @@ func TestServeOriginalSetsHEICContentType(t *testing.T) {
 func TestServeOriginalNotFoundForUnknownID(t *testing.T) {
 	f := newWebFixture(t, 10)
 
-	rec := do(t, f.h, "/photo/deadbeef")
+	rec := doGet(t, f.h, "/photo/deadbeef")
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
@@ -211,7 +211,7 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 		"/photo/" + photo.IDFor("/etc/passwd"),
 	} {
 		t.Run(target, func(t *testing.T) {
-			rec := do(t, f.h, target)
+			rec := doGet(t, f.h, target)
 			require.NotEqual(t, http.StatusOK, rec.Code)
 		})
 	}
@@ -221,7 +221,7 @@ func TestServeThumbFromEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := do(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-a.heic", rec.Body.String())
@@ -231,7 +231,7 @@ func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := do(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-xl-a.heic", rec.Body.String(),
@@ -244,7 +244,7 @@ func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := do(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String(),

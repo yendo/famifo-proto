@@ -262,16 +262,16 @@ func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 
 	var out []DayGroup
 	for rows.Next() {
-		var at int64
-		if err := rows.Scan(&at); err != nil {
+		var takenAt int64
+		if err := rows.Scan(&takenAt); err != nil {
 			return nil, fmt.Errorf("撮影日時を読めません: %w", err)
 		}
-		d := time.Unix(at, 0).Format("2006-01-02")
-		if len(out) > 0 && out[len(out)-1].Date == d {
+		day := time.Unix(takenAt, 0).Format("2006-01-02")
+		if len(out) > 0 && out[len(out)-1].Date == day {
 			out[len(out)-1].Count++
 			continue
 		}
-		out = append(out, DayGroup{Date: d, Count: 1})
+		out = append(out, DayGroup{Date: day, Count: 1})
 	}
 	return out, rows.Err()
 }

@@ -15,7 +15,7 @@ func TestGalleryRendersTiles(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	rec := do(t, f.h, "/")
+	rec := doGet(t, f.h, "/")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
@@ -30,7 +30,7 @@ func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
 		f.addPhoto(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), famifoThumb)
 	}
 
-	body := do(t, f.h, "/").Body.String()
+	body := doGet(t, f.h, "/").Body.String()
 
 	require.Contains(t, body, `data-total="3"`)
 	require.Contains(t, body, `id="spacer"`)
@@ -42,7 +42,7 @@ func TestGalleryDropsHtmx(t *testing.T) {
 	f := newWebFixture(t, 60)
 	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	body := do(t, f.h, "/").Body.String()
+	body := doGet(t, f.h, "/").Body.String()
 
 	require.NotContains(t, body, "htmx.min.js")
 	require.NotContains(t, body, "hx-")
@@ -51,7 +51,7 @@ func TestGalleryDropsHtmx(t *testing.T) {
 func TestGalleryEmptyLibrary(t *testing.T) {
 	f := newWebFixture(t, 60)
 
-	body := do(t, f.h, "/").Body.String()
+	body := doGet(t, f.h, "/").Body.String()
 
 	require.Contains(t, body, `data-total="0"`)
 	require.NotContains(t, body, `class="tile"`)
@@ -63,7 +63,7 @@ func TestGalleryPointsEveryTileAtThumb(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
-	body := do(t, f.h, "/").Body.String()
+	body := doGet(t, f.h, "/").Body.String()
 
 	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`,
 		"サムネイルが無くてもタイルは /thumb/ を指す（ハンドラが原本に落ちる）")
@@ -75,7 +75,7 @@ func TestGalleryOrdersNewestFirst(t *testing.T) {
 	old := f.addPhoto(t, "old.jpg", time.Unix(1600000000, 0), famifoThumb)
 	recent := f.addPhoto(t, "new.jpg", time.Unix(1700000000, 0), famifoThumb)
 
-	body := do(t, f.h, "/").Body.String()
+	body := doGet(t, f.h, "/").Body.String()
 
 	require.Less(t, strings.Index(body, recent.ID()), strings.Index(body, old.ID()),
 		"撮影日時の新しい順に並べる")
@@ -86,7 +86,7 @@ func TestItemsReturnsFragmentOnly(t *testing.T) {
 	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 	last := f.addPhoto(t, "b.jpg", time.Unix(1700000000, 0), famifoThumb)
 
-	rec := do(t, f.h, "/items?t=1700000000&id="+last.ID())
+	rec := doGet(t, f.h, "/items?t=1700000000&id="+last.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
@@ -103,7 +103,7 @@ func TestItemsReturnsRequestedWindow(t *testing.T) {
 		ids = append(ids, p.ID())
 	}
 
-	body := do(t, f.h, "/items?offset=1&limit=2").Body.String()
+	body := doGet(t, f.h, "/items?offset=1&limit=2").Body.String()
 
 	// 新しい順は p4,p3,p2,p1,p0 なので offset=1 の2件は p3,p2
 	require.Contains(t, body, ids[3])
@@ -116,7 +116,7 @@ func TestItemsHasNoSentinel(t *testing.T) {
 	f := newWebFixture(t, 60)
 	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	body := do(t, f.h, "/items?offset=0&limit=1").Body.String()
+	body := doGet(t, f.h, "/items?offset=0&limit=1").Body.String()
 
 	require.NotContains(t, body, "hx-", "htmxの属性は残さない")
 	require.NotContains(t, body, "sentinel")
@@ -131,7 +131,7 @@ func TestItemsRejectsBadOffset(t *testing.T) {
 		"/items?offset=0&limit=-1",
 	} {
 		t.Run(target, func(t *testing.T) {
-			require.Equal(t, http.StatusBadRequest, do(t, f.h, target).Code)
+			require.Equal(t, http.StatusBadRequest, doGet(t, f.h, target).Code)
 		})
 	}
 }
@@ -140,15 +140,15 @@ func TestItemsDefaultsToFirstWindow(t *testing.T) {
 	f := newWebFixture(t, 60)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	body := do(t, f.h, "/items").Body.String()
+	body := doGet(t, f.h, "/items").Body.String()
 
 	require.Contains(t, body, p.ID())
 }
 
 // embeddedDayGroups は初回HTMLに埋め込まれた日ごとの表を取り出す。
 func embeddedDayGroups(t *testing.T, body string) []struct {
-	D string `json:"d"`
-	N int    `json:"n"`
+	Date  string `json:"d"`
+	Count int    `json:"n"`
 } {
 	t.Helper()
 	const open = `<script type="application/json" id="daygroups">`
@@ -159,8 +159,8 @@ func embeddedDayGroups(t *testing.T, body string) []struct {
 	require.GreaterOrEqual(t, j, 0, "script タグが閉じていない")
 
 	var out []struct {
-		D string `json:"d"`
-		N int    `json:"n"`
+		Date  string `json:"d"`
+		Count int    `json:"n"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(rest[:j]), &out))
 	return out
@@ -173,19 +173,19 @@ func TestGalleryEmbedsDayGroups(t *testing.T) {
 	f.addPhoto(t, "b.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), famifoThumb)
 	f.addPhoto(t, "c.jpg", time.Date(2026, 2, 3, 10, 0, 0, 0, time.Local), famifoThumb)
 
-	got := embeddedDayGroups(t, do(t, f.h, "/").Body.String())
+	got := embeddedDayGroups(t, doGet(t, f.h, "/").Body.String())
 
 	require.Len(t, got, 2)
-	require.Equal(t, "2026-02-08", got[0].D)
-	require.Equal(t, 2, got[0].N)
-	require.Equal(t, "2026-02-03", got[1].D)
-	require.Equal(t, 1, got[1].N)
+	require.Equal(t, "2026-02-08", got[0].Date)
+	require.Equal(t, 2, got[0].Count)
+	require.Equal(t, "2026-02-03", got[1].Date)
+	require.Equal(t, 1, got[1].Count)
 }
 
 func TestGalleryEmbedsEmptyDayGroupsForEmptyLibrary(t *testing.T) {
 	f := newWebFixture(t, 60)
 
-	got := embeddedDayGroups(t, do(t, f.h, "/").Body.String())
+	got := embeddedDayGroups(t, doGet(t, f.h, "/").Body.String())
 
 	require.Empty(t, got, "空でも配列として埋め込むこと（JSON.parse が落ちないように）")
 }
@@ -194,7 +194,7 @@ func TestDatesEndpointIsGone(t *testing.T) {
 	f := newWebFixture(t, 60)
 	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), famifoThumb)
 
-	rec := do(t, f.h, "/dates")
+	rec := doGet(t, f.h, "/dates")
 
 	require.Equal(t, http.StatusNotFound, rec.Code,
 		"日ごとの表は初回HTMLに埋め込むので、この口は持たない")
@@ -210,7 +210,7 @@ func TestItemsTagsEachTileWithLocalDate(t *testing.T) {
 	// ローカルで2月8日の未明。UTCに直すと2月7日になる時刻。
 	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 0, 30, 0, 0, time.Local), famifoThumb)
 
-	body := do(t, f.h, "/items?offset=0&limit=60").Body.String()
+	body := doGet(t, f.h, "/items?offset=0&limit=60").Body.String()
 
 	require.Contains(t, body, `data-date="2026-02-08"`,
 		"UTCで切ると2026-02-07になる。ローカル時刻で分類すること")
@@ -220,7 +220,7 @@ func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
 	f := newWebFixture(t, 60)
 	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local), famifoThumb)
 
-	body := do(t, f.h, "/").Body.String()
+	body := doGet(t, f.h, "/").Body.String()
 
 	require.Contains(t, body, `data-date="2026-02-08"`,
 		"初回HTMLの先頭の塊にも日付が要る")
@@ -230,7 +230,7 @@ func TestGalleryUsesTheBorrowedThumbForHEIC(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
-	body := do(t, f.h, "/").Body.String()
+	body := doGet(t, f.h, "/").Body.String()
 
 	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`,
 		"@eaDir から借りられるHEICはサムネイルを使う")

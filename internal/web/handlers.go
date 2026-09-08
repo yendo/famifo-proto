@@ -50,11 +50,11 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	dv := make([]dayView, 0, len(days))
+	dayViews := make([]dayView, 0, len(days))
 	for _, d := range days {
-		dv = append(dv, dayView{D: d.Date, N: d.Count})
+		dayViews = append(dayViews, dayView{Date: d.Date, Count: d.Count})
 	}
-	raw, err := json.Marshal(dv)
+	raw, err := json.Marshal(dayViews)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -97,7 +97,7 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 // handleThumb は一覧のタイルを配信する。どのファイルを出すかは thumb が決める。
 // 出せる絵が無ければプレースホルダに差し替えるので、404にはならない。
 func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.lookup(w, r)
+	p, ok := s.lookupPhoto(w, r)
 	if !ok {
 		return
 	}
@@ -114,7 +114,7 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 
 // handlePhoto は拡大表示用の画像を配信する。
 func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.lookup(w, r)
+	p, ok := s.lookupPhoto(w, r)
 	if !ok {
 		return
 	}
@@ -139,9 +139,9 @@ func serveNoPreview(w http.ResponseWriter) {
 	w.Write(noPreview)
 }
 
-// lookup はURLのIDから写真を引く。
+// lookupPhoto はURLのIDから写真を引く。
 // パスではなくIDを経由することで、インデックスに無いファイルは配信できない。
-func (s *Server) lookup(w http.ResponseWriter, r *http.Request) (photo.Photo, bool) {
+func (s *Server) lookupPhoto(w http.ResponseWriter, r *http.Request) (photo.Photo, bool) {
 	p, err := s.st.GetByID(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
