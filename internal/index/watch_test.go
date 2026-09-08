@@ -249,6 +249,14 @@ func waitForIndexing(t *testing.T, path string) *os.File {
 // どちらの open(2) にも応じる必要があるうえ、1度目の読み手が閉じる時刻は
 // こちらから見えないので、回数を数えずに応じ続ける。
 //
+// 1周ごとに間を置くのは、読み手に順番を回すためである。書き込みのopenが待つのは
+// 読み手が「居ない」ときだけで、取り込みが開いたまま読んでいる間は何度開いても
+// 即座に返る。間を置かないとこのループにブロックする箇所が無くなり、読み手にPが
+// 回らない環境（GOMAXPROCS=1）では、1度の読み取りに何十枚も重ねて流し込んだ末に
+// 取り込みが崩れたストリームを読んでデコードに失敗する。
+// 読み手が閉じたことを書き込み側から覗く手段は無い。O_NONBLOCKで開いて確かめる
+// と、その探り自体が書き手になり、読み手の次のopenを0バイトで満たしてしまう。
+//
 // 取り込みが最後まで通ればDBに行が増える。呼び出し側はそれを待つことで、
 // 係を片付けてよい時点を実時間の当て推量なしに知れる。
 func serveFifo(t *testing.T, path string, data []byte) {
@@ -267,6 +275,7 @@ func serveFifo(t *testing.T, path string, data []byte) {
 				return
 			default:
 			}
+			time.Sleep(time.Millisecond)
 		}
 	}()
 	t.Cleanup(func() {
