@@ -35,7 +35,7 @@ func TestNewFillsTheFieldsFromThePathAndFileInfo(t *testing.T) {
 
 	p := photo.New(path, fakeFileInfo{modTime: testModTime}, time.Time{})
 
-	require.Equal(t, photo.IDFor(path), p.ID(), "IDはパスから導く")
+	require.Equal(t, photo.IDFor(path), p.ID(), "the ID is derived from the path")
 	require.Equal(t, path, p.Path())
 	require.True(t, p.ModTime().Equal(testModTime))
 }

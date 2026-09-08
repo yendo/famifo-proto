@@ -84,7 +84,7 @@ func writeJPEGWithoutEXIF(t *testing.T, dir, name string) string {
 //	76 OffsetTimeOriginal の値 (7バイト)
 func writeJPEGWithEXIFOffset(t *testing.T, dir, name string, when time.Time, offset string) string {
 	t.Helper()
-	require.Len(t, offset, 6, `オフセットは "+09:00" の形式で指定すること`)
+	require.Len(t, offset, 6, `the offset has to be given as "+09:00"`)
 
 	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
 	img.Set(0, 0, color.RGBA{R: 200, G: 100, B: 50, A: 255})

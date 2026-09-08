@@ -153,9 +153,9 @@ func TestServeThumbServesAPlaceholderWhenNothingCanBeShown(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "original-a.heic")
 	require.Contains(t, rec.Body.String(), "<svg")
 	require.NoError(t, wellFormedXML(rec.Body.Bytes()),
-		"image/svg+xml はXMLとして厳密に解釈されるので、妥当でないと描画されない")
+		"image/svg+xml is parsed strictly as XML, so anything invalid does not render")
 	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"),
-		"DSMが後から作ったサムネイルへ次の表示で切り替われるようにする")
+		"so the next view can switch to a thumbnail DSM made later")
 }
 
 // 取り込みのあとでDSMがサムネイルを作った場合。出どころをDBに焼いていたころは、
@@ -165,14 +165,14 @@ func TestServeThumbPicksUpAThumbThatAppearsAfterIndexing(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 	require.Equal(t, "image/svg+xml",
-		doGet(t, f.h, "/thumb/"+p.ID()).Header().Get("Content-Type"), "この時点ではまだ何も無い")
+		doGet(t, f.h, "/thumb/"+p.ID()).Header().Get("Content-Type"), "there is nothing to serve yet")
 
 	writeFileAt(t, synology.ThumbMPath(p.Path()), "eadir-a.heic")
 
 	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "eadir-a.heic", rec.Body.String(), "取り込み直さなくても切り替わる")
+	require.Equal(t, "eadir-a.heic", rec.Body.String(), "it switches over without reindexing")
 }
 
 func TestServeOriginal(t *testing.T) {
@@ -196,9 +196,9 @@ func TestServeOriginalSetsHEICContentType(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.heic", rec.Body.String(),
-		"借りるものが無いHEICは従来どおり原本を配信する")
+		"a HEIC with nothing to borrow still serves the original")
 	require.Equal(t, "image/heic", rec.Header().Get("Content-Type"),
-		"Goのmimeパッケージが知らないので自前で設定する")
+		"Go's mime package does not know it, so it is set by hand")
 }
 
 func TestServeOriginalNotFoundForUnknownID(t *testing.T) {
@@ -246,9 +246,9 @@ func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-xl-a.heic", rec.Body.String(),
-		"HEICの原本はSafari以外で表示できないのでXLを代わりに配信する")
+		"a HEIC original displays nowhere but Safari, so XL is served instead")
 	require.Equal(t, "image/jpeg", rec.Header().Get("Content-Type"),
-		"配信するのはJPEGなので拡張子からMIMEが引ける")
+		"what is served is a JPEG, so the MIME type comes from the extension")
 }
 
 func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
@@ -260,5 +260,5 @@ func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String(),
-		"元から表示できる形式は原本のフル解像度を出す。借用は見えないものの代替に限る")
+		"a format that displays as it is gets the original at full resolution; borrowing is only for what cannot be shown")
 }

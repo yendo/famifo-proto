@@ -22,7 +22,7 @@ func TestNewUsesTheEXIFDateWhenPresent(t *testing.T) {
 	// 依存し、「EXIFをUTCとして読む」という誤った挙動を固定してしまう。
 	// 時差の解釈そのものは TestNewAssumesLocalWhenTheEXIFDateHasNoOffset が押さえる。
 	require.Equal(t, "2021-03-04 05:06:07", p.TakenAt().Format("2006-01-02 15:04:05"),
-		"EXIFの撮影日時を優先する")
+		"the EXIF capture time wins")
 }
 
 // EXIFのDateTimeOriginalは時差を持たない。撮影地の時刻とみなして読まないと、
@@ -43,7 +43,7 @@ func TestNewAssumesLocalWhenTheEXIFDateHasNoOffset(t *testing.T) {
 
 	want := time.Date(2025, 5, 24, 9, 8, 31, 0, time.Local)
 	require.True(t, p.TakenAt().Equal(want),
-		"EXIFの日時を撮影地の時刻とみなすこと: got=%v want=%v", p.TakenAt(), want)
+		"the EXIF time is read as the local time where it was shot: got=%v want=%v", p.TakenAt(), want)
 }
 
 // OffsetTimeOriginal がある写真は本当の瞬間が分かっている。これをローカル
@@ -64,13 +64,13 @@ func TestNewKeepsTheEXIFOffsetWhenPresent(t *testing.T) {
 
 	_, off := p.TakenAt().Zone()
 	require.Equal(t, 2*60*60, off,
-		"EXIFが示す時差を維持すること（JSTで上書きしない）: got=%v", p.TakenAt())
-	require.Equal(t, 12, p.TakenAt().Hour(), "現地の12時のまま: got=%v", p.TakenAt())
+		"the offset written in the EXIF is kept, not overwritten with JST: got=%v", p.TakenAt())
+	require.Equal(t, 12, p.TakenAt().Hour(), "still noon local time: got=%v", p.TakenAt())
 }
 
 func TestNewFallsBackToModTimeWithoutAnEXIFDate(t *testing.T) {
 	t.Parallel()
 	p := newWithEXIFDate(time.Time{})
 
-	require.True(t, p.TakenAt().Equal(testModTime), "撮影日時が取れない写真も一覧から落とさない")
+	require.True(t, p.TakenAt().Equal(testModTime), "a photo with no capture time still stays in the gallery")
 }

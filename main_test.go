@@ -38,8 +38,8 @@ func TestEmbedsTimezoneDatabase(t *testing.T) {
 	}
 
 	require.Contains(t, paths, `"time/tzdata"`,
-		"zoneinfoの無いコンテナで time.Local が UTC に落ちるのを防ぐため、"+
-			"タイムゾーンデータベースをバイナリに埋め込むこと")
+		"the timezone database has to be embedded in the binary, or time.Local "+
+			"falls back to UTC in a container with no zoneinfo")
 }
 
 // TZを渡し忘れたコンテナは黙ってUTCで動き、そのまま本番のインデックスを
@@ -53,7 +53,7 @@ func TestStartupTimezoneDistinguishesZonesWithTheSameName(t *testing.T) {
 	utc := time.Date(2026, 8, 26, 12, 0, 0, 0, time.FixedZone("Local", 0))
 
 	require.NotEqual(t, startupTimezone(utc), startupTimezone(jst),
-		"Location の名前が同じでも、時差で区別できること")
+		"the offset tells them apart even when the Location names match")
 	require.Contains(t, startupTimezone(jst), "+09:00")
 }
 
@@ -68,9 +68,9 @@ func TestParseArgsUsesDefaults(t *testing.T) {
 	require.Equal(t, "./famifo-data", got.DataDir)
 	require.Equal(t, ":8080", got.Addr)
 	require.Equal(t, max(runtime.NumCPU()/2, 1), got.ScanWorkers,
-		"既定はCPU数の半分。設定を書かなくても並行に取り込みつつ、CPUは使い切らない")
+		"half the CPUs by default: parallel indexing out of the box without using the machine up")
 	require.Equal(t, time.Hour, got.ScanInterval,
-		"監視が取りこぼしても既定で1時間以内に整合性が戻る")
+		"consistency returns within an hour by default even when the watcher misses something")
 }
 
 func TestParseArgsOverridesEveryFlag(t *testing.T) {
@@ -116,7 +116,7 @@ func TestRunExplainsHowDirWasSplit(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "2024",
-		"分割結果を示して、区切り文字で切れたことが分かるようにする")
+		"shows the split, so it is clear the separator cut the path")
 }
 
 // run は起動から停止までの配線である。取り込みや配信の中身はそれぞれの
@@ -137,9 +137,9 @@ func TestRunServesUntilContextIsCancelled(t *testing.T) {
 
 	select {
 	case err := <-done:
-		require.NoError(t, err, "合図で止めた場合は正常終了する")
+		require.NoError(t, err, "a signalled stop exits cleanly")
 	case <-time.After(10 * time.Second):
-		t.Fatal("ctxをキャンセルしてもrunが戻りませんでした")
+		t.Fatal("run did not return after the ctx was cancelled")
 	}
 }
 
@@ -162,9 +162,9 @@ func TestRunReportsListenFailure(t *testing.T) {
 
 	select {
 	case err := <-done:
-		require.Error(t, err, "待ち受けに失敗したらrunの戻り値まで伝える")
+		require.Error(t, err, "a listen failure is carried through to run's return value")
 	case <-time.After(10 * time.Second):
-		t.Fatal("待ち受けに失敗してもrunが戻りませんでした")
+		t.Fatal("run did not return after the listen failed")
 	}
 }
 
@@ -185,7 +185,7 @@ func TestRunRejectsInvalidArgs(t *testing.T) {
 	t.Parallel()
 	err := run(context.Background(), nil, io.Discard, io.Discard)
 
-	require.Error(t, err, "-dir が無ければ起動しない")
+	require.Error(t, err, "it does not start without -dir")
 }
 
 // runArgs は run に渡す最小の引数を組み立てる。-data を -dir の下に置くと run が
@@ -245,5 +245,5 @@ func waitForReady(t *testing.T, addr string) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("%s が応答しませんでした", addr)
+	t.Fatalf("%s never responded", addr)
 }

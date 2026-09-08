@@ -122,13 +122,13 @@ func TestPhotosHaveMixedDaySizes(t *testing.T) {
 			big++
 		}
 	}
-	require.Greater(t, single, 2, "1枚だけの日が要る（横並びの検証に使う）")
-	require.Greater(t, small, 2, "数枚の日が要る")
-	require.Greater(t, big, 2, "列数を超える日が要る（行占有の検証に使う）")
+	require.Greater(t, single, 2, "a day with a single photo is needed, to check side-by-side days")
+	require.Greater(t, small, 2, "a day with a few photos is needed")
+	require.Greater(t, big, 2, "a day with more photos than columns is needed, to check a day taking a whole row")
 	require.Equal(t, 0, dayStartIndex(0))
 	require.Equal(t, testDayCounts[0], dayStartIndex(1))
-	require.Equal(t, dayOfPhoto(0), dayOfPhoto(testDayCounts[0]-1), "同じ日に入ること")
-	require.NotEqual(t, dayOfPhoto(0), dayOfPhoto(testDayCounts[0]), "次は別の日")
+	require.Equal(t, dayOfPhoto(0), dayOfPhoto(testDayCounts[0]-1), "falls on the same day")
+	require.NotEqual(t, dayOfPhoto(0), dayOfPhoto(testDayCounts[0]), "the next one is another day")
 }
 
 // allocCtx はコンテナ内Chromeに接続したchromedpのアロケータcontext。
@@ -161,7 +161,7 @@ func TestMain(m *testing.M) {
 		defer cleanup()
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Fprintln(os.Stderr, "browser_test: パニックを捕捉しました:", r)
+				fmt.Fprintln(os.Stderr, "browser_test: recovered from a panic:", r)
 				code = 1
 			}
 		}()
@@ -177,12 +177,12 @@ func setupBrowserEnv() (cleanup func(), ok bool) {
 	noop := func() {}
 
 	if _, err := exec.LookPath("docker"); err != nil {
-		browserSkipReason = fmt.Sprintf("dockerが見つかりません: %v", err)
+		browserSkipReason = fmt.Sprintf("docker not found: %v", err)
 		return noop, false
 	}
 
 	if err := exec.Command("docker", "image", "inspect", dockerImage).Run(); err != nil {
-		browserSkipReason = fmt.Sprintf("イメージ %s がありません（`docker pull %s` してから再実行してください）", dockerImage, dockerImage)
+		browserSkipReason = fmt.Sprintf("no %s image (run `docker pull %s` and try again)", dockerImage, dockerImage)
 		return noop, false
 	}
 
@@ -199,20 +199,20 @@ func setupBrowserEnv() (cleanup func(), ok bool) {
 	runOut, err := exec.Command("docker", "run", "-d", "--rm", "--network", "host",
 		"--shm-size", "2g", "--name", containerName, dockerImage).CombinedOutput()
 	if err != nil {
-		browserSkipReason = fmt.Sprintf("docker run に失敗しました: %v: %s", err, runOut)
+		browserSkipReason = fmt.Sprintf("docker run failed: %v: %s", err, runOut)
 		return noop, false
 	}
 	stopContainer := func() { _ = exec.Command("docker", "stop", containerName).Run() }
 
 	if !waitForDebugger(20 * time.Second) {
-		browserSkipReason = "headless-shellの起動待ちがタイムアウトしました"
+		browserSkipReason = "timed out waiting for headless-shell to come up"
 		stopContainer()
 		return noop, false
 	}
 
 	tempDir, srv, closeStore, err := startTestApp()
 	if err != nil {
-		browserSkipReason = fmt.Sprintf("テスト用アプリの起動に失敗しました: %v", err)
+		browserSkipReason = fmt.Sprintf("cannot start the app under test: %v", err)
 		stopContainer()
 		return noop, false
 	}
@@ -246,9 +246,9 @@ func requireBrowser(t *testing.T) {
 		return
 	}
 	if os.Getenv("FAMIFO_BROWSER_TESTS") == "required" {
-		t.Fatalf("ブラウザテスト環境を用意できませんでした（FAMIFO_BROWSER_TESTS=required のためスキップせず失敗させます）: %s", browserSkipReason)
+		t.Fatalf("no environment for the browser tests; failing instead of skipping because FAMIFO_BROWSER_TESTS=required: %s", browserSkipReason)
 	}
-	t.Skipf("ブラウザテスト環境が無いためスキップします: %s", browserSkipReason)
+	t.Skipf("skipping: no environment for the browser tests: %s", browserSkipReason)
 }
 
 // waitForDebugger はheadless-shellのDevToolsエンドポイントが応答するまで
@@ -339,10 +339,10 @@ func prepareTestPhotos(st *store.Store, photoDir string, thumbs *thumb.Provider)
 // テスト画像はEXIFを持たないので、取り込み時の撮影日時はmtimeから決まる。
 func writeTestPhoto(path string, i int, takenAt time.Time) error {
 	if err := writeTestJPEG(path, i); err != nil {
-		return fmt.Errorf("テスト画像を書けません (%s): %w", path, err)
+		return fmt.Errorf("cannot write the test image (%s): %w", path, err)
 	}
 	if err := os.Chtimes(path, takenAt, takenAt); err != nil {
-		return fmt.Errorf("テスト画像の日時を設定できません (%s): %w", path, err)
+		return fmt.Errorf("cannot set the times on the test image (%s): %w", path, err)
 	}
 	return nil
 }
@@ -497,20 +497,20 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 
 	err = chromedp.Run(rctx, chromedp.Evaluate(measureJS, &res))
 	require.NoError(t, err)
-	require.NotZero(t, res.Cols, "列数を取得できなかった")
-	require.Greater(t, res.RowH, 0.0, "行の高さを取得できなかった")
+	require.NotZero(t, res.Cols, "could not read the column count")
+	require.Greater(t, res.RowH, 0.0, "could not read the row height")
 
 	// app.js が動いていなければ、#window にはサーバが埋めた1塊しか無い。
 	require.NoErrorf(t, pollErr,
-		"#windowのタイルが%d枚のまま増えない。サーバが埋めた最初の1塊(%d枚)のままで、"+
-			"仮想スクロールが追加の塊を貼っていない（app.jsが動いていない疑い）",
+		"the tile count in #window stays at %d. It is still the first chunk (%d tiles) the "+
+			"server filled in, so virtual scrolling is pasting no further chunks; app.js looks dead",
 		res.TileCount, testChunkSize)
 	require.Greater(t, res.TileCount, testChunkSize)
 
 	// 「ぎりぎり超えている」を成功とみなすと、ビューポート高やCSSの変更で
 	// 正しい実装のまま落ちる。1行分の余裕を要求する。
 	require.GreaterOrEqualf(t, res.LastBottom, res.ViewportH+res.RowH,
-		"読み込み直後、最後のタイルの下端(%.0f)がビューポート高(%.0f)+1行(%.0f)に届いていない（空白帯がある）",
+		"right after load the bottom of the last tile (%.0f) does not reach the viewport height (%.0f) plus a row (%.0f); there is a blank band",
 		res.LastBottom, res.ViewportH, res.RowH)
 
 	// Pollが失敗したときにも実測デコード枚数を報告したいので、エラーは
@@ -522,7 +522,7 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Evaluate(decodedInViewJS, &decoded))
 	require.NoError(t, err)
 	require.NoErrorf(t, decodedPollErr,
-		"可視範囲のサムネイルが%d枚しかデコードされていない（1行分=%d枚を期待。画像が表示されていない疑い）",
+		"only %d thumbnails in view are decoded, one row (%d) expected; the images look unrendered",
 		decoded, res.Cols)
 	require.GreaterOrEqual(t, decoded, res.Cols)
 }
@@ -622,9 +622,9 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 		scrollDiff = -scrollDiff
 	}
 	require.NoErrorf(t, scrollPollErr,
-		"リロード後のスクロール位置が復元前と%.1fpxずれている"+
-			"（復元後=%.1fpx 復元前=%.1fpx 許容差=±%.1fpx=半行）。"+
-			"復元処理が1行分ずれている、またはhistory.scrollRestorationが効いていない疑い",
+		"the scroll position after the reload is off by %.1fpx "+
+			"(restored=%.1fpx before=%.1fpx tolerance=±%.1fpx, half a row). "+
+			"Either the restore is a row out, or history.scrollRestoration is not taking effect",
 		scrollDiff, scrollGeom.ScrollTop, scrollBefore, scrollGeom.RowH/2)
 
 	// リロード後の列数を測る。可視範囲に何枚あるべきかはここから決まる。
@@ -632,7 +632,7 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Evaluate(
 		`getComputedStyle(document.querySelector('#window')).gridTemplateColumns.split(' ').filter(Boolean).length`, &cols))
 	require.NoError(t, err)
-	require.NotZero(t, cols, "リロード後に列数を取得できなかった")
+	require.NotZero(t, cols, "could not read the column count after the reload")
 
 	// 「1枚でも交差していれば良い」では、窓枠の位置合わせが完全に壊れて
 	// 画面が空白になっても、端に食い込んだ数枚で通ってしまう（実測）。
@@ -650,8 +650,8 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Evaluate(intersectCountJS, &intersecting))
 	require.NoError(t, err)
 	require.NoErrorf(t, pollErr,
-		"リロード後、可視範囲と交差するタイルが%d枚しかない（%d枚=%d列×2行を期待）。"+
-			"窓枠の位置合わせ(translateY)が効いていない疑い",
+		"only %d tiles intersect the viewport after the reload (%d expected, %d columns x 2 rows). "+
+			"The translateY that lines the window up looks ineffective",
 		intersecting, wantIntersecting, cols)
 }
 
@@ -717,7 +717,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Evaluate(topIndexJS, &after))
 	require.NoError(t, err)
 	require.NoErrorf(t, colsPollErr,
-		"リサイズしても列数が変わらなかった（前提条件を満たしていない）: before=%d after=%d",
+		"the column count did not change across the resize, so the premise does not hold: before=%d after=%d",
 		before.Cols, after.Cols)
 
 	maxCols := before.Cols
@@ -729,7 +729,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 		diff = -diff
 	}
 	require.LessOrEqual(t, diff, maxCols,
-		"リサイズ前後で画面上端に見えていた写真の通し番号が1行分を超えてずれた: before=%d(cols=%d) after=%d(cols=%d)",
+		"the index of the photo at the top of the screen moved by more than a row across the resize: before=%d(cols=%d) after=%d(cols=%d)",
 		before.TopIndex, before.Cols, after.TopIndex, after.Cols)
 }
 
@@ -826,7 +826,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	var afterScroll int
 	err = chromedp.Run(rctx, chromedp.Evaluate(`window.__repaints`, &afterScroll))
 	require.NoError(t, err)
-	t.Logf("PROBE: 塊境界を跨いだ後の貼り替え回数=%d", afterScroll)
+	t.Logf("PROBE: repaints after crossing a chunk boundary=%d", afterScroll)
 
 	// ごく普通のスクロールを1行分行う。この位置・この列数では、この1行で
 	// 貼り付け範囲が1塊ぶん進む（下の NotEqual で前提として確認する）。
@@ -849,14 +849,14 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	var afterPlain int
 	err = chromedp.Run(rctx, chromedp.Evaluate(`window.__repaints`, &afterPlain))
 	require.NoError(t, err)
-	t.Logf("PROBE: 通常スクロール後の貼り替え回数=%d（貼り付け先頭 %d→%d）", afterPlain, pastedBefore, pastedAfter)
+	t.Logf("PROBE: repaints after a plain scroll=%d (paste start %d->%d)", afterPlain, pastedBefore, pastedAfter)
 
 	// 前提の確認。この1行で貼り付け範囲が1塊ぶん進んでいなければ、検証したい
 	// 「塊境界を跨ぐ貼り替え」に到達していない。到達しなければガードの有無で
 	// 差が出ないため、黙って合格させずにここで落とす。
 	require.NotEqualf(t, pastedBefore, pastedAfter,
-		"1行分のスクロールで貼り付け範囲が変わらなかった（貼り付け先頭=%d のまま）。"+
-			"塊境界を跨いでおらず、このテストの前提が崩れている",
+		"a one-row scroll left the pasted range unchanged (paste start still %d). "+
+			"No chunk boundary was crossed, so the premise of this test does not hold",
 		pastedBefore)
 
 	// ここが本命の検出器。貼り替えが起きてよいのは、貼り付ける内容が
@@ -873,9 +873,9 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	// レンダリングのステップ境界を跨いで別のコールバックとして配送されるため、
 	// 合体して1回に潰れることがない。
 	require.Equalf(t, afterScroll+1, afterPlain,
-		"1行分のスクロールで、貼り付ける内容が変わっていないのにDOMが貼り替えられた: "+
-			"スクロール前=%d 後=%d 期待=%d（貼り付け先頭 %d→%d）。"+
-			"onResize の「列数もタイル高も変わっていなければ何もしない」ガードが効いていない疑い",
+		"a one-row scroll repainted the DOM even though the content to paste did not change: "+
+			"before=%d after=%d want=%d (paste start %d->%d). "+
+			"The onResize guard that does nothing while columns and tile height are unchanged looks ineffective",
 		afterScroll, afterPlain, afterScroll+1, pastedBefore, pastedAfter)
 
 	// こちらは主検出器ではなく、貼り替えの暴走を捕まえるためのゆるい健全性
@@ -889,8 +889,8 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	// その場合は上の相対不変条件が落とす。
 	const repaintRunawayCeiling = 8
 	require.LessOrEqualf(t, afterScroll, repaintRunawayCeiling,
-		"塊境界を跨ぐスクロールで%d回も貼り替えている（貼り替えの暴走。"+
-			"ResizeObserverのフィードバックループの疑い）",
+		"a scroll across a chunk boundary repainted %d times; repaints are running away, "+
+			"which looks like a ResizeObserver feedback loop",
 		afterScroll)
 }
 
@@ -986,7 +986,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 		chromedp.Evaluate(markJS, &marked),
 	)
 	require.NoError(t, err)
-	require.Greater(t, marked, 0, "目印を付ける時点でタイルが1枚も貼られていない")
+	require.Greater(t, marked, 0, "no tile is pasted at the point the markers go on")
 
 	var got struct {
 		Common, Reused, Total int
@@ -997,20 +997,20 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 		chromedp.Evaluate(countJS, &got),
 	)
 	require.NoError(t, err)
-	t.Logf("PROBE: 目印を付けたタイル=%d枚 スクロール後のタイル=%d枚 "+
-		"うち引き続き見えている写真=%d枚 要素が残ったもの=%d枚",
+	t.Logf("PROBE: marked tiles=%d tiles after the scroll=%d "+
+		"of which photos still in view=%d elements kept=%d",
 		marked, got.Total, got.Common, got.Reused)
 
 	// 前提の確認。1行進んだだけなら大半の写真は見えたままのはず。ここが0なら
 	// 貼り付け範囲が丸ごと入れ替わっており、使い回しの有無を問う場面に
 	// 到達していない。
 	require.Greater(t, got.Common, 0,
-		"1行スクロールしたら、引き続き見えている写真が1枚も無くなった。このテストの前提が崩れている")
+		"a one-row scroll left no photo still in view, so the premise of this test does not hold")
 
 	require.Equalf(t, got.Common, got.Reused,
-		"引き続き見えている写真%d枚のうち、DOM要素が使い回されたのは%d枚だけだった。"+
-			"render() が可視範囲のDOMを作り直している疑い"+
-			"（WebKitで写真の表示領域が一瞬真っ黒になる原因）",
+		"of the %d photos still in view only %d kept their DOM element. "+
+			"render() looks like it rebuilds the DOM for the visible range, "+
+			"which is what makes the photos flash black on WebKit",
 		got.Common, got.Reused)
 }
 
@@ -1066,7 +1066,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	// 開いてしまうため、開いたかどうかだけでは表示を保証できない。
 	const lbDecodedJS = `(() => { const i = document.querySelector('#lightbox img'); return i.complete && i.naturalWidth > 0; })()`
 	err = chromedp.Run(rctx, chromedp.Poll(lbDecodedJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
-	require.NoError(t, err, "ライトボックスの原寸画像がデコードされなかった（画像が表示されていない）")
+	require.NoError(t, err, "the full-size image in the lightbox was never decoded, so nothing is displayed")
 
 	// getAttribute('src') は絶対URLに解決されないので、テンプレートが書いた
 	// 相対パスとそのまま突き合わせられる。
@@ -1076,7 +1076,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Evaluate(srcAttrJS, &got))
 	require.NoError(t, err)
 	require.Equalf(t, want[0], got,
-		"最初に開いた写真が先頭(0番)ではない: got=%s want=%s", got, want[0])
+		"the first photo opened is not the first one (index 0): got=%s want=%s", got, want[0])
 
 	prev := got
 	for i := 1; i <= steps; i++ {
@@ -1087,10 +1087,10 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 			chromedp.Evaluate(srcAttrJS, &got),
 		)
 		require.NoErrorf(t, err,
-			"%d枚目でsrcが変化しなかった（塊の境界=%dで止まっている疑い）: prev=%s",
+			"src did not change at photo %d; it looks stuck at the chunk boundary of %d: prev=%s",
 			i, testChunkSize, prev)
 		require.Equalf(t, want[i], got,
-			"%d枚目の写真が期待と違う（塊の境界=%dでの継ぎ目のずれの疑い）: got=%s want=%s",
+			"photo %d is not the expected one; the seam at the chunk boundary of %d looks off: got=%s want=%s",
 			i, testChunkSize, got, want[i])
 		prev = got
 	}
@@ -1153,7 +1153,7 @@ func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Evaluate(srcAttrJS, &got))
 	require.NoError(t, err)
 	require.Equalf(t, want[0], got,
-		"最初に開いた写真が先頭(0番)ではない: got=%s want=%s", got, want[0])
+		"the first photo opened is not the first one (index 0): got=%s want=%s", got, want[0])
 
 	// 左スワイプ = 次の写真。
 	swipeTo := func(t *testing.T, fromX, fromY, toX, toY float64, msg string) {
@@ -1163,25 +1163,25 @@ func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
 		err := chromedp.Run(rctx, chromedp.Poll(
 			fmt.Sprintf(`%s !== %s`, srcAttrJS, strconv.Quote(prev)), nil,
 			chromedp.WithPollingTimeout(5*time.Second)))
-		require.NoErrorf(t, err, "%s（src=%s のまま変わらなかった）", msg, prev)
+		require.NoErrorf(t, err, "%s (src stayed at %s)", msg, prev)
 		require.NoError(t, chromedp.Run(rctx, chromedp.Evaluate(srcAttrJS, &got)))
 	}
 
-	swipeTo(t, 400, 500, 200, 500, "左スワイプで次の写真に進まなかった")
+	swipeTo(t, 400, 500, 200, 500, "a swipe left did not move to the next photo")
 	require.Equalf(t, want[1], got,
-		"左スワイプの送り先が1枚隣ではない: got=%s want=%s", got, want[1])
+		"a swipe left did not land on the next photo: got=%s want=%s", got, want[1])
 
 	// 右スワイプ = 前の写真。往復して元の写真に戻ることまで見る。
 	// 送りと戻りで別々の分岐を通るので、片方だけ壊れていても気づける。
-	swipeTo(t, 200, 500, 400, 500, "右スワイプで前の写真に戻らなかった")
+	swipeTo(t, 200, 500, 400, 500, "a swipe right did not move back to the previous photo")
 	require.Equalf(t, want[0], got,
-		"右スワイプの戻り先が元の写真ではない: got=%s want=%s", got, want[0])
+		"a swipe right did not land back on the original photo: got=%s want=%s", got, want[0])
 
 	// 下スワイプ = 閉じる。閉じるのは hidden 属性なので、srcではなくそちらを見る。
 	require.NoError(t, chromedp.Run(rctx, swipeActions(400, 300, 400, 500)...))
 	err = chromedp.Run(rctx, chromedp.Poll(`document.querySelector('#lightbox').hidden`, nil,
 		chromedp.WithPollingTimeout(5*time.Second)))
-	require.NoError(t, err, "下スワイプでライトボックスが閉じなかった")
+	require.NoError(t, err, "a swipe down did not close the lightbox")
 }
 
 // --- Task: TestScrubberReachesBothEnds ---
@@ -1252,7 +1252,7 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 		err = chromedp.Run(rctx,
 			chromedp.Evaluate(`window.__lastScroll = -1;`, nil),
 			chromedp.Poll(settleJS, nil, chromedp.WithPollingTimeout(5*time.Second)))
-		require.NoError(t, err, "ドラッグ後にスクロール位置が落ち着かなかった")
+		require.NoError(t, err, "the scroll position never settled after the drag")
 	}
 
 	var maxScroll float64
@@ -1270,7 +1270,7 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Evaluate(`famifo.scroller.scrollTop`, &scrollTop))
 	require.NoError(t, err)
 	require.InDeltaf(t, maxScroll, scrollTop, maxScroll*0.05+5,
-		"下端へのドラッグでscrollTop(%.0f)がmaxScroll(%.0f)付近まで届かない", scrollTop, maxScroll)
+		"dragging to the bottom leaves scrollTop (%.0f) short of maxScroll (%.0f)", scrollTop, maxScroll)
 
 	// 上端までドラッグする。
 	showScrubber(`famifo.maxScroll() - 50`)
@@ -1281,7 +1281,7 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Evaluate(`famifo.scroller.scrollTop`, &scrollTop))
 	require.NoError(t, err)
 	require.Lessf(t, scrollTop, maxScroll*0.05+5,
-		"上端へのドラッグでscrollTop(%.0f)が0付近まで戻らない", scrollTop)
+		"dragging to the top leaves scrollTop (%.0f) short of 0", scrollTop)
 }
 
 // --- Task: TestTileTapOpensLightbox ---
@@ -1352,8 +1352,8 @@ func TestTileTapOpensLightbox(t *testing.T) {
 		chromedp.Evaluate(`famifo.scroller.scrollTop`, &scrollBefore),
 	)
 	require.NoError(t, err)
-	require.Greater(t, m.Tile.Width, 0.0, "右端タイルの矩形が取得できなかった")
-	require.Greater(t, m.Scrub.Width, 0.0, "スクラバー帯の矩形が取得できなかった（display:noneのまま計測した疑い）")
+	require.Greater(t, m.Tile.Width, 0.0, "could not read the rect of the rightmost tile")
+	require.Greater(t, m.Scrub.Width, 0.0, "could not read the rect of the scrubber band; it looks measured while still display:none")
 
 	// タイルとスクラバー帯の重なり。ここが空なら、そもそもこの不具合は
 	// 再現しない条件なので、静かに通さず前提条件の不成立として止める。
@@ -1374,13 +1374,13 @@ func TestTileTapOpensLightbox(t *testing.T) {
 		overlapBottom = m.Scrub.Bottom
 	}
 	if overlapRight-overlapLeft <= 0 || overlapBottom-overlapTop <= 0 {
-		t.Fatalf("右端タイル(x:%.0f〜%.0f, y:%.0f〜%.0f)とスクラバー帯(x:%.0f〜%.0f, y:%.0f〜%.0f)が"+
-			"重なっていないため、この不具合は再現しない条件です。"+
-			"ビューポート幅か .scrubber の width/top を確認してください",
+		t.Fatalf("the rightmost tile (x:%.0f-%.0f, y:%.0f-%.0f) and the scrubber band (x:%.0f-%.0f, y:%.0f-%.0f) "+
+			"do not overlap, so this bug cannot reproduce under these conditions. "+
+			"Check the viewport width, or the width/top of .scrubber",
 			m.Tile.Left, m.Tile.Right, m.Tile.Top, m.Tile.Bottom,
 			m.Scrub.Left, m.Scrub.Right, m.Scrub.Top, m.Scrub.Bottom)
 	}
-	t.Logf("重なり幅=%.1fpx 重なり高さ=%.1fpx（タイル右端%.0f, 帯左端%.0f）",
+	t.Logf("overlap width=%.1fpx overlap height=%.1fpx (tile right edge %.0f, band left edge %.0f)",
 		overlapRight-overlapLeft, overlapBottom-overlapTop, m.Tile.Right, m.Scrub.Left)
 
 	x := (overlapLeft + overlapRight) / 2
@@ -1392,13 +1392,13 @@ func TestTileTapOpensLightbox(t *testing.T) {
 	pollErr := chromedp.Run(rctx, chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil,
 		chromedp.WithPollingTimeout(3*time.Second)))
 	require.NoErrorf(t, pollErr,
-		"スクラバー帯と重なる位置(x=%.0f, y=%.0f)のタイルをタップしてもライトボックスが開かなかった"+
-			"（スクラバーに奪われている疑い）", x, y)
+		"tapping the tile at (x=%.0f, y=%.0f), where the scrubber band overlaps it, did not open "+
+			"the lightbox; the scrubber looks like it is taking the tap", x, y)
 
 	var scrollAfter float64
 	err = chromedp.Run(rctx, chromedp.Evaluate(`famifo.scroller.scrollTop`, &scrollAfter))
 	require.NoError(t, err)
-	require.Equal(t, scrollBefore, scrollAfter, "スクロール位置が変化した（スクラバーのシークが発生した）")
+	require.Equal(t, scrollBefore, scrollAfter, "the scroll position changed, so the scrubber seeked")
 }
 
 // --- Task: レイアウト計算 ---
@@ -1451,14 +1451,14 @@ func TestLayoutPacksDaysThatFitOneRow(t *testing.T) {
 	require.Equal(t, float64(0), got.Entries[0].Y)
 	require.Equal(t, 0, got.Entries[0].Start)
 
-	require.Equal(t, 1, got.Entries[1].Col, "1枚の日の右隣に載ること")
+	require.Equal(t, 1, got.Entries[1].Col, "sits to the right of the single-photo day")
 	require.Equal(t, 4, got.Entries[1].Span)
-	require.Equal(t, float64(0), got.Entries[1].Y, "同じストライプなのでyが等しいこと")
+	require.Equal(t, float64(0), got.Entries[1].Y, "the same stripe, so the y matches")
 	require.Equal(t, 1, got.Entries[1].Start)
 
 	// 3枚目は残り1列に4列は載らないので次のストライプ。
 	// ストライプ高 = labelH(20) + gap(4) + tileH(100) = 124。次のy = 124 + gap(4) = 128
-	require.Equal(t, 0, got.Entries[2].Col, "入らないので次のストライプの先頭から")
+	require.Equal(t, 0, got.Entries[2].Col, "does not fit, so it starts the next stripe")
 	require.Equal(t, float64(128), got.Entries[2].Y)
 	require.Equal(t, 5, got.Entries[2].Start)
 
@@ -1475,12 +1475,12 @@ func TestLayoutGivesWholeRowsToBigDays(t *testing.T) {
 	got := evalLayout(t, ctx, `[{d:"2026-02-08",n:13},{d:"2026-02-03",n:2}]`, 6)
 
 	require.Len(t, got.Entries, 2)
-	require.Equal(t, 6, got.Entries[0].Span, "列数を超える日は行を占有すること")
+	require.Equal(t, 6, got.Entries[0].Span, "a day with more photos than columns takes the whole row")
 	require.Equal(t, 3, got.Entries[0].Rows)
 	// h = 20 + 4 + 3*100 + 2*4 = 332
 	require.Equal(t, float64(332), got.Entries[0].H)
 
-	require.Equal(t, 0, got.Entries[1].Col, "行を占有した日の後は必ず次のストライプ")
+	require.Equal(t, 0, got.Entries[1].Col, "whatever follows a full-row day always starts the next stripe")
 	require.Equal(t, float64(332+4), got.Entries[1].Y)
 	require.Equal(t, 13, got.Entries[1].Start)
 }
@@ -1494,7 +1494,7 @@ func TestLayoutHandlesEmptyLibrary(t *testing.T) {
 	got := evalLayout(t, ctx, `[]`, 6)
 
 	require.Empty(t, got.Entries)
-	require.Equal(t, float64(0), got.Height, "空でも高さは0で、NaNにならないこと")
+	require.Equal(t, float64(0), got.Height, "empty gives a height of 0, never NaN")
 }
 
 func TestLayoutLookupsAgreeWithEntries(t *testing.T) {
@@ -1530,7 +1530,7 @@ func TestLayoutLookupsAgreeWithEntries(t *testing.T) {
 		return bad;
 	})()`, &mismatches))
 	require.NoError(t, err)
-	require.Empty(t, mismatches, "二分探索が entries と食い違っている")
+	require.Empty(t, mismatches, "the binary search disagrees with entries")
 }
 
 func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
@@ -1561,10 +1561,10 @@ func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 1, got.Pieces)
-	require.Equal(t, 18, got.From, "4段目の先頭 = 3*6")
-	require.Equal(t, float64(336), got.PasteY, "貼り付け位置は切り出した段の上端")
+	require.Equal(t, 18, got.From, "the start of the fourth row = 3*6")
+	require.Equal(t, float64(336), got.PasteY, "the paste lands on the top edge of the row it cut out")
 	require.Greater(t, got.To, got.From)
-	require.Less(t, got.To, 100, "100枚まるごとではなく可視ぶんだけ切り出すこと")
+	require.Less(t, got.To, 100, "cuts out only what is visible, not all 100")
 }
 
 // レイアウトが計算した位置と、ブラウザが実際に置いた位置が一致すること。
@@ -1615,7 +1615,7 @@ func TestCardPositionsMatchTheLayout(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Empty(t, mismatches,
-		"JSの計算とブラウザの実配置がずれている（pastedRangeの範囲で検査）")
+		"the JS calculation disagrees with where the browser actually laid the tiles out, over pastedRange")
 }
 
 // 1行に収まる日が実際に横に並ぶこと。
@@ -1640,7 +1640,7 @@ func TestSmallDaysSitSideBySide(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Greater(t, sharedRows, 0,
-		"1行に収まる日が横に並んでいない（テスト写真に1枚・数枚の日が入っているか確認すること）")
+		"days that fit on one row are not sitting side by side; check that the test photos include days of one and of a few photos")
 }
 
 // 列数を超える日が行を占有し、ラベルがその日を指すこと。
@@ -1672,15 +1672,15 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	require.Equal(t, 7, res.Span, "1600pxは7列。20枚の日は全列を占めること")
-	require.True(t, res.Full, "行を占有する日はグリッドの全幅であること")
+	require.Equal(t, 7, res.Span, "1600px is 7 columns, and a day of 20 photos takes all of them")
+	require.True(t, res.Full, "a day that takes the row spans the full width of the grid")
 
 	// ラベルはタイルの data-date から作る。テスト写真の先頭の日と一致すること。
 	day := dayOfPhoto(0) // "2026-01-01"
 	parts := strings.Split(day, "-")
 	wantMonth, wantDay := strings.TrimLeft(parts[1], "0"), strings.TrimLeft(parts[2], "0")
 	require.Contains(t, res.Label, wantMonth+"月"+wantDay+"日",
-		"ラベルが先頭の写真の日付と一致しない")
+		"the label does not match the date of the first photo")
 }
 
 // --- Task: TestScrubberLabelMatchesTheTopPhoto ---
@@ -1746,7 +1746,7 @@ func TestScrubberLabelMatchesTheTopPhoto(t *testing.T) {
 	err = chromedp.Run(rctx,
 		chromedp.Evaluate(`window.__lastScroll = -1;`, nil),
 		chromedp.Poll(settleJS, nil, chromedp.WithPollingTimeout(5*time.Second)))
-	require.NoError(t, err, "ドラッグ後にスクロール位置が落ち着かなかった")
+	require.NoError(t, err, "the scroll position never settled after the drag")
 
 	// 貼り付け(塊のfetchを挟む非同期処理)が新しいスクロール位置に追いつくまで待つ。
 	const anyTileInViewJS = `(() => {
@@ -1784,17 +1784,17 @@ func TestScrubberLabelMatchesTheTopPhoto(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoErrorf(t, pollErr,
-		"ドラッグ後、可視範囲にタイルが現れなかった（貼り付けが追いついていない疑い）")
-	require.False(t, res.Hidden, "ドラッグ中はラベルが表示されているはず")
-	require.NotEqual(t, -1, res.TopI, "可視範囲の先頭タイルが見つからない")
+		"no tile appeared in the viewport after the drag; the pasting looks behind")
+	require.False(t, res.Hidden, "the label should be visible while dragging")
+	require.NotEqual(t, -1, res.TopI, "no first tile found in the viewport")
 
 	day := dayOfPhoto(res.TopI)
-	require.NotEmpty(t, day, "先頭タイル(i=%d)の日が特定できない", res.TopI)
+	require.NotEmpty(t, day, "cannot tell which day the first tile (i=%d) belongs to", res.TopI)
 	parts := strings.Split(day, "-")
 	wantMonth := strings.TrimLeft(parts[1], "0")
 	t.Logf("PROBE: label=%q topI=%d day=%s wantMonth=%s", res.Label, res.TopI, day, wantMonth)
 	require.Containsf(t, res.Label, wantMonth+"月",
-		"スクラバーのラベル(%q)の月が、可視範囲の先頭写真(i=%d, day=%s)の月と一致しない",
+		"the month on the scrubber label (%q) does not match the month of the first photo in view (i=%d, day=%s)",
 		res.Label, res.TopI, day)
 }
 
@@ -1831,10 +1831,10 @@ func TestScrollMapsIntoLayoutSpace(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Greater(t, got.SpacerTop, 1.0,
-		"#spacer が文書の先頭にあるなら、この変換は何も変換していないので"+
-			"テストとして意味がない。上部バーが場所を占めているか確認すること")
+		"with #spacer at the very top of the document this conversion converts nothing, "+
+			"which makes the test meaningless. Check that the top bar takes up space")
 	require.InDelta(t, got.Expected, got.Converted, 1.0,
-		"スクロール位置をレイアウト座標に直した値が、その写真の段の上端と一致しない")
+		"the scroll position converted to layout coordinates does not match the top of that photo's row")
 }
 
 // --- Task: TestLongScrollDoesNotStallOnSlowServer ---
@@ -1876,7 +1876,7 @@ func prepareManyTestPhotos(st *store.Store, photoDir string, thumbs *thumb.Provi
 	}
 	// 滞留の再現には全件が載っている必要がある。1枚でも欠けると本数が変わる。
 	if stats.Indexed != manyPhotoCount {
-		return fmt.Errorf("取り込めた枚数が足りません: %d/%d", stats.Indexed, manyPhotoCount)
+		return fmt.Errorf("too few photos were indexed: %d/%d", stats.Indexed, manyPhotoCount)
 	}
 	return nil
 }
@@ -1952,7 +1952,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 		waitForTiles(30*time.Second),
 		chromedp.Evaluate(`document.querySelector('#spacer').offsetHeight`, &height),
 	))
-	require.Greater(t, height, 0, "レイアウトの高さを取得できなかった")
+	require.Greater(t, height, 0, "could not read the layout height")
 
 	// ホイールで下まで降りる操作。1回で飛ばすと通り過ぎる塊が無く、
 	// この不具合自体が起きない（スクラバーで飛ぶと1秒で着く）。
@@ -1978,17 +1978,17 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 	}
 	require.NoError(t, chromedp.Run(rctx, chromedp.Evaluate(`famifo.pastedRange()`, &pasted)))
 
-	t.Logf("追いつくまで %v: /items はスクロール中に%d本、合計%d本（うちブラウザが諦めた%d本、全%d塊）pasted=%d..%d",
+	t.Logf("caught up in %v: %d /items requests during the scroll, %d in total (%d of them dropped by the browser, %d chunks in all) pasted=%d..%d",
 		elapsed.Round(time.Millisecond), duringScroll, atomic.LoadInt64(itemsSeen),
 		atomic.LoadInt64(itemsDropped), manyPhotoCount/stallChunkSize, pasted.From, pasted.To)
 
 	require.NoErrorf(t, pollErr,
-		"一番古い写真が貼られないまま終わった: pasted=%d..%d (期待 from>=%d) /items=%d本",
+		"it ended with the oldest photo never pasted: pasted=%d..%d (want from>=%d) /items requests=%d",
 		pasted.From, pasted.To, wantFrom, atomic.LoadInt64(itemsSeen))
 	require.Lessf(t, elapsed, stallCatchUp,
-		"手を止めてから画面が追いつくまで %v かかった（許容 %v）。"+
-			"通り過ぎた塊の取得が中断されず、止まった場所の塊がその後ろに並んでいる。"+
-			"/items はスクロール中に%d本、追いつくまでに合計%d本（全%d塊）",
+		"the screen took %v to catch up after the scrolling stopped (allowed %v). "+
+			"Requests for the chunks scrolled past are not being aborted, so the chunk where it stopped queues up behind them. "+
+			"%d /items requests during the scroll, %d in total by the time it caught up (%d chunks in all)",
 		elapsed.Round(time.Millisecond), stallCatchUp,
 		duringScroll, atomic.LoadInt64(itemsSeen), manyPhotoCount/stallChunkSize)
 }
@@ -2022,9 +2022,9 @@ func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 		const p = famifo.urlAt(famifo.total - 1);
 		famifo.render();
 		try {
-			return (await p) ? "取得できた" : "URLがnull";
+			return (await p) ? "resolved" : "url was null";
 		} catch (e) {
-			return "中断された: " + e.name;
+			return "aborted: " + e.name;
 		}
 	})()`
 
@@ -2036,7 +2036,7 @@ func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 		chromedp.Evaluate(js, &got, awaitPromise),
 	))
 
-	require.Equalf(t, "取得できた", got,
-		"一番古い写真のURLを引けなかった(%s)。一覧の貼り替えがライトボックスの取得まで中断している",
+	require.Equalf(t, "resolved", got,
+		"could not resolve the URL of the oldest photo (%s); repainting the gallery is aborting the lightbox's fetch as well",
 		got)
 }

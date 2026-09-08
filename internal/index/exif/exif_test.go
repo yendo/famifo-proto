@@ -35,8 +35,8 @@ func TestReadKeepsTheEXIFOffset(t *testing.T) {
 	got := exif.Read(path)
 
 	_, off := got.TakenAt.Zone()
-	require.Equal(t, 2*60*60, off, "時差が書かれていればそれを保つ: got=%v", got.TakenAt)
-	require.Equal(t, 12, got.TakenAt.Hour(), "現地の12時のまま: got=%v", got.TakenAt)
+	require.Equal(t, 2*60*60, off, "keeps the offset when one is written: got=%v", got.TakenAt)
+	require.Equal(t, 12, got.TakenAt.Hour(), "still noon local time: got=%v", got.TakenAt)
 }
 
 func TestReadReturnsZeroDateWithoutEXIF(t *testing.T) {
@@ -46,8 +46,8 @@ func TestReadReturnsZeroDateWithoutEXIF(t *testing.T) {
 
 	got := exif.Read(path)
 
-	require.True(t, got.TakenAt.IsZero(), "撮影日時が無いことを呼び出し側に伝える")
-	require.Equal(t, uint16(1), got.Orientation, "回転不要")
+	require.True(t, got.TakenAt.IsZero(), "tells the caller there is no capture time")
+	require.Equal(t, uint16(1), got.Orientation, "no rotation needed")
 }
 
 func TestReadReturnsTheOrientation(t *testing.T) {

@@ -118,7 +118,7 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path())
-	require.Len(t, f.generatedThumbs(t), 1, "借りられないので自前で作る")
+	require.Len(t, f.generatedThumbs(t), 1, "nothing to borrow, so it makes its own")
 }
 
 // TestIndexFileAppliesTheEXIFOrientationToTheThumbnail はEXIFから読んだ向きが
@@ -133,7 +133,7 @@ func TestIndexFileAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
 	cfg := decodeThumbConfig(t, f.onlyGeneratedThumb(t))
-	require.Equal(t, 8, cfg.Width, "Orientation=6 なら縦横が入れ替わる")
+	require.Equal(t, 8, cfg.Width, "Orientation=6 swaps width and height")
 	require.Equal(t, 16, cfg.Height)
 }
 
@@ -148,8 +148,8 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, path, got.Path(), "サムネイルが無くてもインデックスには載せる")
-	require.Empty(t, f.generatedThumbs(t), "HEICはデコードできない")
+	require.Equal(t, path, got.Path(), "indexed even with no thumbnail")
+	require.Empty(t, f.generatedThumbs(t), "HEIC cannot be decoded")
 }
 
 func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
@@ -158,7 +158,7 @@ func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
 	path := filepath.Join(f.root, "a.mp4")
 	require.NoError(t, os.WriteFile(path, []byte("video"), 0o644))
 
-	require.NoError(t, f.ix.IndexFile(context.Background(), path), "対象外はエラーではない")
+	require.NoError(t, f.ix.IndexFile(context.Background(), path), "an unsupported file is not an error")
 
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestIndexFileRejectsBrokenRasterImage(t *testing.T) {
 
 	err := f.ix.IndexFile(context.Background(), path)
 
-	require.Error(t, err, "壊れた画像は登録せずエラーを返す")
+	require.Error(t, err, "a broken image is not stored and returns an error")
 	n, cerr := f.st.Count(context.Background())
 	require.NoError(t, cerr)
 	require.Equal(t, 0, n)
@@ -233,9 +233,9 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
 	require.NoError(t, err)
-	require.Empty(t, f.generatedThumbs(t), "借りられるなら自前では作らない")
+	require.Empty(t, f.generatedThumbs(t), "makes none of its own when it can borrow")
 	small, _, _ := f.thumbs.SmallPath(got)
-	require.Equal(t, synology.ThumbMPath(path), small, "一覧には借りたものが出る")
+	require.Equal(t, synology.ThumbMPath(path), small, "the gallery shows the borrowed one")
 }
 
 // HEICはGoでデコードできないが、Synologyのサムネイルがあれば一覧に出せる。
@@ -252,7 +252,7 @@ func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 	require.NoError(t, err)
 	small, _, _ := f.thumbs.SmallPath(got)
 	require.Equal(t, synology.ThumbMPath(path), small,
-		"自前でデコードできなくても、借りられれば一覧に出せる")
+		"borrowing puts it in the gallery even when it cannot be decoded")
 }
 
 // DSM 7.3 がHEICのデコードに失敗すると .fail だけが残る。famifoも作れないので
@@ -272,7 +272,7 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 	require.NoError(t, err)
 	require.Empty(t, f.generatedThumbs(t))
 	_, _, ok := f.thumbs.SmallPath(got)
-	require.False(t, ok, ".fail しか無ければ一覧に出せるものが無い")
+	require.False(t, ok, "with only .fail there is nothing to show in the gallery")
 }
 
 // famifoはSynology Photosの領域に書き込まない。消しもしない。
@@ -286,7 +286,7 @@ func TestRemoveFileKeepsTheSynologyThumbnail(t *testing.T) {
 
 	require.NoError(t, f.ix.RemoveFile(ctx, path))
 
-	require.FileExists(t, synoThumb, "@eaDir には触れない")
+	require.FileExists(t, synoThumb, "@eaDir is never touched")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 0, n)

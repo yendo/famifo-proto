@@ -51,7 +51,7 @@ func requireCount(t *testing.T, f *fixture, want int) {
 	require.Eventually(t, func() bool {
 		n, err := f.st.Count(context.Background())
 		return err == nil && n == want
-	}, 3*time.Second, 25*time.Millisecond, "枚数が %d にならなかった", want)
+	}, 3*time.Second, 25*time.Millisecond, "the count never reached %d", want)
 }
 
 func TestWatcherIndexesNewFile(t *testing.T) {
@@ -141,7 +141,7 @@ func TestWatcherRemovesRowsWhenDirectoryRenamedWithinTree(t *testing.T) {
 	paths, err := f.st.AllPaths(context.Background())
 	require.NoError(t, err)
 	for p := range paths {
-		require.Contains(t, p, "album2", "旧パス album の行が残ってはいけない: %s", p)
+		require.Contains(t, p, "album2", "no row for the old album path may remain: %s", p)
 	}
 }
 
@@ -190,7 +190,7 @@ func TestWatcherIgnoresSynologyThumbnailsCreatedLater(t *testing.T) {
 	time.Sleep(3 * testDebounce)
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 1, n, "サムネイルを取り込まないこと")
+	require.Equal(t, 1, n, "thumbnails are not taken in")
 }
 
 func TestWatcherSkipsSynologyDirsInMovedDirectory(t *testing.T) {
@@ -210,7 +210,7 @@ func TestWatcherSkipsSynologyDirsInMovedDirectory(t *testing.T) {
 	time.Sleep(3 * testDebounce)
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 1, n, "移動後に遅れて取り込まれないこと")
+	require.Equal(t, 1, n, "not taken in late after the move")
 }
 
 // mkfifoPhoto は取り込みを途中で止められる「写真」を作る。名前付きパイプは
@@ -239,7 +239,7 @@ func waitForIndexing(t *testing.T, path string) *os.File {
 	case w := <-opened:
 		return w
 	case <-time.After(3 * time.Second):
-		t.Fatalf("取り込みが %s を読み始めなかった", path)
+		t.Fatalf("indexing never started reading %s", path)
 		return nil
 	}
 }
@@ -355,7 +355,7 @@ func TestWatcherLeavesNoRowForAPhotoMovedWhileBeingIndexed(t *testing.T) {
 	paths, err := f.st.AllPaths(context.Background())
 	require.NoError(t, err)
 	for p := range paths {
-		require.Contains(t, p, "moved.heic", "消えたパスの行が残ってはいけない: %s", p)
+		require.Contains(t, p, "moved.heic", "no row for the vanished path may remain: %s", p)
 	}
 }
 
@@ -388,7 +388,7 @@ func TestWatcherLeavesNoRowForADirectoryMovedWhileBeingIndexed(t *testing.T) {
 	paths, err := f.st.AllPaths(context.Background())
 	require.NoError(t, err)
 	for p := range paths {
-		require.Contains(t, p, "moved", "移動元のパスの行が残ってはいけない: %s", p)
+		require.Contains(t, p, "moved", "no row for the source path may remain: %s", p)
 	}
 }
 
@@ -437,7 +437,7 @@ func TestWatcherAsksForAScanWhenAPhotoDisappearsWhileBeingIndexed(t *testing.T) 
 	select {
 	case <-w.ScanRequests():
 	case <-time.After(2 * time.Second):
-		t.Fatal("スキャンの前倒しを要求しなかった")
+		t.Fatal("no early scan was requested")
 	}
 }
 
@@ -455,7 +455,7 @@ func TestWatcherDoesNotAskForAScanWhenNothingIsBeingIndexed(t *testing.T) {
 
 	select {
 	case <-w.ScanRequests():
-		t.Fatal("取り込みが走っていないのにスキャンを要求した")
+		t.Fatal("a scan was requested with no indexing in flight")
 	default:
 	}
 }
@@ -472,7 +472,7 @@ func TestWatcherAsksForAScanOnEventOverflow(t *testing.T) {
 	select {
 	case <-w.ScanRequests():
 	case <-time.After(2 * time.Second):
-		t.Fatal("溢れを検知してもスキャンを要求しなかった")
+		t.Fatal("no scan was requested after an overflow")
 	}
 }
 
@@ -481,12 +481,12 @@ func TestWatcherDoesNotAskForAScanOnOtherWatchErrors(t *testing.T) {
 	f := newFixture(t)
 	w := startWatcher(t, f)
 
-	w.InjectWatchError(errors.New("監視の別の失敗"))
+	w.InjectWatchError(errors.New("another watch failure"))
 
 	time.Sleep(100 * time.Millisecond)
 	select {
 	case <-w.ScanRequests():
-		t.Fatal("溢れ以外のエラーで走査をやり直してはいけない")
+		t.Fatal("an error other than an overflow must not trigger a rescan")
 	default:
 	}
 }
