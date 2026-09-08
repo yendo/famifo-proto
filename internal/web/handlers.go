@@ -12,26 +12,6 @@ import (
 	"github.com/yendo/famifo-proto/internal/store"
 )
 
-// parseWindow はクエリから窓枠の範囲を読む。省略時は先頭から chunkSize 件。
-func parseWindow(r *http.Request, defaultLimit int) (offset, limit int, err error) {
-	limit = defaultLimit
-	q := r.URL.Query()
-
-	if raw := q.Get("offset"); raw != "" {
-		offset, err = strconv.Atoi(raw)
-		if err != nil || offset < 0 {
-			return 0, 0, fmt.Errorf("offset が不正です: %q", raw)
-		}
-	}
-	if raw := q.Get("limit"); raw != "" {
-		limit, err = strconv.Atoi(raw)
-		if err != nil || limit < 0 {
-			return 0, 0, fmt.Errorf("limit が不正です: %q", raw)
-		}
-	}
-	return offset, limit, nil
-}
-
 // handleGallery はギャラリーのトップページを返す。
 // 先頭の塊を埋めた状態で返すので、開いた直後に灰色の画面が出ない。
 func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +103,26 @@ func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	// 先に設定しておけばServeContentは上書きしない。
 	w.Header().Set("Content-Type", contentType)
 	http.ServeFile(w, r, path)
+}
+
+// parseWindow はクエリから窓枠の範囲を読む。省略時は先頭から chunkSize 件。
+func parseWindow(r *http.Request, defaultLimit int) (offset, limit int, err error) {
+	limit = defaultLimit
+	q := r.URL.Query()
+
+	if raw := q.Get("offset"); raw != "" {
+		offset, err = strconv.Atoi(raw)
+		if err != nil || offset < 0 {
+			return 0, 0, fmt.Errorf("offset が不正です: %q", raw)
+		}
+	}
+	if raw := q.Get("limit"); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 0 {
+			return 0, 0, fmt.Errorf("limit が不正です: %q", raw)
+		}
+	}
+	return offset, limit, nil
 }
 
 // serveNoPreview は出せる絵が無いときのプレースホルダを配る。

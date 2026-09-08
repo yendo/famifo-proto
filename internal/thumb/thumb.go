@@ -56,12 +56,6 @@ func NewProvider(dir string) (*Provider, error) {
 	return &Provider{dir: dir}, nil
 }
 
-// shardDir は id のサムネイルを置くディレクトリを返す。
-// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
-func (pv *Provider) shardDir(id string) string {
-	return filepath.Join(pv.dir, id[:2])
-}
-
 // GeneratedPath は自前で生成したサムネイルの置き場所を返す。実在するとは限らない。
 // Prepare が書き込む先であり、置き場を掃除する道具が同じ規則で引くために公開する。
 //
@@ -268,6 +262,12 @@ func (pv *Provider) sweep(id, keep string) error {
 // sweepQuietly は掃除の失敗を握りつぶす。消し残しは表示にも正しさにも影響せず、
 // 数KBのファイルが残るだけなので、これで取り込み全体を失敗させる価値がない。
 func (pv *Provider) sweepQuietly(id, keep string) { _ = pv.sweep(id, keep) }
+
+// shardDir は id のサムネイルを置くディレクトリを返す。
+// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
+func (pv *Provider) shardDir(id string) string {
+	return filepath.Join(pv.dir, id[:2])
+}
 
 // scaleToFit は長辺が maxEdge 以下になるよう縮小する。元より大きくは引き伸ばさない。
 func scaleToFit(src image.Image, maxEdge int) image.Image {

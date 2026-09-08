@@ -94,15 +94,6 @@ func (w *Watcher) Close() error { return w.fsw.Close() }
 // おけば、走っているスキャンが終わったあとの1回で回収できる。
 func (w *Watcher) ScanRequests() <-chan struct{} { return w.kicks }
 
-// requestScan はスキャンの前倒しを要求する。
-// 既に積まれていれば捨てる。受け手が居なくてもここで詰まらない。
-func (w *Watcher) requestScan() {
-	select {
-	case w.kicks <- struct{}{}:
-	default:
-	}
-}
-
 // Run はコンテキストがキャンセルされるまで監視を続ける。
 func (w *Watcher) Run(ctx context.Context) error {
 	// path -> 最後にイベントを受けた時刻
@@ -299,4 +290,13 @@ func (w *Watcher) enqueueTree(root string, pending map[string]time.Time) {
 		pending[path] = now
 		return nil
 	})
+}
+
+// requestScan はスキャンの前倒しを要求する。
+// 既に積まれていれば捨てる。受け手が居なくてもここで詰まらない。
+func (w *Watcher) requestScan() {
+	select {
+	case w.kicks <- struct{}{}:
+	default:
+	}
 }
