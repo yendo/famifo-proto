@@ -89,7 +89,7 @@ zoneinfo — a bare container, for instance. Without it the process falls back t
 those photos under the wrong day. The startup log prints the zone it resolved:
 
 ```
-msg=起動 version="v0.1.0" timezone=JST+09:00 dirs=[/photos] ...
+msg=starting version="v0.1.0" timezone=JST+09:00 dirs=[/photos] ...
 ```
 
 Check that line before letting a first index run to completion; rebuilding one costs hours.
@@ -229,8 +229,8 @@ skipping.
   produces an empty scan of that root, which looks exactly like "everything under it was
   deleted". `Scan` therefore judges each root separately: a root that turns up no photos
   keeps its existing entries, even when the other roots are healthy, and logs a
-  `走査結果が空のルートがあるため削除をスキップした` warning. A root it cannot read at all is
-  skipped the same way, with `ルートを読めないため飛ばした`, rather than aborting the scan and
+  `skipped deletions because a root scanned empty` warning. A root it cannot read at all is
+  skipped the same way, with `skipped an unreadable root`, rather than aborting the scan and
   stalling the healthy roots. The side effect is that if you really did empty a root, its rows
   and thumbnails stay behind and the warning repeats on every startup. To recover, delete the
   data directory (`-data`, default `./famifo-data`) and start again — the database and the

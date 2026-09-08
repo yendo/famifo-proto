@@ -390,5 +390,5 @@ CREATE INDEX idx_photos_order ON photos(shot_at DESC, id DESC);`)
 	_, err = store.Open(path)
 
 	require.Error(t, err, "読めないDBで起動させない")
-	require.Contains(t, err.Error(), "DBを読めません")
+	require.Contains(t, err.Error(), "cannot read the database")
 }

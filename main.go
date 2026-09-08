@@ -61,7 +61,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// 常駐プロセスなので、どのビルドが動いているかはログでしか確認できない。
 	// timezone を出すのは、TZ の渡し忘れが静かに UTC になるため。
 	// 誤ったまま本番のインデックスを作ると、全件やり直しになる。
-	log.Info("起動", "version", versionString(),
+	log.Info("starting", "version", versionString(),
 		"timezone", startupTimezone(time.Now()),
 		"dirs", cfg.PhotoDirs, "data", cfg.DataDir, "addr", cfg.Addr,
 		"scan-workers", cfg.ScanWorkers, "scan-interval", cfg.ScanInterval)
@@ -95,9 +95,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	listenErrCh := make(chan error, 1)
 	httpSrv := &http.Server{Addr: cfg.Addr, Handler: srv.Handler()}
 	go func() {
-		log.Info("HTTPサーバーを開始", "addr", cfg.Addr)
+		log.Info("starting HTTP server", "addr", cfg.Addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("HTTPサーバーが停止しました", "err", err)
+			log.Error("HTTP server stopped", "err", err)
 			listenErrCh <- err
 			cancel()
 		}
@@ -114,7 +114,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	defer watcher.Close()
-	log.Info("変更の監視を開始", "dirs", cfg.PhotoDirs)
+	log.Info("watching for changes", "dirs", cfg.PhotoDirs)
 
 	// 取り込みを走らせる goroutine の終了を待ってから store を閉じる。待たずに
 	// 閉じると、あとから Upsert するワーカーが閉じたDBに書きに行く。
@@ -129,7 +129,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	go func() {
 		defer indexers.Done()
 		if err := watcher.Run(ctx); err != nil {
-			log.Error("監視が停止しました", "err", err)
+			log.Error("watcher stopped", "err", err)
 		}
 	}()
 
@@ -149,7 +149,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case err := <-listenErrCh:
 		listenErr = err
 	}
-	log.Info("シャットダウンします")
+	log.Info("shutting down")
 
 	return shutdownHTTP(httpSrv, listenErrCh, listenErr)
 }
@@ -164,20 +164,20 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	var c config.Config
 	var dirs string
 	fs.StringVar(&dirs, "dir", "",
-		fmt.Sprintf("写真を収集するディレクトリ (必須)。%q で区切って複数指定できる",
+		fmt.Sprintf("directories to collect photos from (required); %q separates several",
 			string(filepath.ListSeparator)))
-	fs.StringVar(&c.DataDir, "data", "./famifo-data", "DBとサムネイルの保存先")
-	fs.StringVar(&c.Addr, "addr", ":8080", "HTTPの待ち受けアドレス")
+	fs.StringVar(&c.DataDir, "data", "./famifo-data", "where the database and generated thumbnails are stored")
+	fs.StringVar(&c.Addr, "addr", ":8080", "HTTP listen address")
 	// 適正値はCPU数とストレージの待ち時間の両方で決まる。NASでは読み込み待ちが
 	// 効くので、CPU数が最善とは限らない。実機で詰められるようフラグにしてある。
 	fs.IntVar(&c.ScanWorkers, "scan-workers", defaultScanWorkers(),
-		"同時に取り込む枚数（スキャンとfsnotifyの追従に共通）")
+		"how many photos are taken in at once, both by the scan and by the watcher")
 	// fsnotify は取りこぼす。溢れたことは検知できるが、監視枠を使い切って
 	// 監視を張れなかったディレクトリのように、取りこぼしたと知る手立てが無い
 	// 経路もある。定期的に突き合わせ直せば、検知の可否によらず整合性が戻る。
 	fs.DurationVar(&c.ScanInterval, "scan-interval", time.Hour,
-		"インデックスをディスクの実態と突き合わせ直す間隔")
-	showVersion := fs.Bool("version", false, "バージョンを表示して終了する")
+		"how often the index is reconciled with what is on disk")
+	showVersion := fs.Bool("version", false, "print the build version and exit")
 
 	if err := fs.Parse(args); err != nil {
 		return config.Config{}, false, err

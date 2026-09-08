@@ -49,7 +49,7 @@ type Server struct {
 func NewServer(st *store.Store, thumbs *thumb.Provider, log *slog.Logger) (*Server, error) {
 	tmpl, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil {
-		return nil, fmt.Errorf("テンプレートを読み込めません: %w", err)
+		return nil, fmt.Errorf("cannot load the templates: %w", err)
 	}
 	return &Server{st: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, log: log}, nil
 }

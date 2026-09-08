@@ -47,7 +47,7 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "gallery", view); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		s.log.Error("gallery テンプレートの描画に失敗", "err", err)
+		s.log.Error("failed to render the gallery template", "err", err)
 		return
 	}
 }
@@ -69,7 +69,7 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "items", items); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		s.log.Error("items テンプレートの描画に失敗", "err", err)
+		s.log.Error("failed to render the items template", "err", err)
 		return
 	}
 }
@@ -113,13 +113,13 @@ func parseWindow(r *http.Request, defaultLimit int) (offset, limit int, err erro
 	if raw := q.Get("offset"); raw != "" {
 		offset, err = strconv.Atoi(raw)
 		if err != nil || offset < 0 {
-			return 0, 0, fmt.Errorf("offset が不正です: %q", raw)
+			return 0, 0, fmt.Errorf("invalid offset: %q", raw)
 		}
 	}
 	if raw := q.Get("limit"); raw != "" {
 		limit, err = strconv.Atoi(raw)
 		if err != nil || limit < 0 {
-			return 0, 0, fmt.Errorf("limit が不正です: %q", raw)
+			return 0, 0, fmt.Errorf("invalid limit: %q", raw)
 		}
 	}
 	return offset, limit, nil

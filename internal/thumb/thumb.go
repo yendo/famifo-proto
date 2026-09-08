@@ -51,7 +51,7 @@ type Provider struct {
 // NewProvider は置き場のディレクトリを用意してProviderを返す。
 func NewProvider(dir string) (*Provider, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("サムネイルディレクトリを作れません: %w", err)
+		return nil, fmt.Errorf("cannot create the thumbnail directory: %w", err)
 	}
 	return &Provider{dir: dir}, nil
 }
@@ -180,24 +180,24 @@ func (pv *Provider) generate(p photo.Photo, orientation uint16) (string, error) 
 
 	f, err := os.Open(p.Path())
 	if err != nil {
-		return "", fmt.Errorf("画像を開けません: %w", err)
+		return "", fmt.Errorf("cannot open the image: %w", err)
 	}
 	defer f.Close()
 
 	src, _, err := image.Decode(f)
 	if err != nil {
-		return "", fmt.Errorf("画像をデコードできません: %w", err)
+		return "", fmt.Errorf("cannot decode the image: %w", err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return "", fmt.Errorf("サムネイルの保存先を作れません: %w", err)
+		return "", fmt.Errorf("cannot create the thumbnail destination: %w", err)
 	}
 
 	// 一時ファイルに書いてからrenameする。生成途中のファイルをHTTPハンドラが
 	// 掴んでしまわないようにするため。
 	tmp, err := os.CreateTemp(filepath.Dir(out), ".tmp-*")
 	if err != nil {
-		return "", fmt.Errorf("一時ファイルを作れません: %w", err)
+		return "", fmt.Errorf("cannot create a temporary file: %w", err)
 	}
 	defer os.Remove(tmp.Name()) // renameが成功していれば消す対象は無い
 
@@ -206,13 +206,13 @@ func (pv *Provider) generate(p photo.Photo, orientation uint16) (string, error) 
 	dst := applyOrientation(scaleToFit(src, maxEdge), orientation)
 	if err := jpeg.Encode(tmp, dst, &jpeg.Options{Quality: jpegQuality}); err != nil {
 		tmp.Close()
-		return "", fmt.Errorf("サムネイルを書き出せません: %w", err)
+		return "", fmt.Errorf("cannot write the thumbnail: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return "", fmt.Errorf("一時ファイルを閉じられません: %w", err)
+		return "", fmt.Errorf("cannot close the temporary file: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), out); err != nil {
-		return "", fmt.Errorf("サムネイルを配置できません: %w", err)
+		return "", fmt.Errorf("cannot put the thumbnail in place: %w", err)
 	}
 	return out, nil
 }
@@ -242,7 +242,7 @@ func (pv *Provider) sweep(id, keep string) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("サムネイルの置き場を読めません: %w", err)
+		return fmt.Errorf("cannot read the thumbnail directory: %w", err)
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), id) {
@@ -253,7 +253,7 @@ func (pv *Provider) sweep(id, keep string) error {
 			continue
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("古いサムネイルを削除できません: %w", err)
+			return fmt.Errorf("cannot delete an old thumbnail: %w", err)
 		}
 	}
 	return nil

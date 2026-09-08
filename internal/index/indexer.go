@@ -67,7 +67,7 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) error {
 	}
 	fi, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("ファイル情報を取得できません: %w", err)
+		return fmt.Errorf("cannot stat the file: %w", err)
 	}
 	if fi.IsDir() {
 		return nil
@@ -101,7 +101,7 @@ func (ix *Indexer) removeFile(ctx context.Context, path string) error {
 	// 借りていた写真に対しては何も消さずに終わる。
 	if err := ix.thumbs.Remove(p.ID()); err != nil {
 		// DBからは消えているので、サムネイルの消し残しは致命的ではない
-		ix.log.Warn("サムネイルの削除に失敗", "id", p.ID(), "err", err)
+		ix.log.Warn("failed to delete the thumbnail", "id", p.ID(), "err", err)
 	}
 	return nil
 }
@@ -118,7 +118,7 @@ func (ix *Indexer) removeTree(ctx context.Context, dir string) error {
 	for _, p := range photos {
 		if err := ix.thumbs.Remove(p.ID()); err != nil {
 			// DBからは消えているので、サムネイルの消し残しは致命的ではない
-			ix.log.Warn("サムネイルの削除に失敗", "id", p.ID(), "err", err)
+			ix.log.Warn("failed to delete the thumbnail", "id", p.ID(), "err", err)
 		}
 	}
 	return nil
