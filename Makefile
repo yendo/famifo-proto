@@ -16,4 +16,4 @@ unit-test-race:
 
 .PHONY: browser-test
 browser-test:
-	FAMIFO_BROWSER_TESTS=required go test -tags browser ./internal/web/
+	FAMIFO_BROWSER_TESTS=required go test -shuffle=on -tags browser ./internal/web/
