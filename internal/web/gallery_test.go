@@ -12,6 +12,7 @@ import (
 )
 
 func TestGalleryRendersTiles(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
@@ -25,6 +26,7 @@ func TestGalleryRendersTiles(t *testing.T) {
 }
 
 func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 60)
 	for i := range 3 {
 		f.addPhoto(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), famifoThumb)
@@ -39,6 +41,7 @@ func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
 }
 
 func TestGalleryDropsHtmx(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 60)
 	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
@@ -49,6 +52,7 @@ func TestGalleryDropsHtmx(t *testing.T) {
 }
 
 func TestGalleryEmptyLibrary(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 60)
 
 	body := doGet(t, f.h, "/").Body.String()
@@ -60,6 +64,7 @@ func TestGalleryEmptyLibrary(t *testing.T) {
 // タイルのURLは出どころによらず /thumb/ である。どのファイルを出すかは配信時に
 // 決まるので、一覧を組み立てた時点の状態を焼き付けない。
 func TestGalleryPointsEveryTileAtThumb(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
@@ -71,6 +76,7 @@ func TestGalleryPointsEveryTileAtThumb(t *testing.T) {
 }
 
 func TestGalleryOrdersNewestFirst(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	old := f.addPhoto(t, "old.jpg", time.Unix(1600000000, 0), famifoThumb)
 	recent := f.addPhoto(t, "new.jpg", time.Unix(1700000000, 0), famifoThumb)
@@ -82,6 +88,7 @@ func TestGalleryOrdersNewestFirst(t *testing.T) {
 }
 
 func TestItemsReturnsFragmentOnly(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 1)
 	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 	last := f.addPhoto(t, "b.jpg", time.Unix(1700000000, 0), famifoThumb)
@@ -96,6 +103,7 @@ func TestItemsReturnsFragmentOnly(t *testing.T) {
 }
 
 func TestItemsReturnsRequestedWindow(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 60)
 	var ids []string
 	for i := range 5 {
@@ -113,6 +121,7 @@ func TestItemsReturnsRequestedWindow(t *testing.T) {
 }
 
 func TestItemsHasNoSentinel(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 60)
 	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
@@ -123,6 +132,7 @@ func TestItemsHasNoSentinel(t *testing.T) {
 }
 
 func TestItemsRejectsBadOffset(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 60)
 	for _, target := range []string{
 		"/items?offset=abc&limit=10",
@@ -137,6 +147,7 @@ func TestItemsRejectsBadOffset(t *testing.T) {
 }
 
 func TestItemsDefaultsToFirstWindow(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 60)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
@@ -167,6 +178,7 @@ func embeddedDayGroups(t *testing.T, body string) []struct {
 }
 
 func TestGalleryEmbedsDayGroups(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 60)
 	// 新しい順に: 2026-02-08 が2枚、2026-02-03 が1枚
 	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 18, 0, 0, 0, time.Local), famifoThumb)
@@ -183,6 +195,7 @@ func TestGalleryEmbedsDayGroups(t *testing.T) {
 }
 
 func TestGalleryEmbedsEmptyDayGroupsForEmptyLibrary(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 60)
 
 	got := embeddedDayGroups(t, doGet(t, f.h, "/").Body.String())
@@ -191,6 +204,7 @@ func TestGalleryEmbedsEmptyDayGroupsForEmptyLibrary(t *testing.T) {
 }
 
 func TestDatesEndpointIsGone(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 60)
 	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), famifoThumb)
 
@@ -201,6 +215,9 @@ func TestDatesEndpointIsGone(t *testing.T) {
 }
 
 func TestItemsTagsEachTileWithLocalDate(t *testing.T) {
+	// time.Local はプロセス全体で1つしかない。書き換えるテストが並列に走ると、
+	// 同時に走っている他のテストの時刻解釈まで巻き添えで変わる。実際 -race が
+	// 競合として検出する。このテストは t.Parallel() を呼ばない。
 	f := newWebFixture(t, 60)
 	// TZ=UTC の環境でも回帰を検出できるよう、テスト中だけ固定オフセットにする。
 	orig := time.Local
@@ -217,6 +234,7 @@ func TestItemsTagsEachTileWithLocalDate(t *testing.T) {
 }
 
 func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 60)
 	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local), famifoThumb)
 
@@ -227,6 +245,7 @@ func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
 }
 
 func TestGalleryUsesTheBorrowedThumbForHEIC(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 

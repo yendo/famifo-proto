@@ -76,6 +76,7 @@ func writeSynoThumb(t *testing.T, srcPath string) {
 // Prepare の3つの結末を押さえる。借りられるなら借り（何も作らない）、借りられず
 // 自前で作れるなら作り、どちらも駄目なら何も残さない。
 func TestEnsureOnlyGeneratesWhatCannotBeBorrowed(t *testing.T) {
+	t.Parallel()
 	t.Run("借りられるなら @eaDir から借りる", func(t *testing.T) {
 		pv := newTestProvider(t)
 		src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
@@ -119,6 +120,7 @@ func decodeThumb(t *testing.T, path string) image.Config {
 }
 
 func TestGenerateScalesLandscapeByLongEdge(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	src := writeImage(t, t.TempDir(), "a.jpg", thumb.MaxEdge*2, thumb.MaxEdge)
 
@@ -130,6 +132,7 @@ func TestGenerateScalesLandscapeByLongEdge(t *testing.T) {
 }
 
 func TestGenerateScalesPortraitByLongEdge(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	src := writeImage(t, t.TempDir(), "a.jpg", thumb.MaxEdge, thumb.MaxEdge*2)
 
@@ -141,6 +144,7 @@ func TestGenerateScalesPortraitByLongEdge(t *testing.T) {
 }
 
 func TestGenerateDoesNotUpscale(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	src := writeImage(t, t.TempDir(), "a.jpg", 40, 20)
 
@@ -152,6 +156,7 @@ func TestGenerateDoesNotUpscale(t *testing.T) {
 }
 
 func TestGenerateAcceptsPNGAndGIF(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for _, name := range []string{"a.png", "a.gif"} {
 		t.Run(name, func(t *testing.T) {
@@ -166,6 +171,7 @@ func TestGenerateAcceptsPNGAndGIF(t *testing.T) {
 }
 
 func TestGenerateFailsOnUndecodableFile(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	src := filepath.Join(t.TempDir(), "broken.jpg")
 	require.NoError(t, os.WriteFile(src, []byte("this is not an image"), 0o644))
@@ -177,6 +183,7 @@ func TestGenerateFailsOnUndecodableFile(t *testing.T) {
 }
 
 func TestGenerateFailsOnMissingFile(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	// 消えた直後にイベントを拾った状況。行だけあって原本が無い1枚を組み立てる。
 	missing := filepath.Join(t.TempDir(), "nope.jpg")
@@ -186,6 +193,7 @@ func TestGenerateFailsOnMissingFile(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 	require.NoError(t, provide(t, pv, src, 1))
@@ -209,6 +217,7 @@ func TestRemove(t *testing.T) {
 // 元画像は 16x8（横長）で左上の四分割だけが赤。回転後にその赤がどの隅へ
 // 来るかで、寸法の入れ替えだけでなく画素が本当に動いたかまで見分けられる。
 func TestGenerateAppliesOrientation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		orientation uint16
@@ -279,6 +288,7 @@ func side(b bool, yes, no string) string {
 // DBを作り直すたびに全サムネイルを作り直すと、4,495枚で37分（NASなら数時間）
 // かかる。写真が変わっていないなら既存のものをそのまま使う。
 func TestGenerateSkipsWhenTheThumbnailIsUpToDate(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.jpg", 400, 200)
@@ -297,6 +307,7 @@ func TestGenerateSkipsWhenTheThumbnailIsUpToDate(t *testing.T) {
 
 // 写真が差し替えられたらサムネイルは古い。mtimeで判定する。
 func TestGenerateRebuildsWhenTheSourceIsNewer(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.jpg", 40, 20)
@@ -317,6 +328,7 @@ func TestGenerateRebuildsWhenTheSourceIsNewer(t *testing.T) {
 // 写真を戻すと過去へ動く。順序で鮮度を判定すると「サムネイルのほうが新しい」
 // ままなので作り直しを見送り、一覧に古い画像が残り続ける。
 func TestGenerateRebuildsWhenTheSourceMtimeMovesBackwards(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.jpg", 40, 20)
@@ -337,6 +349,7 @@ func TestGenerateRebuildsWhenTheSourceMtimeMovesBackwards(t *testing.T) {
 // 版を名前に持つので、写真が差し替わると古い版がそのまま残る。
 // 新しい版を置いたあとに掃く。
 func TestEnsureRemovesOlderVersions(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.jpg", 400, 200)
@@ -355,6 +368,7 @@ func TestEnsureRemovesOlderVersions(t *testing.T) {
 // 生成に失敗しても古い版は消さない。新しいものができるまでの控えとして
 // 働いており、先に消すと一覧のタイルが割れる。
 func TestEnsureKeepsTheOlderVersionWhenGenerationFails(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.jpg", 400, 200)
@@ -374,6 +388,7 @@ func TestEnsureKeepsTheOlderVersionWhenGenerationFails(t *testing.T) {
 // Synologyのバックグラウンド索引が後からサムネイルを作ったあとで取り込み直すと、
 // 借りるほうへ切り替わる。自前で作ったものは用済みになる。
 func TestEnsureRemovesTheOwnThumbWhenSwitchingToEaDir(t *testing.T) {
+	t.Parallel()
 	pv := newTestProvider(t)
 	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 	require.NoError(t, provide(t, pv, src, 1))

@@ -10,6 +10,7 @@ import (
 // 拡張子ごとに2つの問いへの答えを固定する。「インデックスに載せるか」と
 // 「自前でサムネイルを作れるか」は独立で、HEICだけが載せるが作れない側に来る。
 func TestSupportedAndDecodableByExtension(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct{ supported, decodable bool }{
 		"a.jpg":              {true, true},
 		"a.jpeg":             {true, true},
@@ -34,6 +35,7 @@ func TestSupportedAndDecodableByExtension(t *testing.T) {
 }
 
 func TestContentType(t *testing.T) {
+	t.Parallel()
 	tests := map[string]string{
 		"a.jpg":  "image/jpeg",
 		"a.jpeg": "image/jpeg",

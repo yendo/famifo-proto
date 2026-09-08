@@ -55,6 +55,7 @@ func requireCount(t *testing.T, f *fixture, want int) {
 }
 
 func TestWatcherIndexesNewFile(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
@@ -64,6 +65,7 @@ func TestWatcherIndexesNewFile(t *testing.T) {
 }
 
 func TestWatcherIgnoresNonPhotos(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
@@ -74,6 +76,7 @@ func TestWatcherIgnoresNonPhotos(t *testing.T) {
 }
 
 func TestWatcherRemovesDeletedFile(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
@@ -85,6 +88,7 @@ func TestWatcherRemovesDeletedFile(t *testing.T) {
 }
 
 func TestWatcherPicksUpNewSubdirectory(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
@@ -97,6 +101,7 @@ func TestWatcherPicksUpNewSubdirectory(t *testing.T) {
 }
 
 func TestWatcherPicksUpDirectoryMovedInWholesale(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
@@ -113,6 +118,7 @@ func TestWatcherPicksUpDirectoryMovedInWholesale(t *testing.T) {
 }
 
 func TestWatcherRemovesRowsWhenDirectoryRenamedWithinTree(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
@@ -140,6 +146,7 @@ func TestWatcherRemovesRowsWhenDirectoryRenamedWithinTree(t *testing.T) {
 }
 
 func TestWatcherHandlesFileRenameWithinTree(t *testing.T) {
+	t.Parallel()
 	// Remove/RenameでRemoveTreeも呼ぶようになったため、ファイルのリネームでも
 	// RemoveFileとRemoveTreeの両方が呼ばれる。該当の無い方は静かにno-opであることを確認する。
 	f := newFixture(t)
@@ -154,6 +161,7 @@ func TestWatcherHandlesFileRenameWithinTree(t *testing.T) {
 }
 
 func TestWatcherDebouncesRepeatedWrites(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 	path := filepath.Join(f.root, "a.jpg")
@@ -167,6 +175,7 @@ func TestWatcherDebouncesRepeatedWrites(t *testing.T) {
 }
 
 func TestWatcherIgnoresSynologyThumbnailsCreatedLater(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
@@ -185,6 +194,7 @@ func TestWatcherIgnoresSynologyThumbnailsCreatedLater(t *testing.T) {
 }
 
 func TestWatcherSkipsSynologyDirsInMovedDirectory(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
@@ -270,6 +280,7 @@ func serveFifo(t *testing.T, path string, data []byte) {
 }
 
 func TestWatcherKeepsHandlingEventsWhileAPhotoIsStuck(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
@@ -289,6 +300,7 @@ func TestWatcherKeepsHandlingEventsWhileAPhotoIsStuck(t *testing.T) {
 }
 
 func TestWatcherIndexesUpToWorkersInParallel(t *testing.T) {
+	t.Parallel()
 	f := newFixtureWorkers(t, 2)
 	startWatcher(t, f)
 
@@ -309,6 +321,7 @@ func TestWatcherIndexesUpToWorkersInParallel(t *testing.T) {
 }
 
 func TestWatcherLeavesNoRowForAPhotoMovedWhileBeingIndexed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
@@ -338,6 +351,7 @@ func TestWatcherLeavesNoRowForAPhotoMovedWhileBeingIndexed(t *testing.T) {
 }
 
 func TestWatcherLeavesNoRowForADirectoryMovedWhileBeingIndexed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
@@ -370,6 +384,7 @@ func TestWatcherLeavesNoRowForADirectoryMovedWhileBeingIndexed(t *testing.T) {
 }
 
 func TestWatcherWatchesRootsBeforeRunStarts(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	w, err := index.NewWatcher(f.ix, log)
@@ -397,6 +412,7 @@ func TestWatcherWatchesRootsBeforeRunStarts(t *testing.T) {
 }
 
 func TestWatcherAsksForAScanWhenAPhotoDisappearsWhileBeingIndexed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	w := startWatcher(t, f)
 
@@ -417,6 +433,7 @@ func TestWatcherAsksForAScanWhenAPhotoDisappearsWhileBeingIndexed(t *testing.T) 
 }
 
 func TestWatcherDoesNotAskForAScanWhenNothingIsBeingIndexed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	w := startWatcher(t, f)
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
@@ -435,6 +452,7 @@ func TestWatcherDoesNotAskForAScanWhenNothingIsBeingIndexed(t *testing.T) {
 }
 
 func TestWatcherAsksForAScanOnEventOverflow(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	w := startWatcher(t, f)
 
@@ -450,6 +468,7 @@ func TestWatcherAsksForAScanOnEventOverflow(t *testing.T) {
 }
 
 func TestWatcherDoesNotAskForAScanOnOtherWatchErrors(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	w := startWatcher(t, f)
 

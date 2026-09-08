@@ -15,6 +15,7 @@ func newWithEXIFDate(exifTakenAt time.Time) photo.Photo {
 }
 
 func TestNewUsesTheEXIFDateWhenPresent(t *testing.T) {
+	t.Parallel()
 	p := newWithEXIFDate(time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC))
 
 	// 日付と時刻の見た目で比べる。瞬間で比べると実行環境のタイムゾーンに
@@ -28,6 +29,9 @@ func TestNewUsesTheEXIFDateWhenPresent(t *testing.T) {
 // 表示される日付が時差のぶんずれる。JSTなら9時間後ろにずれ、15時以降に
 // 撮った写真が翌日に回る。
 func TestNewAssumesLocalWhenTheEXIFDateHasNoOffset(t *testing.T) {
+	// time.Local はプロセス全体で1つしかない。書き換えるテストが並列に走ると、
+	// 同時に走っている他のテストの時刻解釈まで巻き添えで変わる。実際 -race が
+	// 競合として検出する。このテストは t.Parallel() を呼ばない。
 	// TZ=UTC の環境ではローカル解釈とUTC解釈が同じになり、この回帰を
 	// 検出できなくなる。テスト中だけ固定オフセットに差し替える。
 	orig := time.Local
@@ -46,6 +50,9 @@ func TestNewAssumesLocalWhenTheEXIFDateHasNoOffset(t *testing.T) {
 // 時刻として読み直すと、旅行先で撮った写真の時刻を自宅の時差で上書きして
 // しまう。ローカルとみなして組み直してよいのは、時差が分からない写真だけ。
 func TestNewKeepsTheEXIFOffsetWhenPresent(t *testing.T) {
+	// time.Local はプロセス全体で1つしかない。書き換えるテストが並列に走ると、
+	// 同時に走っている他のテストの時刻解釈まで巻き添えで変わる。実際 -race が
+	// 競合として検出する。このテストは t.Parallel() を呼ばない。
 	orig := time.Local
 	time.Local = time.FixedZone("JST", 9*60*60)
 	t.Cleanup(func() { time.Local = orig })
@@ -62,6 +69,7 @@ func TestNewKeepsTheEXIFOffsetWhenPresent(t *testing.T) {
 }
 
 func TestNewFallsBackToModTimeWithoutAnEXIFDate(t *testing.T) {
+	t.Parallel()
 	p := newWithEXIFDate(time.Time{})
 
 	require.True(t, p.TakenAt().Equal(testModTime), "撮影日時が取れない写真も一覧から落とさない")

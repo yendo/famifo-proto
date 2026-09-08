@@ -9,6 +9,7 @@ import (
 )
 
 func TestStaticAssetsAreServed(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	tests := map[string]string{
 		"/static/app.css": "text/css",
@@ -26,6 +27,7 @@ func TestStaticAssetsAreServed(t *testing.T) {
 }
 
 func TestAppJSImplementsVirtualScroll(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 
 	body := doGet(t, f.h, "/static/app.js").Body.String()
@@ -45,6 +47,7 @@ func TestAppJSImplementsVirtualScroll(t *testing.T) {
 }
 
 func TestAppCSSDefinesDayCards(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 
 	body := doGet(t, f.h, "/static/app.css").Body.String()
@@ -56,6 +59,7 @@ func TestAppCSSDefinesDayCards(t *testing.T) {
 }
 
 func TestAppJSLightboxUsesGlobalIndex(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 
 	body := doGet(t, f.h, "/static/app.js").Body.String()
@@ -71,6 +75,7 @@ func TestAppJSLightboxUsesGlobalIndex(t *testing.T) {
 }
 
 func TestAppJSImplementsScrubber(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 
 	body := doGet(t, f.h, "/static/app.js").Body.String()
@@ -85,6 +90,7 @@ func TestAppJSImplementsScrubber(t *testing.T) {
 }
 
 func TestAppCSSIsResponsive(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 
 	body := doGet(t, f.h, "/static/app.css").Body.String()
@@ -101,6 +107,7 @@ func TestAppCSSIsResponsive(t *testing.T) {
 // 片方だけに breakpoint を足すと、測る列数と描く列数が食い違う。どちらの
 // 要素も単体では辻褄が合っているため、何も落ちないまま全部ずれる。
 func TestGridTracksAreSharedByWindowAndProbe(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 
 	body := doGet(t, f.h, "/static/app.css").Body.String()
@@ -121,6 +128,7 @@ func TestGridTracksAreSharedByWindowAndProbe(t *testing.T) {
 }
 
 func TestAppJSRestoresPositionByPhotoIndex(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 
 	body := doGet(t, f.h, "/static/app.js").Body.String()

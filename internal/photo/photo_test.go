@@ -10,6 +10,7 @@ import (
 )
 
 func TestIDForIsStableAndDistinct(t *testing.T) {
+	t.Parallel()
 	a := photo.IDFor("/photos/a.jpg")
 
 	require.Len(t, a, 32)
@@ -29,6 +30,7 @@ func (f fakeFileInfo) ModTime() time.Time { return f.modTime }
 var testModTime = time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
 
 func TestNewFillsTheFieldsFromThePathAndFileInfo(t *testing.T) {
+	t.Parallel()
 	const path = "/photos/A.JPG"
 
 	p := photo.New(path, fakeFileInfo{modTime: testModTime}, time.Time{})

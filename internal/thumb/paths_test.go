@@ -61,6 +61,7 @@ func writeFileAt(t *testing.T, path, body string) {
 }
 
 func TestSmallPathPrefersTheBorrowedThumb(t *testing.T) {
+	t.Parallel()
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.jpg")
 	own := f.generated(t, p)
@@ -76,6 +77,7 @@ func TestSmallPathPrefersTheBorrowedThumb(t *testing.T) {
 }
 
 func TestSmallPathUsesTheGeneratedThumbWhenNothingToBorrow(t *testing.T) {
+	t.Parallel()
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.jpg")
 	own := f.generated(t, p)
@@ -89,6 +91,7 @@ func TestSmallPathUsesTheGeneratedThumbWhenNothingToBorrow(t *testing.T) {
 
 // ブラウザが表示できる形式なら、サムネイルが無くても原本を出せばタイルになる。
 func TestSmallPathFallsBackToTheOriginal(t *testing.T) {
+	t.Parallel()
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.jpg")
 
@@ -102,6 +105,7 @@ func TestSmallPathFallsBackToTheOriginal(t *testing.T) {
 // HEICはブラウザが表示できないので、原本を出しても割れたタイルになるだけである。
 // 出せるものが無いことを伝えて、配信側にプレースホルダを出させる。
 func TestSmallPathHasNothingToShowForAnUnborrowedHEIC(t *testing.T) {
+	t.Parallel()
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.heic")
 
@@ -115,6 +119,7 @@ func TestSmallPathHasNothingToShowForAnUnborrowedHEIC(t *testing.T) {
 // 取り込みのあとでDSMがサムネイルを作った場合。出どころをDBに焼いていたころは、
 // 原本のmtimeが動かない限り再取り込みされないため、永久に反映されなかった。
 func TestSmallPathSeesAThumbThatAppearsAfterIndexing(t *testing.T) {
+	t.Parallel()
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.heic")
 	_, _, ok := f.pv.SmallPath(p)
@@ -130,6 +135,7 @@ func TestSmallPathSeesAThumbThatAppearsAfterIndexing(t *testing.T) {
 
 // 名前に版が入っているので、別の版のサムネイルは引き当たらない。
 func TestSmallPathIgnoresAThumbFromAnotherVersion(t *testing.T) {
+	t.Parallel()
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.jpg")
 	stale := photo.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour))
@@ -143,6 +149,7 @@ func TestSmallPathIgnoresAThumbFromAnotherVersion(t *testing.T) {
 
 // 1ディレクトリにファイルが集中しないよう、IDの先頭2文字で分割する。
 func TestGeneratedPathShardsByTheFirstTwoCharsOfTheID(t *testing.T) {
+	t.Parallel()
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.jpg")
 
@@ -155,6 +162,7 @@ func TestGeneratedPathShardsByTheFirstTwoCharsOfTheID(t *testing.T) {
 // 名前に元画像の版が入るので、写真が差し替われば別のファイルを指す。
 // 鮮度を「サムネイルのほうが新しいか」で測らずに済ませるための土台。
 func TestGeneratedPathVariesWithTheSourceVersion(t *testing.T) {
+	t.Parallel()
 	f := newPathFixture(t)
 	p := f.addPhoto(t, "a.jpg")
 	older := photo.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour))
@@ -168,6 +176,7 @@ func TestGeneratedPathVariesWithTheSourceVersion(t *testing.T) {
 
 // XLに差し替えるのは「自前でデコードできない形式で、かつ借りられる」ときだけ。
 func TestLargePathSwapsInTheXLOnlyForBorrowedOpaquePhotos(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		file     string

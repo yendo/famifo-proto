@@ -30,6 +30,7 @@ func photoAt(path string, takenAt time.Time) photo.Photo {
 // store.Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
 // 他のテストは t.TempDir() を直接使うため、この経路をどれも通らない。
 func TestOpenCreatesTheDirectory(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "famifo-data")
 
 	s, err := store.Open(filepath.Join(dir, "famifo.db"))
@@ -40,6 +41,7 @@ func TestOpenCreatesTheDirectory(t *testing.T) {
 }
 
 func TestOpenEnablesWAL(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "test.db")
 	s, err := store.Open(path)
 	require.NoError(t, err)
@@ -57,6 +59,7 @@ func TestOpenEnablesWAL(t *testing.T) {
 }
 
 func TestUpsertThenGetByID(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
 	want := photoAt("/photos/a.jpg", time.Unix(1600000000, 0))
@@ -71,6 +74,7 @@ func TestUpsertThenGetByID(t *testing.T) {
 }
 
 func TestUpsertReplacesExistingRow(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
 	p := photoAt("/photos/a.jpg", time.Unix(1600000000, 0))
@@ -89,6 +93,7 @@ func TestUpsertReplacesExistingRow(t *testing.T) {
 }
 
 func TestGetByIDMissingReturnsErrNotFound(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 
 	_, err := s.GetByID(context.Background(), "deadbeef")
@@ -97,6 +102,7 @@ func TestGetByIDMissingReturnsErrNotFound(t *testing.T) {
 }
 
 func TestDeleteByPath(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
 	p := photoAt("/photos/a.jpg", time.Unix(1600000000, 0))
@@ -113,6 +119,7 @@ func TestDeleteByPath(t *testing.T) {
 }
 
 func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
 	a := photoAt("/p/album/a.jpg", time.Unix(1600000000, 0))
@@ -134,6 +141,7 @@ func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
 // LIKEのワイルドカードは、パスに現れると兄弟を巻き込む。範囲比較へ
 // 置き換えたあとも同じ性質が要るので、置き換えの前後で緑であることを見る。
 func TestDeleteByPathPrefixTreatsWildcardsAsLiterals(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		prefix string
@@ -162,6 +170,7 @@ func TestDeleteByPathPrefixTreatsWildcardsAsLiterals(t *testing.T) {
 }
 
 func TestAllPaths(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
 	p := photo.Restore("/photos/a.jpg",
@@ -175,6 +184,7 @@ func TestAllPaths(t *testing.T) {
 }
 
 func TestListRangeReturnsRequestedWindow(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
 	// 新しい順に e, d, c, b, a になるよう投入する
@@ -191,6 +201,7 @@ func TestListRangeReturnsRequestedWindow(t *testing.T) {
 }
 
 func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
 	same := time.Unix(1600000000, 0)
@@ -221,6 +232,7 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 }
 
 func TestListRangeHandlesBoundaries(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
 	for i, name := range []string{"a", "b", "c"} {
@@ -241,6 +253,7 @@ func TestListRangeHandlesBoundaries(t *testing.T) {
 }
 
 func TestListRangeRejectsNegativeArguments(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 
 	_, err := s.ListRange(context.Background(), -1, 10)
@@ -251,6 +264,7 @@ func TestListRangeRejectsNegativeArguments(t *testing.T) {
 }
 
 func TestDayGroupsCountsEachDay(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
 	// 新しい順に: 2022-12-05 が2枚、2022-12-01 が1枚、2021-05-20 が2枚
@@ -276,6 +290,9 @@ func TestDayGroupsCountsEachDay(t *testing.T) {
 }
 
 func TestDayGroupsUsesLocalTime(t *testing.T) {
+	// time.Local はプロセス全体で1つしかない。書き換えるテストが並列に走ると、
+	// 同時に走っている他のテストの時刻解釈まで巻き添えで変わる。実際 -race が
+	// 競合として検出する。このテストは t.Parallel() を呼ばない。
 	s := openTestStore(t)
 	ctx := context.Background()
 	// TZ=UTC の環境ではローカル集計とUTC集計が同じ結果になり、
@@ -297,6 +314,7 @@ func TestDayGroupsUsesLocalTime(t *testing.T) {
 }
 
 func TestDayGroupsEmptyStore(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 
 	got, err := s.DayGroups(context.Background())
@@ -307,6 +325,7 @@ func TestDayGroupsEmptyStore(t *testing.T) {
 
 // 表と実際の並びがズレると一覧全体が崩れるため、両者の整合を直接押さえる。
 func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
+	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
 	base := time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local)
@@ -350,6 +369,7 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 // 素通りし、最初の読み取りではじめて落ちる。配信を始めてから気づくのでは遅いので
 // Open で弾く。
 func TestOpenRejectsADatabaseWhoseColumnsHaveChanged(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "stale.db")
 
 	db, err := sql.Open("sqlite", path)

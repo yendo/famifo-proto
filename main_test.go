@@ -27,6 +27,7 @@ import (
 // テストでは実挙動を確認できない。ここでは import が消えていないことだけを
 // 保証する。実挙動の確認は scratch コンテナで行う（README参照）。
 func TestEmbedsTimezoneDatabase(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, parser.ImportsOnly)
 	require.NoError(t, err)
@@ -47,6 +48,7 @@ func TestEmbedsTimezoneDatabase(t *testing.T) {
 // Location の名前だけでは足りない。/etc/localtime を読んだだけの環境では
 // 名前が "Local" になり、JSTなのかUTCなのか読み取れない（実測で確認）。
 func TestStartupTimezoneDistinguishesZonesWithTheSameName(t *testing.T) {
+	t.Parallel()
 	jst := time.Date(2026, 8, 26, 12, 0, 0, 0, time.FixedZone("Local", 9*60*60))
 	utc := time.Date(2026, 8, 26, 12, 0, 0, 0, time.FixedZone("Local", 0))
 
@@ -56,6 +58,7 @@ func TestStartupTimezoneDistinguishesZonesWithTheSameName(t *testing.T) {
 }
 
 func TestParseArgsUsesDefaults(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	got, _, err := parseArgs([]string{"-dir", dir}, io.Discard)
@@ -71,6 +74,7 @@ func TestParseArgsUsesDefaults(t *testing.T) {
 }
 
 func TestParseArgsOverridesEveryFlag(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	got, _, err := parseArgs([]string{
@@ -86,6 +90,7 @@ func TestParseArgsOverridesEveryFlag(t *testing.T) {
 }
 
 func TestParseArgsSplitsDirOnTheListSeparator(t *testing.T) {
+	t.Parallel()
 	a, b := t.TempDir(), t.TempDir()
 
 	got, _, err := parseArgs([]string{"-dir", a + string(filepath.ListSeparator) + b}, io.Discard)
@@ -97,6 +102,7 @@ func TestParseArgsSplitsDirOnTheListSeparator(t *testing.T) {
 // -version はバージョンを表示して終わるだけなので、-dir を要求しない。
 // 設定の検証まで進むと「-dir は必須です」で落ちてしまう。
 func TestParseArgsVersionShortCircuitsValidation(t *testing.T) {
+	t.Parallel()
 	_, showVersion, err := parseArgs([]string{"-version"}, io.Discard)
 
 	require.NoError(t, err)
@@ -105,6 +111,7 @@ func TestParseArgsVersionShortCircuitsValidation(t *testing.T) {
 
 // ':' を含むパスを渡すと分割で壊れる。なぜそうなったか読めるエラーにする。
 func TestParseArgsExplainsHowDirWasSplit(t *testing.T) {
+	t.Parallel()
 	_, _, err := parseArgs([]string{"-dir", "/no/such/2024:05:24"}, io.Discard)
 
 	require.Error(t, err)
@@ -117,6 +124,7 @@ func TestParseArgsExplainsHowDirWasSplit(t *testing.T) {
 // つまり起動して応答し、合図で止まることだけにする。写真ディレクトリを空に
 // してあるのはそのため。取り込むものが無くても配信は始まる。
 func TestRunServesUntilContextIsCancelled(t *testing.T) {
+	t.Parallel()
 	args := runArgs(t, freeAddr(t))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -140,6 +148,7 @@ func TestRunServesUntilContextIsCancelled(t *testing.T) {
 // たどり着けない。ctxをキャンセルしていないのに戻ること、その戻り値が
 // エラーであることを確かめる。
 func TestRunReportsListenFailure(t *testing.T) {
+	t.Parallel()
 	busy, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer busy.Close()
@@ -162,6 +171,7 @@ func TestRunReportsListenFailure(t *testing.T) {
 // -dir を渡していないのに成功する。-version が設定の検証まで進まないことと、
 // バージョンが標準出力に出ることの両方をここで押さえる。
 func TestRunVersionPrintsToStdout(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 
 	err := run(context.Background(), []string{"-version"}, &stdout, io.Discard)
@@ -172,6 +182,7 @@ func TestRunVersionPrintsToStdout(t *testing.T) {
 }
 
 func TestRunRejectsInvalidArgs(t *testing.T) {
+	t.Parallel()
 	err := run(context.Background(), nil, io.Discard, io.Discard)
 
 	require.Error(t, err, "-dir が無ければ起動しない")
