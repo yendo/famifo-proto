@@ -82,6 +82,7 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 }
 
 func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
 
@@ -97,6 +98,7 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 // サムネイル生成まで届いていることを確かめる。読み取り(internal/index/exif)と
 // 適用(internal/thumb)は別パッケージなので、繋ぎ違えても双方のテストは通る。
 func TestIndexFileAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	// 縮小されない小ささにして、向きの適用が寸法にそのまま出るようにする。
 	path := writeJPEGWithOrientation(t, f.root, "a.jpg", 16, 8, 6)
@@ -109,6 +111,7 @@ func TestIndexFileAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
 }
 
 func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	// HEICはデコードしない方針なので、中身が画像でなくても登録される
 	path := filepath.Join(f.root, "a.heic")
@@ -123,6 +126,7 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 }
 
 func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.root, "a.mp4")
 	require.NoError(t, os.WriteFile(path, []byte("video"), 0o644))
@@ -135,6 +139,7 @@ func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
 }
 
 func TestIndexFileIgnoresDirectories(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	dir := filepath.Join(f.root, "sub.jpg") // 拡張子付きディレクトリという嫌がらせ
 	require.NoError(t, os.MkdirAll(dir, 0o755))
@@ -147,6 +152,7 @@ func TestIndexFileIgnoresDirectories(t *testing.T) {
 }
 
 func TestIndexFileRejectsBrokenRasterImage(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.root, "broken.jpg")
 	require.NoError(t, os.WriteFile(path, []byte("not an image"), 0o644))
@@ -160,6 +166,7 @@ func TestIndexFileRejectsBrokenRasterImage(t *testing.T) {
 }
 
 func TestRemoveFileDeletesRowAndThumb(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
@@ -176,6 +183,7 @@ func TestRemoveFileDeletesRowAndThumb(t *testing.T) {
 }
 
 func TestRemoveFileIsQuietForUnknownPath(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 
 	require.NoError(t, f.ix.RemoveFile(context.Background(), filepath.Join(f.root, "never.jpg")))
@@ -190,6 +198,7 @@ func writeSynoThumb(t *testing.T, srcPath string) string {
 }
 
 func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
 	writeSynoThumb(t, path)
@@ -205,6 +214,7 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 
 // HEICはGoでデコードできないが、Synologyのサムネイルがあれば一覧に出せる。
 func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.root, "a.heic")
 	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
@@ -222,6 +232,7 @@ func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 // DSM 7.3 がHEICのデコードに失敗すると .fail だけが残る。famifoも作れないので
 // サムネイル無しのまま原本を配信する。.fail を置き換えるのはfamifoの仕事ではない。
 func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.root, "a.heic")
 	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
@@ -240,6 +251,7 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 
 // famifoはSynology Photosの領域に書き込まない。消しもしない。
 func TestRemoveFileKeepsTheSynologyThumbnail(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)

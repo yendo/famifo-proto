@@ -13,6 +13,7 @@ import (
 )
 
 func TestScanIndexesNestedPhotos(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	writeTestJPEG(t, filepath.Join(f.root, "2020"), "b.jpg", 40, 20)
@@ -28,6 +29,7 @@ func TestScanIndexesNestedPhotos(t *testing.T) {
 }
 
 func TestScanIgnoresNonPhotos(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	require.NoError(t, os.WriteFile(filepath.Join(f.root, "notes.txt"), []byte("x"), 0o644))
@@ -41,6 +43,7 @@ func TestScanIgnoresNonPhotos(t *testing.T) {
 }
 
 func TestScanSkipsBrokenFilesAndContinues(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "good1.jpg", 40, 20)
 	require.NoError(t, os.WriteFile(filepath.Join(f.root, "broken.jpg"), []byte("nope"), 0o644))
@@ -54,6 +57,7 @@ func TestScanSkipsBrokenFilesAndContinues(t *testing.T) {
 }
 
 func TestScanSkipsUnchangedFiles(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
@@ -69,6 +73,7 @@ func TestScanSkipsUnchangedFiles(t *testing.T) {
 }
 
 func TestScanReindexesModifiedFiles(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
@@ -88,6 +93,7 @@ func TestScanReindexesModifiedFiles(t *testing.T) {
 }
 
 func TestScanRemovesDeletedPhotos(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
@@ -111,6 +117,7 @@ func TestScanRemovesDeletedPhotos(t *testing.T) {
 }
 
 func TestScanStopsOnCancelledContext(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -122,6 +129,7 @@ func TestScanStopsOnCancelledContext(t *testing.T) {
 }
 
 func TestScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
 	pathA := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
@@ -152,6 +160,7 @@ func TestScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 }
 
 func TestScanIndexesEveryRoot(t *testing.T) {
+	t.Parallel()
 	f, roots := newFixtureRoots(t, "alice", "bob")
 	ctx := context.Background()
 	writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
@@ -172,6 +181,7 @@ func TestScanIndexesEveryRoot(t *testing.T) {
 // 発動せず、空に見えたルートの写真が消える。復旧には数時間の再インデックスが
 // 要るので、ルート単位で判定する。
 func TestScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
+	t.Parallel()
 	f, roots := newFixtureRoots(t, "alice", "bob")
 	ctx := context.Background()
 	gone := writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
@@ -198,6 +208,7 @@ func TestScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
 // 引数からルートが外れたら、その配下の写真はインデックスから消す。
 // インデックスは「いま指定されているもの」に従う。
 func TestScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
+	t.Parallel()
 	f, roots := newFixtureRoots(t, "alice", "bob")
 	ctx := context.Background()
 	writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
@@ -222,6 +233,7 @@ func TestScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 // 飛ばして他のルートの処理を続ける。1つの外付けドライブが外れただけで
 // 走査全体が止まると、生きているルートの更新まで反映されなくなる。
 func TestScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
+	t.Parallel()
 	f, roots := newFixtureRoots(t, "alice", "bob")
 	ctx := context.Background()
 	writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
@@ -246,6 +258,7 @@ func TestScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
 }
 
 func TestScanSkipsSynologyMetadataDirs(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "IMG_0001.jpg", 40, 20)
 	// Synologyは写真1枚につき @eaDir/<ファイル名>/SYNOPHOTO_THUMB_*.jpg を作る。
@@ -274,6 +287,7 @@ func TestScanSkipsSynologyMetadataDirs(t *testing.T) {
 // 待たずに走査を終えると Indexed が実際より少なくなり、Stats の更新の競合は
 // -race で現れる。1枚ずつでは同時に走る窓が開かないので、まとまった枚数を置く。
 func TestScanIndexesEveryPhotoWithConcurrentWorkers(t *testing.T) {
+	t.Parallel()
 	f := newFixtureWorkers(t, 8)
 	const n = 64
 	for i := range n {
@@ -293,6 +307,7 @@ func TestScanIndexesEveryPhotoWithConcurrentWorkers(t *testing.T) {
 // ワーカー数1でも走査は成立する。並行化の面倒を避けたい環境のための逃げ道であり、
 // ここが壊れると設定で回避する手段が無くなる。
 func TestScanWorksWithASingleWorker(t *testing.T) {
+	t.Parallel()
 	f := newFixtureWorkers(t, 1)
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
@@ -304,6 +319,7 @@ func TestScanWorksWithASingleWorker(t *testing.T) {
 }
 
 func TestScanDoesNotWaitForTheWatchersIndexing(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 
 	// 監視を張る前に置くのでCreateのイベントは飛ばない。この1枚はスキャンだけが拾う。
@@ -343,6 +359,7 @@ func TestScanDoesNotWaitForTheWatchersIndexing(t *testing.T) {
 }
 
 func TestRunScansKeepsReconcilingOnItsInterval(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 
@@ -359,12 +376,13 @@ func TestRunScansKeepsReconcilingOnItsInterval(t *testing.T) {
 
 	requireCount(t, f, 1)
 
-	// 監視は張っていないので、この1枚を拾えるのは定期スキャンだけである。
+	// 監視は張っていないので、この1枚を拾えるのはスキャンのループだけである。
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
 	requireCount(t, f, 2)
 }
 
-func TestGhostRowFromAScanIsReclaimedByTheEarlyScan(t *testing.T) {
+func TestGhostRowFromAScanIsReclaimedByTheNextScan(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	// ルートを空にしない。1枚も見つからないルートの配下は purge が見送るため。
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
@@ -397,8 +415,9 @@ func TestGhostRowFromAScanIsReclaimedByTheEarlyScan(t *testing.T) {
 	<-scanDone
 	requireCount(t, f, 2) // b.jpg と、存在しない album/a.heic の幽霊行
 
-	// スキャンのループを始める。定期実行は1時間後なので、削除の時点で積まれた
-	// 前倒しの要求が効かなければ幽霊行は残り続ける。
+	// スキャンのループを始める。1回目は起動直後に走るので、幽霊行はそこで
+	// 回収される。要求による前倒しそのものは
+	// TestRunScansIsBroughtForwardByARequest で見る。
 	loopDone := make(chan struct{})
 	go func() {
 		defer close(loopDone)
@@ -407,4 +426,32 @@ func TestGhostRowFromAScanIsReclaimedByTheEarlyScan(t *testing.T) {
 	t.Cleanup(func() { cancel(); <-loopDone })
 
 	requireCount(t, f, 1)
+}
+
+// kicks はスキャンを前倒しする要求である。interval を1時間にしてあるので、
+// 時間で回るのを待っていては2枚目を拾えない。要求が効いていることだけを見る。
+func TestRunScansIsBroughtForwardByARequest(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+
+	kicks := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.ix.RunScans(ctx, time.Hour, kicks)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	requireCount(t, f, 1) // 起動直後の1回目
+
+	// 監視は張っていないので、この1枚を拾えるのは前倒しされたスキャンだけである。
+	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
+	kicks <- struct{}{}
+
+	requireCount(t, f, 2)
 }

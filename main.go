@@ -103,21 +103,27 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 }
 
 func main() {
-	if err := run(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+// run は起動から停止までを担う。プロセスに属するもの（シグナル、コマンドライン
+// 引数、標準出力）は main から引数で受け取り、run 自身は os を直接読まない。
+// テストから引数と出力を差し替えて呼べるようにするためである。
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	log := slog.New(slog.NewTextHandler(stderr, nil))
 
-	cfg, showVersion, err := parseArgs(os.Args[1:], os.Stderr)
+	cfg, showVersion, err := parseArgs(args, stderr)
 	if err != nil {
 		return err
 	}
 	if showVersion {
-		fmt.Println("famifo-proto", versionString())
+		fmt.Fprintln(stdout, "famifo-proto", versionString())
 		return nil
 	}
 	// 常駐プロセスなので、どのビルドが動いているかはログでしか確認できない。
@@ -145,21 +151,23 @@ func run() error {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	// シグナルの捕捉は main の役目。ここでは渡された ctx から cancel を派生させ、
+	// HTTPの失敗や終了処理から取り込みを止められるようにする。
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	// スキャンの完了を待たずに配信を始める。大量の写真でも、
 	// インデックスができた分から順に見られるほうがよい。
-	// serveErrは1要素バッファ: ListenAndServeの失敗をrunの戻り値まで伝え、
+	// listenErrChは1要素バッファ: ListenAndServeの失敗をrunの戻り値まで伝え、
 	// プロセスが異常終了時に0で終了しないようにする。
-	serveErr := make(chan error, 1)
+	listenErrCh := make(chan error, 1)
 	httpSrv := &http.Server{Addr: cfg.Addr, Handler: srv.Handler()}
 	go func() {
 		log.Info("HTTPサーバーを開始", "addr", cfg.Addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("HTTPサーバーが停止しました", "err", err)
-			serveErr <- err
-			stop()
+			listenErrCh <- err
+			cancel()
 		}
 	}()
 
@@ -181,7 +189,7 @@ func run() error {
 	// defer の順序で st.Close() より先に走る。
 	var indexers sync.WaitGroup
 	defer func() {
-		stop() // 監視と定期スキャンに終わるよう伝える
+		cancel() // 監視とスキャンに終わるよう伝える
 		indexers.Wait()
 	}()
 
@@ -193,41 +201,31 @@ func run() error {
 		}
 	}()
 
-	// fsnotifyは停止中の変更を検知できないので、起動のたびに実態と突き合わせる。
-	// 1回目はここで同期に走らせる。失敗したら起動を止めるためである。
-	log.Info("スキャンを開始", "dirs", cfg.PhotoDirs)
-	// 所要時間も出す。取り込みの重さを変える変更をしたとき、前後を突き合わせられる
-	// 記録がログにしか残らないため。
-	scanStart := time.Now()
-	stats, err := ix.Scan(ctx)
-	if err != nil && ctx.Err() == nil {
-		return err
-	}
-	if ctx.Err() == nil {
-		log.Info("スキャンが完了",
-			"elapsed", time.Since(scanStart).Round(time.Millisecond),
-			"indexed", stats.Indexed, "unchanged", stats.Unchanged,
-			"removed", stats.Removed, "skipped", stats.Skipped)
+	// スキャンは間隔をおいて繰り返す。1回目は起動直後に走り、止まっていた間の
+	// 変更を取り戻す。2回目以降は監視の取りこぼしを回復する。
+	indexers.Add(1)
+	go func() {
+		defer indexers.Done()
+		ix.RunScans(ctx, cfg.ScanInterval, watcher.ScanRequests())
+	}()
 
-		// 2回目以降は間隔をおいて繰り返す。監視の取りこぼしはこれで回復する。
-		indexers.Add(1)
-		go func() {
-			defer indexers.Done()
-			ix.RunScans(ctx, cfg.ScanInterval, watcher.ScanRequests())
-		}()
-		log.Info("定期スキャンを開始", "interval", cfg.ScanInterval)
-	}
-
-	// ListenAndServeの失敗はstop()経由でctx.Done()も閉じるため、どちらが
+	// ListenAndServeの失敗はcancel()経由でctx.Done()も閉じるため、どちらが
 	// 先に見えるかは決まらない。両方をselectで待ち、失敗はrunの戻り値まで伝える。
 	var listenErr error
 	select {
 	case <-ctx.Done():
-	case err := <-serveErr:
+	case err := <-listenErrCh:
 		listenErr = err
 	}
 	log.Info("シャットダウンします")
 
+	return shutdownHTTP(httpSrv, listenErrCh, listenErr)
+}
+
+// shutdownHTTP は待ち受けを猶予付きで止め、待ち受けの失敗と停止の失敗を
+// 1つのエラーにまとめる。listenErrは停止を待つ前に受け取っていた失敗で、
+// 受け取っていなければnilが渡る。
+func shutdownHTTP(httpSrv *http.Server, listenErrCh <-chan error, listenErr error) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	shutErr := httpSrv.Shutdown(shutCtx)
@@ -235,7 +233,7 @@ func run() error {
 	if listenErr == nil {
 		// ctx.Done()側が先に選ばれていた場合に備えて、取りこぼしが無いか確認する。
 		select {
-		case err := <-serveErr:
+		case err := <-listenErrCh:
 			listenErr = err
 		default:
 		}

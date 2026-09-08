@@ -19,8 +19,8 @@ import (
 // 待ち時間。コピー途中のファイルをデコードしに行かないための猶予。
 const defaultDebounce = 2 * time.Second
 
-// result は終わった取り込み1件。ワーカーから監視ループへ返す。
-type result struct {
+// indexResult は終わった取り込み1件。ワーカーから監視ループへ返す。
+type indexResult struct {
 	path string
 	err  error
 }
@@ -43,18 +43,18 @@ type Watcher struct {
 	fsw      *fsnotify.Watcher
 	log      *slog.Logger
 	debounce time.Duration
-	// done は取り込みの完了通知。ワーカーは通知を渡し終えるまで持ち場を空けない
+	// results は終わった取り込みの受け口。ワーカーは通知を渡し終えるまで持ち場を空けない
 	// ので、渡し待ちがワーカー数を超えることはない。容量をそれに合わせておけば
 	// ワーカーがここで止まらず、停止時に完了を待つ側と睨み合うこともない。
-	done chan result
+	results chan indexResult
 	// inflight は取り込み中のパスと、その最中に消えたかどうか。同じ写真を2つの
 	// ワーカーに渡さないためと、取り込みの完了と削除がすれ違うのを防ぐためにある。
 	inflight map[string]bool
 	// jobs は監視が出した取り込みの集まり。スキャンが同時に走るため、
 	// 停止時に待つ相手を自分が出したぶんに限る。
 	jobs *jobs
-	// kick はスキャンの前倒しの要求。容量1で、連続した要求は1回にまとまる。
-	kick chan struct{}
+	// kicks はスキャンの前倒しの要求。容量1で、連続した要求は1回にまとまる。
+	kicks chan struct{}
 }
 
 // NewWatcher はWatcherを作り、ルート以下を監視対象に加える。
@@ -72,10 +72,10 @@ func NewWatcher(ix *Indexer, log *slog.Logger) (*Watcher, error) {
 		fsw:      fsw,
 		log:      log,
 		debounce: defaultDebounce,
-		done:     make(chan result, ix.workers),
+		results:  make(chan indexResult, ix.workers),
 		inflight: make(map[string]bool),
 		jobs:     ix.executor.newJobs(),
-		kick:     make(chan struct{}, 1),
+		kicks:    make(chan struct{}, 1),
 	}
 	if err := w.addRoots(); err != nil {
 		fsw.Close()
@@ -92,13 +92,13 @@ func (w *Watcher) Close() error { return w.fsw.Close() }
 // この積み置きが要る。取り込み中の写真が消えたことは削除のイベントで分かるが、
 // 消し損ねの行が生まれるのはワーカーが Upsert したときである。要求を積んで
 // おけば、走っているスキャンが終わったあとの1回で回収できる。
-func (w *Watcher) ScanRequests() <-chan struct{} { return w.kick }
+func (w *Watcher) ScanRequests() <-chan struct{} { return w.kicks }
 
 // requestScan はスキャンの前倒しを要求する。
 // 既に積まれていれば捨てる。受け手が居なくてもここで詰まらない。
 func (w *Watcher) requestScan() {
 	select {
-	case w.kick <- struct{}{}:
+	case w.kicks <- struct{}{}:
 	default:
 	}
 }
@@ -122,7 +122,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			w.handle(ctx, ev, pending)
+			w.handleEvent(ctx, ev, pending)
 
 		case err, ok := <-w.fsw.Errors:
 			if !ok {
@@ -136,7 +136,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				w.requestScan()
 			}
 
-		case r := <-w.done:
+		case r := <-w.results:
 			removed := w.inflight[r.path]
 			delete(w.inflight, r.path)
 			if removed {
@@ -158,8 +158,8 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 }
 
-// handle は1つのfsnotifyイベントを処理する。
-func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[string]time.Time) {
+// handleEvent は1つのfsnotifyイベントを処理する。
+func (w *Watcher) handleEvent(ctx context.Context, ev fsnotify.Event, pending map[string]time.Time) {
 	if synology.InManagedDir(ev.Name) {
 		return
 	}
@@ -178,7 +178,7 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 		// 控えてあるのは配下の個々のパスなので前方一致で拾う。
 		// inflight はワーカー数を超えないので、毎回回しても高が知れている。
 		for p := range w.inflight {
-			if under(ev.Name, p) {
+			if isUnder(ev.Name, p) {
 				w.inflight[p] = true
 			}
 		}
@@ -224,7 +224,7 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event, pending map[str
 }
 
 // flush はdebounce時間が経過した保留中のファイルをワーカーに渡す。
-// 取り込みの完了は待たず、結果は w.done で受ける。
+// 取り込みの完了は待たず、結果は w.results で受ける。
 func (w *Watcher) flush(ctx context.Context, pending map[string]time.Time, now time.Time) {
 	for path, last := range pending {
 		if now.Sub(last) < w.debounce {
@@ -235,7 +235,7 @@ func (w *Watcher) flush(ctx context.Context, pending map[string]time.Time, now t
 			continue
 		}
 		if !w.jobs.trySubmit(ctx, path, func(err error) {
-			w.done <- result{path: path, err: err}
+			w.results <- indexResult{path: path, err: err}
 		}) {
 			// ワーカーが全部埋まっている。残りは保留のままにして次のtickで渡す。
 			// ここで空くのを待つと、その間イベントを読めなくなる。

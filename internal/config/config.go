@@ -81,19 +81,19 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// dirContains はabsパスに変換したうえで、dataがphoto自身か、その配下にあるかを判定する。
+// dirContains はabsパスに変換したうえで、innerがouter自身か、その配下にあるかを判定する。
 // filepath.Relを使うのは文字列プレフィックス比較を避けるため
 // （例えば "/photos-data" は "/photos" の中ではない）。
-func dirContains(photoDir, dataDir string) (bool, error) {
-	absPhoto, err := filepath.Abs(photoDir)
+func dirContains(outer, inner string) (bool, error) {
+	absOuter, err := filepath.Abs(outer)
 	if err != nil {
 		return false, err
 	}
-	absData, err := filepath.Abs(dataDir)
+	absInner, err := filepath.Abs(inner)
 	if err != nil {
 		return false, err
 	}
-	rel, err := filepath.Rel(absPhoto, absData)
+	rel, err := filepath.Rel(absOuter, absInner)
 	if err != nil {
 		return false, err
 	}

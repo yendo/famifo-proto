@@ -11,6 +11,7 @@ import (
 )
 
 func TestValidateRejectsBadInput(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	file := filepath.Join(dir, "a.txt")
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
@@ -65,6 +66,7 @@ func TestValidateRejectsBadInput(t *testing.T) {
 }
 
 func TestValidateAcceptsSiblingDataDir(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	dir := filepath.Join(base, "photos")
 	data := filepath.Join(base, "photos-data")
@@ -78,6 +80,7 @@ func TestValidateAcceptsSiblingDataDir(t *testing.T) {
 }
 
 func TestDerivedPaths(t *testing.T) {
+	t.Parallel()
 	c := config.Config{DataDir: "/var/famifo"}
 
 	require.Equal(t, "/var/famifo/famifo.db", c.DBPath())
@@ -85,6 +88,7 @@ func TestDerivedPaths(t *testing.T) {
 }
 
 func TestValidateRejectsDuplicateRoots(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	c := config.Config{PhotoDirs: []string{dir, dir}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
@@ -94,6 +98,7 @@ func TestValidateRejectsDuplicateRoots(t *testing.T) {
 
 // 入れ子のルートは同じファイルを2回走査し、サムネイルを2回作る。
 func TestValidateRejectsNestedRoots(t *testing.T) {
+	t.Parallel()
 	outer := t.TempDir()
 	inner := filepath.Join(outer, "sub")
 	require.NoError(t, os.MkdirAll(inner, 0o755))
@@ -106,6 +111,7 @@ func TestValidateRejectsNestedRoots(t *testing.T) {
 // -data はどのルートの中にあってもいけない。中にあるとサムネイルを
 // 走査対象として拾い、それのサムネイルを作る、という自己増殖が起きる。
 func TestValidateRejectsDataInsideAnyRoot(t *testing.T) {
+	t.Parallel()
 	a, b := t.TempDir(), t.TempDir()
 
 	c := config.Config{

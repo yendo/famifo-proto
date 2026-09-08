@@ -98,7 +98,7 @@ func wellFormedXML(b []byte) error {
 	}
 }
 
-func do(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
+func doGet(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
@@ -106,29 +106,32 @@ func do(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder 
 }
 
 func TestServeThumb(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	rec := do(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "thumb-a.jpg", rec.Body.String())
 }
 
 func TestServeThumbNotFoundForUnknownID(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 
-	rec := do(t, f.h, "/thumb/deadbeef")
+	rec := doGet(t, f.h, "/thumb/deadbeef")
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 // サムネイルが無くても、ブラウザが表示できる形式なら原本がそのままタイルになる。
 func TestServeThumbFallsBackToTheOriginal(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), noThumb)
 
-	rec := do(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String())
@@ -139,10 +142,11 @@ func TestServeThumbFallsBackToTheOriginal(t *testing.T) {
 // 一覧のタイルは出どころによらず /thumb/ を指すので、404にすると穴が開く。
 // 代わりにプレースホルダを配る。
 func TestServeThumbServesAPlaceholderWhenNothingCanBeShown(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
-	rec := do(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "image/svg+xml", rec.Header().Get("Content-Type"))
@@ -157,24 +161,26 @@ func TestServeThumbServesAPlaceholderWhenNothingCanBeShown(t *testing.T) {
 // 取り込みのあとでDSMがサムネイルを作った場合。出どころをDBに焼いていたころは、
 // 再取り込みされない限り原本を配信し続けていた。
 func TestServeThumbPicksUpAThumbThatAppearsAfterIndexing(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 	require.Equal(t, "image/svg+xml",
-		do(t, f.h, "/thumb/"+p.ID()).Header().Get("Content-Type"), "この時点ではまだ何も無い")
+		doGet(t, f.h, "/thumb/"+p.ID()).Header().Get("Content-Type"), "この時点ではまだ何も無い")
 
 	writeFileAt(t, synology.ThumbMPath(p.Path()), "eadir-a.heic")
 
-	rec := do(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-a.heic", rec.Body.String(), "取り込み直さなくても切り替わる")
 }
 
 func TestServeOriginal(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	rec := do(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String())
@@ -182,10 +188,11 @@ func TestServeOriginal(t *testing.T) {
 }
 
 func TestServeOriginalSetsHEICContentType(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
-	rec := do(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.heic", rec.Body.String(),
@@ -195,14 +202,16 @@ func TestServeOriginalSetsHEICContentType(t *testing.T) {
 }
 
 func TestServeOriginalNotFoundForUnknownID(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 
-	rec := do(t, f.h, "/photo/deadbeef")
+	rec := doGet(t, f.h, "/photo/deadbeef")
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestUnindexedPathsAreNotReachable(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	// パスではなくIDでしか引けないため、traversalは構造的に成立しない
 	for _, target := range []string{
@@ -211,27 +220,29 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 		"/photo/" + photo.IDFor("/etc/passwd"),
 	} {
 		t.Run(target, func(t *testing.T) {
-			rec := do(t, f.h, target)
+			rec := doGet(t, f.h, target)
 			require.NotEqual(t, http.StatusOK, rec.Code)
 		})
 	}
 }
 
 func TestServeThumbFromEaDir(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := do(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-a.heic", rec.Body.String())
 }
 
 func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := do(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-xl-a.heic", rec.Body.String(),
@@ -241,10 +252,11 @@ func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 }
 
 func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
+	t.Parallel()
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := do(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/photo/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String(),

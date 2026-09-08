@@ -528,6 +528,16 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 }
 
 // --- Task: TestScrollPositionSurvivesReload ---
+//
+// 復元先を掛け算で求めると、ここが落ちる。かつては
+// Math.floor(topIndex / cols) * rowH で「何行目か」を出していたが、
+// 行の高さは日ごとに変わる（1枚の日も、行を占有する大きい日もある）ため
+// この式は成立しない。復元先は yForIndex で通し番号から引く。
+//
+// アンカーに貼り付け範囲の先頭（かつての pastedIndex / pasted.from）を
+// 使うのも同じ理由で駄目である。貼り付けは OVERSCAN のぶん可視範囲より
+// 手前から始まるので、先頭を復元先にすると数行ぶん上に着地する。実装が
+// 公開するのは範囲（pastedRange）であって先頭ではない。
 func TestScrollPositionSurvivesReload(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
@@ -1012,6 +1022,14 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 // 「srcが前回と変わったか」だけでは、2塊目以降で常に1枚ずれた写真を
 // 返す off-by-one を検出できない（実測でPASSした）。期待される並びと
 // 完全一致で突き合わせる。
+//
+// 現在位置の持ち方をDOMに戻すと、ここが落ちる。かつては表示中の写真を
+// タイル一覧から探して数えていた（tiles().indexOf や
+// parentElement.querySelectorAll による数え上げ）が、その方式は捨てた。
+// 仮想スクロールは可視範囲の外のタイルを捨てるので、送りが塊の境界を
+// 跨いだ時点で「一覧の中の位置」が意味を失う。日ごとのカードに入って
+// からは、親要素を数える方式も同様に成立しない。現在位置は通し番号で
+// 持ち、URLは urlAt で引く。
 func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
@@ -1078,7 +1096,103 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	}
 }
 
+// swipeActions は #lightbox の上を1本指でなぞるアクション列を返す。
+//
+// CDPの決まりで touchEnd は点を持てず、離した位置は直前の touchMove が
+// 持っていた座標から決まる。app.js は touchmove を購読していないが、
+// touchend で読む changedTouches の座標をここで決めるために3回に分けて送る。
+func swipeActions(fromX, fromY, toX, toY float64) []chromedp.Action {
+	at := func(x, y float64) []*input.TouchPoint {
+		return []*input.TouchPoint{{X: x, Y: y}}
+	}
+	return []chromedp.Action{
+		input.DispatchTouchEvent(input.TouchStart, at(fromX, fromY)),
+		input.DispatchTouchEvent(input.TouchMove, at(toX, toY)),
+		input.DispatchTouchEvent(input.TouchEnd, []*input.TouchPoint{}),
+	}
+}
+
+// --- Task: TestLightboxSwipeNavigatesAndCloses ---
+//
+// スワイプはこのスイートで唯一タッチイベントを使うテストである。他の操作は
+// マウス(input.DispatchMouseEvent)とキーボード(kb.ArrowRight)で足りるが、
+// 左右送りと下スワイプで閉じる経路だけは touchstart/touchend でしか通らない。
+// これが無いと、app.js のスワイプ実装が丸ごと消えても何も落ちない。
+//
+// 移動量は app.js の閾値（SWIPE_X=50px, SWIPE_Y=80px）を確実に超え、かつ
+// 主たる軸の移動が他方より大きくなるようにとる。実装は「横が閾値超えかつ
+// 縦より大きい」で送り、「下が閾値超えかつ横より大きい」で閉じるため、
+// 斜めに振るとどちらとも解釈されうる。
+func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	// このRun群の中でタイムアウト付きに待つ箇所の合計:
+	//   初回描画待ち(waitForTiles 10s) + ライトボックスが開く待ち(Poll 5s) +
+	//   スワイプ後のsrc変化待ち(Poll 5s)×2 + 閉じる待ち(Poll 5s) = 30s。
+	// これらは同じrctxを共有しているため、外側が短いと合計より先に力尽きて
+	// 「context deadline exceeded」という診断不能な失敗になる。Evaluateなど
+	// 残りの実行時間の余裕を見て、他のテストと揃えて60秒とする。
+	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	want := expectedPhotoURLs(2)
+
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(800, 1000),
+		chromedp.Navigate(baseURL),
+		waitForTiles(10*time.Second),
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+	)
+	require.NoError(t, err)
+
+	const srcAttrJS = `document.querySelector('#lightbox img').getAttribute('src')`
+
+	var got string
+	err = chromedp.Run(rctx, chromedp.Evaluate(srcAttrJS, &got))
+	require.NoError(t, err)
+	require.Equalf(t, want[0], got,
+		"最初に開いた写真が先頭(0番)ではない: got=%s want=%s", got, want[0])
+
+	// 左スワイプ = 次の写真。
+	swipeTo := func(t *testing.T, fromX, fromY, toX, toY float64, msg string) {
+		t.Helper()
+		prev := got
+		require.NoError(t, chromedp.Run(rctx, swipeActions(fromX, fromY, toX, toY)...))
+		err := chromedp.Run(rctx, chromedp.Poll(
+			fmt.Sprintf(`%s !== %s`, srcAttrJS, strconv.Quote(prev)), nil,
+			chromedp.WithPollingTimeout(5*time.Second)))
+		require.NoErrorf(t, err, "%s（src=%s のまま変わらなかった）", msg, prev)
+		require.NoError(t, chromedp.Run(rctx, chromedp.Evaluate(srcAttrJS, &got)))
+	}
+
+	swipeTo(t, 400, 500, 200, 500, "左スワイプで次の写真に進まなかった")
+	require.Equalf(t, want[1], got,
+		"左スワイプの送り先が1枚隣ではない: got=%s want=%s", got, want[1])
+
+	// 右スワイプ = 前の写真。往復して元の写真に戻ることまで見る。
+	// 送りと戻りで別々の分岐を通るので、片方だけ壊れていても気づける。
+	swipeTo(t, 200, 500, 400, 500, "右スワイプで前の写真に戻らなかった")
+	require.Equalf(t, want[0], got,
+		"右スワイプの戻り先が元の写真ではない: got=%s want=%s", got, want[0])
+
+	// 下スワイプ = 閉じる。閉じるのは hidden 属性なので、srcではなくそちらを見る。
+	require.NoError(t, chromedp.Run(rctx, swipeActions(400, 300, 400, 500)...))
+	err = chromedp.Run(rctx, chromedp.Poll(`document.querySelector('#lightbox').hidden`, nil,
+		chromedp.WithPollingTimeout(5*time.Second)))
+	require.NoError(t, err, "下スワイプでライトボックスが閉じなかった")
+}
+
 // --- Task: TestScrubberReachesBothEnds ---
+//
+// つまみの位置から日を引くのに比例計算を使うと、ここが落ちる。かつては
+// frac * famifo.total で「全体の何割の位置か」から通し番号を出していたが、
+// 行の高さが日ごとに変わった時点でこの比例関係は成立しない。位置から日を
+// 引くのは dayAtY の仕事である。
+//
+// 日ごとの表もサーバに聞きに行かない。かつての /dates エンドポイントは
+// 廃止し、ページに埋め込んだ daygroups を読む。
 func TestScrubberReachesBothEnds(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
@@ -1458,6 +1572,12 @@ func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
 // これが今回いちばん壊れやすく、しかも壊れても静かに壊れる（写真が微妙に
 // 違う場所に出るだけで、例外も空白も出ない）。CSS Grid の自動配置が貪欲
 // 詰めと同じ規則であるという前提そのものを、実測で確かめる。
+//
+// 列位置を自前で補正する方式に戻すと、ここが落ちる。かつては塊単位で
+// タイルを貼り、貼り始めの列がずれるぶんを gridColumnStart で押し込んで
+// いた。日ごとのカードを導入した時点で、貼る単位（塊）と並べる単位（日）が
+// 一致しなくなり、この補正は意味を持たなくなった。配置はGridの自動配置に
+// 任せ、テストはその結果がレイアウトの計算と一致するかだけを見る。
 func TestCardPositionsMatchTheLayout(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)

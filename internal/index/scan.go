@@ -33,14 +33,14 @@ type scanner struct {
 	// known は登録済みのパスとそのmtime。走査で見つけたぶんを消し込み、
 	// 残ったものが削除されたファイルになる。
 	known map[string]int64
-	// found はルートごとの発見数。空/未マウントかどうかをルート単位で判定する
+	// foundByRoot はルートごとの発見数。空/未マウントかどうかをルート単位で判定する
 	// ために使う。合計で数えると、生きているルートに写真がある限りガードが
 	// 発動しない。
-	found map[string]int
-	// st は走査側だけが書く。ワーカー側の集計は下の indexed/failed に分けてある。
-	st Stats
+	foundByRoot map[string]int
+	// stats は走査側だけが書く。ワーカー側の集計は下の indexed/failed に分けてある。
+	stats Stats
 
-	// ワーカーは st を直接触らない。走査側も Unchanged と Skipped を数えており、
+	// ワーカーは stats を直接触らない。走査側も Unchanged と Skipped を数えており、
 	// 同じ構造体を両側から書くと、片方だけロックを忘れたときに気づけないため。
 	mu              sync.Mutex
 	indexed, failed int
@@ -57,23 +57,23 @@ func (ix *Indexer) Scan(ctx context.Context) (Stats, error) {
 		return Stats{}, err
 	}
 	s := &scanner{
-		ix:    ix,
-		jobs:  ix.executor.newJobs(),
-		known: known,
-		found: make(map[string]int, len(ix.roots)),
+		ix:          ix,
+		jobs:        ix.executor.newJobs(),
+		known:       known,
+		foundByRoot: make(map[string]int, len(ix.roots)),
 	}
 
 	walkErr := s.walkAll(ctx)
 
 	// 取り込みの完了を待ったあとなので、ワーカーの書き込みはすべて見えている。
-	s.st.Indexed = s.indexed
-	s.st.Skipped += s.failed
+	s.stats.Indexed = s.indexed
+	s.stats.Skipped += s.failed
 	if walkErr != nil {
-		return s.st, walkErr
+		return s.stats, walkErr
 	}
 
 	s.purge(ctx)
-	return s.st, nil
+	return s.stats, nil
 }
 
 // walkAll はすべてのルートを走査する。
@@ -90,7 +90,7 @@ func (s *scanner) walkAll(ctx context.Context) error {
 			}
 			// ルート自体を読めない（ボリュームが外れた等）。1つのドライブが
 			// 外れただけで走査全体を止めると、生きているルートの更新まで
-			// 反映されなくなる。このルートは found が0のままなので、配下の
+			// 反映されなくなる。このルートは foundByRoot が0のままなので、配下の
 			// 削除は purge のガードが自動的に見送る。
 			s.ix.log.Warn("ルートを読めないため飛ばした", "root", root, "err", err)
 		}
@@ -100,7 +100,7 @@ func (s *scanner) walkAll(ctx context.Context) error {
 
 // walk は1つのルート以下を走査する。
 //
-// 走査自体は直列のままにする。known の消し込みも found の計上も、共有する
+// 走査自体は直列のままにする。known の消し込みも foundByRoot の計上も、共有する
 // マップの上での帳簿づけであり、並行にしても速くならないのに壊れる余地だけが
 // 増える。時間を食う1枚の取り込みだけを submit でワーカーに出す。
 func (s *scanner) walk(ctx context.Context, root string) error {
@@ -116,7 +116,7 @@ func (s *scanner) walk(ctx context.Context, root string) error {
 			}
 			// 読めないディレクトリやファイルは飛ばす（権限エラーなど）
 			s.ix.log.Warn("走査をスキップ", "path", path, "err", err)
-			s.st.Skipped++
+			s.stats.Skipped++
 			return nil
 		}
 		if d.IsDir() {
@@ -128,12 +128,12 @@ func (s *scanner) walk(ctx context.Context, root string) error {
 		if !imagefmt.IsSupported(path) {
 			return nil
 		}
-		s.found[root]++
+		s.foundByRoot[root]++
 
 		fi, err := d.Info()
 		if err != nil {
 			s.ix.log.Warn("ファイル情報を取得できずスキップ", "path", path, "err", err)
-			s.st.Skipped++
+			s.stats.Skipped++
 			return nil
 		}
 
@@ -141,7 +141,7 @@ func (s *scanner) walk(ctx context.Context, root string) error {
 		modTime, wasKnown := s.known[path]
 		delete(s.known, path)
 		if wasKnown && modTime == fi.ModTime().Unix() {
-			s.st.Unchanged++
+			s.stats.Unchanged++
 			return nil
 		}
 
@@ -180,7 +180,7 @@ func (s *scanner) purge(ctx context.Context) {
 
 	guarded := 0
 	for path := range s.known {
-		if underAny(empty, path) {
+		if isUnderAny(empty, path) {
 			guarded++
 			continue
 		}
@@ -188,7 +188,7 @@ func (s *scanner) purge(ctx context.Context) {
 			s.ix.log.Warn("削除の反映に失敗", "path", path, "err", err)
 			continue
 		}
-		s.st.Removed++
+		s.stats.Removed++
 	}
 	if guarded > 0 {
 		s.ix.log.Warn("走査結果が空のルートがあるため削除をスキップした",
@@ -203,26 +203,26 @@ func (s *scanner) purge(ctx context.Context) {
 func (s *scanner) emptyRoots() []string {
 	var empty []string
 	for _, root := range s.ix.roots {
-		if s.found[root] == 0 {
+		if s.foundByRoot[root] == 0 {
 			empty = append(empty, root)
 		}
 	}
 	return empty
 }
 
-// underAny は path がいずれかのルート配下にあるかを返す。
-func underAny(roots []string, path string) bool {
+// isUnderAny は path がいずれかのルート配下にあるかを返す。
+func isUnderAny(roots []string, path string) bool {
 	for _, root := range roots {
-		if under(root, path) {
+		if isUnder(root, path) {
 			return true
 		}
 	}
 	return false
 }
 
-// under は path が root 配下にあるかを返す。
+// isUnder は path が root 配下にあるかを返す。
 // セパレータを1つ補ってから前方一致させるため、"/a" が "/ab" を巻き込まない。
-func under(root, path string) bool {
+func isUnder(root, path string) bool {
 	if path == root {
 		return true
 	}
@@ -236,24 +236,21 @@ func under(root, path string) bool {
 //
 // fsnotify は取りこぼす。キューが溢れたことは ErrEventOverflow で分かるが、
 // max_user_watches を使い切って監視を張れなかったディレクトリのように、
-// 取りこぼしたことを知る手立てが無い経路もある。定期的に突き合わせ直せば、
+// 取りこぼしたことを知る手立てが無い経路もある。繰り返し突き合わせ直せば、
 // 検知できたかどうかによらず整合性が戻る。
 //
-// kick は待ちを切り上げる要求である。スキャンの本数は増えず、次の1回が早まる
+// kicks は待ちを切り上げる要求である。スキャンの本数は増えず、次の1回が早まる
 // だけになる。ループが逐次なのでスキャンが重なることはなく、「今走っているか」を
 // 記録する必要もない。nil を渡せば時間だけで回る。
 //
-// 待ってから始める。起動時の1回目は呼び出し側が同期で走らせ、その失敗で起動を
-// 止められるようにしてあるので、ここで即座に走ると二重になる。
-func (ix *Indexer) RunScans(ctx context.Context, interval time.Duration, kick <-chan struct{}) {
+// 待たずに始める。アプリが止まっていた間の変更も fsnotify は検知できないため、
+// 起動直後の1回目こそ必要になる。1回目を特別扱いせず、同じループの最初の回として
+// 走らせる。
+func (ix *Indexer) RunScans(ctx context.Context, interval time.Duration, kicks <-chan struct{}) {
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(interval):
-		case <-kick:
-		}
-
+		// 大量の写真では1回目に時間がかかる。開始も残さないと、走査中なのか
+		// 止まっているのかがログから読めない。
+		ix.log.Info("スキャンを開始", "dirs", ix.roots)
 		start := time.Now()
 		stats, err := ix.Scan(ctx)
 		if ctx.Err() != nil {
@@ -261,11 +258,18 @@ func (ix *Indexer) RunScans(ctx context.Context, interval time.Duration, kick <-
 		}
 		if err != nil {
 			ix.log.Warn("スキャンに失敗", "err", err)
-			continue
+		} else {
+			ix.log.Info("スキャンが完了",
+				"elapsed", time.Since(start).Round(time.Millisecond),
+				"indexed", stats.Indexed, "unchanged", stats.Unchanged,
+				"removed", stats.Removed, "skipped", stats.Skipped)
 		}
-		ix.log.Info("スキャンが完了",
-			"elapsed", time.Since(start).Round(time.Millisecond),
-			"indexed", stats.Indexed, "unchanged", stats.Unchanged,
-			"removed", stats.Removed, "skipped", stats.Skipped)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		case <-kicks:
+		}
 	}
 }

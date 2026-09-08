@@ -19,7 +19,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	_ "image/gif" // image.Decode にGIFを登録する
 	_ "image/png" // image.Decode にPNGを登録する
@@ -63,7 +62,8 @@ func (pv *Provider) shardDir(id string) string {
 	return filepath.Join(pv.dir, id[:2])
 }
 
-// path は元画像の版に対応するサムネイルの絶対パスを返す。
+// GeneratedPath は自前で生成したサムネイルの置き場所を返す。実在するとは限らない。
+// Prepare が書き込む先であり、置き場を掃除する道具が同じ規則で引くために公開する。
 //
 // 名前に元画像の版（mtimeのUnix秒）を含める。写真が差し替われば別のファイルに
 // なるので、鮮度の判定が「サムネイルのほうが新しいか」という順序の比較ではなく
@@ -73,14 +73,9 @@ func (pv *Provider) shardDir(id string) string {
 //
 // 秒に丸めるのは、DBが mod_time を Unix 秒で持っているのに合わせるためと、
 // ファイルシステムによって時刻の粒度が違うのを避けるため。
-func (pv *Provider) path(id string, srcModTime time.Time) string {
-	return filepath.Join(pv.shardDir(id), fmt.Sprintf("%s-%d.jpg", id, srcModTime.Unix()))
-}
-
-// GeneratedPath は自前で生成したサムネイルの置き場所を返す。実在するとは限らない。
-// Prepare が書き込む先であり、置き場を掃除する道具が同じ規則で引くために公開する。
 func (pv *Provider) GeneratedPath(p photo.Photo) string {
-	return pv.path(p.ID(), p.ModTime())
+	name := fmt.Sprintf("%s-%d.jpg", p.ID(), p.ModTime().Unix())
+	return filepath.Join(pv.shardDir(p.ID()), name)
 }
 
 // SmallPath は一覧のタイルに配信するファイルのパスと、そのMIMEタイプを返す。
@@ -184,7 +179,7 @@ func (pv *Provider) Prepare(p photo.Photo, orientation uint16) error {
 // 作った（または既にあった）サムネイルのパスを返す。呼び出し側が、それ以外の版を
 // 掃除するために使う。
 func (pv *Provider) generate(p photo.Photo, orientation uint16) (string, error) {
-	out := pv.path(p.ID(), p.ModTime())
+	out := pv.GeneratedPath(p)
 	if isRegularFile(out) {
 		return out, nil
 	}
@@ -274,24 +269,19 @@ func (pv *Provider) sweep(id, keep string) error {
 // 数KBのファイルが残るだけなので、これで取り込み全体を失敗させる価値がない。
 func (pv *Provider) sweepQuietly(id, keep string) { _ = pv.sweep(id, keep) }
 
-// scaleToFit は長辺が max 以下になるよう縮小する。元より大きくは引き伸ばさない。
-func scaleToFit(src image.Image, max int) image.Image {
+// scaleToFit は長辺が maxEdge 以下になるよう縮小する。元より大きくは引き伸ばさない。
+func scaleToFit(src image.Image, maxEdge int) image.Image {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
-	if w <= max && h <= max {
+	if w <= maxEdge && h <= maxEdge {
 		return src
 	}
 	if w >= h {
-		w, h = max, h*max/w
+		w, h = maxEdge, h*maxEdge/w
 	} else {
-		w, h = w*max/h, max
+		w, h = w*maxEdge/h, maxEdge
 	}
-	if w < 1 {
-		w = 1
-	}
-	if h < 1 {
-		h = 1
-	}
+	w, h = max(w, 1), max(h, 1)
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, xdraw.Over, nil)
 	return dst

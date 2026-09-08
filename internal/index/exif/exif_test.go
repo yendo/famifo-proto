@@ -11,6 +11,7 @@ import (
 )
 
 func TestReadReturnsTheEXIFDate(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	when := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
 	path := writeJPEGWithEXIF(t, dir, "a.jpg", when)
@@ -25,6 +26,7 @@ func TestReadReturnsTheEXIFDate(t *testing.T) {
 }
 
 func TestReadKeepsTheEXIFOffset(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// ベルリン(+02:00)で正午に撮った写真
 	path := writeJPEGWithEXIFOffset(t, dir, "a.jpg",
@@ -38,6 +40,7 @@ func TestReadKeepsTheEXIFOffset(t *testing.T) {
 }
 
 func TestReadReturnsZeroDateWithoutEXIF(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeJPEGWithoutEXIF(t, dir, "a.jpg")
 
@@ -48,6 +51,7 @@ func TestReadReturnsZeroDateWithoutEXIF(t *testing.T) {
 }
 
 func TestReadReturnsTheOrientation(t *testing.T) {
+	t.Parallel()
 	for _, o := range []uint16{1, 2, 3, 4, 5, 6, 7, 8} {
 		t.Run(string(rune('0'+o)), func(t *testing.T) {
 			path := writeJPEGWithOrientation(t, t.TempDir(), "a.jpg", o)
@@ -58,6 +62,7 @@ func TestReadReturnsTheOrientation(t *testing.T) {
 }
 
 func TestReadFallsBackForUnreadableFiles(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// GIFやWebPはEXIFを持たない。デコードが失敗しても既定値で返ること。
 	broken := filepath.Join(dir, "a.gif")
