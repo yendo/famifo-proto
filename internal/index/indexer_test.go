@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/index"
@@ -180,6 +181,38 @@ func TestIndexFileIndexesVideosWithoutAThumbnail(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path())
 	require.Empty(t, f.generatedThumbs(t), "famifo never generates a thumbnail for a video")
+}
+
+// 動画の撮影日時はEXIFではなくコンテナから来る。mtimeとは違う値になることで、
+// videometa が実際に読まれていることが分かる。
+func TestIndexFileReadsTheCaptureTimeFromTheContainer(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	want := time.Date(2026, 9, 9, 9, 39, 6, 0, time.UTC)
+	path := writeTestMP4(t, f.root, "clip.mp4", want)
+
+	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	require.NoError(t, err)
+	require.True(t, got.TakenAt().Equal(want), "got %v", got.TakenAt())
+}
+
+// コンテナから読めない動画はmtimeに落ちる。EXIFの無い写真と同じ扱いである。
+func TestIndexFileFallsBackToModTimeForAnUnreadableVideo(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	path := filepath.Join(f.root, "clip.mp4")
+	require.NoError(t, os.WriteFile(path, []byte("not a container"), 0o644))
+
+	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+
+	fi, err := os.Stat(path)
+	require.NoError(t, err)
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	require.NoError(t, err)
+	// インデックスは撮影日時をUnix秒で持つので、mtimeのナノ秒までは残らない。
+	require.Equal(t, fi.ModTime().Unix(), got.TakenAt().Unix())
 }
 
 func TestIndexFileIgnoresDirectories(t *testing.T) {

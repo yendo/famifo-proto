@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -76,4 +77,32 @@ func decodeThumbConfig(t *testing.T, path string) image.Config {
 	cfg, _, err := image.DecodeConfig(f)
 	require.NoError(t, err)
 	return cfg
+}
+
+// writeTestMP4 は mvhd だけを持つ最小の mp4 を書き出す。ftyp が isom なので
+// creation_time は UTC として読まれる。中身の映像は無い。
+func writeTestMP4(t *testing.T, dir, name string, when time.Time) string {
+	t.Helper()
+
+	bx := func(typ string, parts ...[]byte) []byte {
+		var body []byte
+		for _, p := range parts {
+			body = append(body, p...)
+		}
+		out := make([]byte, 8, 8+len(body))
+		binary.BigEndian.PutUint32(out[:4], uint32(8+len(body)))
+		copy(out[4:8], typ)
+		return append(out, body...)
+	}
+
+	ftyp := bx("ftyp", []byte("isom"), []byte{0, 0, 2, 0}, []byte("mp41"))
+	mvhd := make([]byte, 100)
+	// 1904-01-01起点の秒。ペイロードの4バイト目から4バイト。
+	binary.BigEndian.PutUint32(mvhd[4:8], uint32(when.Unix()+2082844800))
+	moov := bx("moov", bx("mvhd", mvhd))
+
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, append(ftyp, moov...), 0o644))
+	return path
 }

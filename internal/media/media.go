@@ -24,23 +24,24 @@ import (
 type Media struct {
 	id      string    // パスから導出した安定ID。URLに露出させる
 	path    string    // ディスク上の絶対パス
-	takenAt time.Time // EXIF撮影日時、無ければmtime
+	takenAt time.Time // 読み取れた撮影日時、無ければmtime
 	modTime time.Time // ファイルのmtime。再スキャン時の変更検知に使う
 }
 
 // New はインデックスに載せる1件を組み立てる。
 // IDと撮影日時はパスとファイル情報から導く。
 //
-// exifTakenAt はEXIFの撮影日時（DateTimeOriginal）。
-// ゼロ値は「EXIFに無い」ことを表す。
+// takenAt はファイルから読み取った撮影日時。写真ならEXIFの DateTimeOriginal、
+// 動画ならコンテナから videometa が解釈した値である。ゼロ値は「読み取れなかった」
+// ことを表し、mtimeで代替される。
 //
 // サムネイルの調達より先に組み立てる。ModTime が原本の版であり、
 // サムネイルの置き場所はその版から決まるため。
-func New(path string, fi fs.FileInfo, exifTakenAt time.Time) Media {
+func New(path string, fi fs.FileInfo, takenAt time.Time) Media {
 	return Media{
 		id:      IDFor(path),
 		path:    path,
-		takenAt: resolveTakenAt(exifTakenAt, fi.ModTime()),
+		takenAt: resolveTakenAt(takenAt, fi.ModTime()),
 		modTime: fi.ModTime(),
 	}
 }
@@ -64,7 +65,7 @@ func (m Media) ID() string { return m.id }
 // Path はディスク上の絶対パスを返す。
 func (m Media) Path() string { return m.path }
 
-// TakenAt は撮影日時を返す。EXIFに無ければmtime。
+// TakenAt は撮影日時を返す。ファイルから読み取れなければmtime。
 func (m Media) TakenAt() time.Time { return m.takenAt }
 
 // ModTime はファイルのmtimeを返す。再スキャン時の変更検知と、
