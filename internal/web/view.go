@@ -3,15 +3,18 @@ package web
 import (
 	"html/template"
 	"net/http"
+
+	"github.com/yendo/famifo-proto/internal/imagefmt"
 )
 
-// mediaView は1枚分のテンプレート入力。
+// mediaView は1件分のテンプレート入力。
 type mediaView struct {
 	ID       string
-	PageURL  string // その写真だけを開くURL。タイルのリンク先
+	PageURL  string // その1件だけを開くURL。タイルのリンク先
 	ThumbURL string
 	FullURL  string
 	Date     string // "2006-01-02"。ローカル時刻。クライアントが日の区切りに使う
+	IsVideo  bool   // タイルに再生の印を出すか、拡大表示を <video> にするか
 }
 
 // tilesView は tiles.html の入力。
@@ -57,6 +60,7 @@ func (s *Server) buildRange(r *http.Request, offset, limit int) (tilesView, erro
 			FullURL:  "/file/" + p.ID(),
 			ThumbURL: "/thumb/" + p.ID(),
 			Date:     p.TakenAt().Format("2006-01-02"),
+			IsVideo:  imagefmt.IsVideo(p.Path()),
 		})
 	}
 	return v, nil

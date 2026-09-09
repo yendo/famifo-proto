@@ -143,6 +143,32 @@ body.locked {
 	object-fit: cover;
 }
 
+/* 動画のタイルには再生の印を重ねる。借りたサムネイルがあってもなくても同じ印が
+   乗るので、「動画である」ことは常に伝わる。数千件を貼り替えるので要素は足さず、
+   擬似要素だけで描く。 */
+.tile[data-video] {
+	position: relative;
+}
+.tile[data-video]::before {
+	content: "";
+	position: absolute;
+	right: 6px;
+	bottom: 6px;
+	width: 22px;
+	height: 22px;
+	border-radius: 50%;
+	background: rgba(0, 0, 0, 0.55);
+}
+.tile[data-video]::after {
+	content: "";
+	position: absolute;
+	right: 13px;
+	bottom: 12px;
+	border-style: solid;
+	border-width: 5px 0 5px 8px;
+	border-color: transparent transparent transparent #fff;
+}
+
 .lightbox {
 	position: fixed;
 	inset: 0;

@@ -310,3 +310,17 @@ func TestTilesLinkToThePhotoPage(t *testing.T) {
 	require.Contains(t, body, `href="/item/`+p.ID()+`"`)
 	require.Contains(t, body, `data-full="/file/`+p.ID()+`"`)
 }
+
+// タイルが動画かどうかはHTMLに出る。app.js が拡大表示の切り替えに使い、
+// CSSが再生の印を重ねるのに使う。
+func TestGalleryMarksVideoTiles(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	still := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	video := f.addPhoto(t, "clip.mp4", time.Unix(1600000100, 0), noThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Regexp(t, `id="t-`+video.ID()+`"[^>]*data-video="1"`, body)
+	require.NotRegexp(t, `id="t-`+still.ID()+`"[^>]*data-video`, body)
+}
