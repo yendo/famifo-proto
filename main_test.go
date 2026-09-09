@@ -69,8 +69,8 @@ func TestParseArgsUsesDefaults(t *testing.T) {
 	require.Equal(t, ":8080", got.Addr)
 	require.Equal(t, max(runtime.NumCPU()/2, 1), got.ScanWorkers,
 		"half the CPUs by default: parallel indexing out of the box without using the machine up")
-	require.Equal(t, time.Hour, got.ScanInterval,
-		"consistency returns within an hour by default even when the watcher misses something")
+	require.Equal(t, 24*time.Hour, got.ScanInterval,
+		"consistency returns within a day by default even when the watcher misses something")
 }
 
 func TestParseArgsOverridesEveryFlag(t *testing.T) {
