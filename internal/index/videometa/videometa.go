@@ -27,6 +27,10 @@ import (
 type Meta struct {
 	// TakenAt は撮影日時。読めなければゼロ値。
 	// 呼び出し側はゼロ値をmtimeに落とす（EXIFが無い写真と同じ扱い）。
+	//
+	// Location が time.UTC そのものになることはない。media 側がその条件で
+	// 「時差の分からないEXIF日時」と判断して文字盤の時刻に読み替えるためで、
+	// ここが返すのは既に確定した瞬間だから読み替えられては困る。
 	TakenAt time.Time
 }
 
@@ -346,6 +350,11 @@ func resolve(quicktime bool, creation uint64, appleDate string) time.Time {
 
 // parseAppleDate は "2026-09-09T18:39:06+0900" 形式を解く。
 // 時差の書き方は揺れるので、コロンの有無の両方を受ける。
+//
+// 解けた値は必ず time.Local へ移す。media.resolveTakenAt は Location が time.UTC
+// そのものの値を「時差の分からないEXIF日時」とみなして文字盤の時刻に読み替えるので、
+// UTCのまま返すとそこで時差ぶんずらされる。時差が "Z" や "+00:00" の動画
+// （イギリスで撮ったiPhoneの動画）が該当する。指す瞬間は変わらない。
 func parseAppleDate(s string) (time.Time, bool) {
 	s = strings.TrimRight(s, "\x00")
 	if s == "" {
@@ -353,7 +362,7 @@ func parseAppleDate(s string) (time.Time, bool) {
 	}
 	for _, layout := range []string{"2006-01-02T15:04:05-0700", time.RFC3339} {
 		if t, err := time.Parse(layout, s); err == nil && t.Unix() >= 0 {
-			return t, true
+			return t.In(time.Local), true
 		}
 	}
 	return time.Time{}, false

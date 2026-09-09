@@ -240,3 +240,21 @@ func TestReadReturnsZeroForADirectory(t *testing.T) {
 
 	require.True(t, videometa.Read(dir).TakenAt.IsZero())
 }
+
+// 時差が "Z" の動画でも、返る値の Location が time.UTC そのものになってはいけない。
+// media 側がその条件で文字盤の時刻へ読み替えるため、時差ぶんずれてしまう。
+func TestReadNeverReturnsABareUTCLocation(t *testing.T) {
+	t.Parallel()
+	path := write(t, "a.mov",
+		ftyp("qt  ", "qt  "),
+		bx("moov",
+			mvhd(raw1904(2026, 9, 9, 9, 39, 6)),
+			appleMeta("2026-09-09T09:39:06Z"),
+		),
+	)
+
+	got := videometa.Read(path).TakenAt
+
+	require.True(t, got.Equal(time.Date(2026, 9, 9, 9, 39, 6, 0, time.UTC)), "got %v", got)
+	require.NotEqual(t, time.UTC, got.Location(), "media.resolveTakenAt would shift a bare UTC value")
+}
