@@ -2151,3 +2151,103 @@ func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
 	require.NoError(t, err, "one press of back did not return to the gallery")
 	require.Equal(t, "/", path, "the arrows stacked history entries")
 }
+
+// 動画を開くと <img> ではなく <video> に切り替わり、離れると src が外れる。外さないと
+// 裏でダウンロードが続き、次の写真を開いても前の動画の音が鳴り続ける。
+//
+// 再生そのものは確かめない。ヘッドレスのChromeはハードウェアデコーダを持たずHEVCを
+// 再生できないうえ、H.264の検証用動画も ffmpeg 無しには作れないためである。
+//
+// 共有の200枚のコーパスには足さない。日ごとの枚数と通し番号に多くのテストが乗って
+// いるので、1件足すだけで無関係なテストが落ちる。自前の小さなサーバーを立て、
+// 共有のChromeだけを借りる。
+func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
+	requireBrowser(t)
+
+	dir := t.TempDir()
+	mediaDir := filepath.Join(dir, "media")
+	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
+
+	st, err := store.Open(filepath.Join(dir, "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { st.Close() })
+
+	thumbs, err := thumb.NewProvider(filepath.Join(dir, "thumbs"))
+	require.NoError(t, err)
+
+	// 中身は問わない。原本が再生できるかではなく、要素が切り替わるかを見る。
+	videoPath := filepath.Join(mediaDir, "clip.mp4")
+	require.NoError(t, os.WriteFile(videoPath, []byte("not a real container"), 0o644))
+
+	photoPath := filepath.Join(mediaDir, "a.jpg")
+	pf, err := os.Create(photoPath)
+	require.NoError(t, err)
+	require.NoError(t, jpeg.Encode(pf, image.NewRGBA(image.Rect(0, 0, 40, 20)), nil))
+	require.NoError(t, pf.Close())
+
+	// 動画のほうを新しくして先頭に並べる。
+	bg := context.Background()
+	require.NoError(t, st.Upsert(bg,
+		media.Restore(videoPath, time.Unix(1600000100, 0), time.Unix(1600000100, 0))))
+	require.NoError(t, st.Upsert(bg,
+		media.Restore(photoPath, time.Unix(1600000000, 0), time.Unix(1600000000, 0))))
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	webSrv, err := web.NewServer(st, thumbs, log)
+	require.NoError(t, err)
+	srv := httptest.NewServer(webSrv.Handler())
+	t.Cleanup(srv.Close)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	const stateJS = `(() => {
+		const v = document.querySelector('#lightbox video');
+		const i = document.querySelector('#lightbox img');
+		return { vHidden: v.hidden, iHidden: i.hidden, src: v.getAttribute('src') || '' };
+	})()`
+
+	var got struct {
+		VHidden bool   `json:"vHidden"`
+		IHidden bool   `json:"iHidden"`
+		Src     string `json:"src"`
+	}
+
+	err = chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(srv.URL),
+		waitForTiles(10*time.Second),
+		chromedp.Click(`#window .tile[data-video]`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Poll(`!document.querySelector('#lightbox video').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(stateJS, &got),
+	)
+	require.NoError(t, err)
+	require.False(t, got.VHidden, "the video element is shown for a video")
+	require.True(t, got.IHidden, "the image element is hidden for a video")
+	require.True(t, strings.HasPrefix(got.Src, "/file/"), "got %q", got.Src)
+
+	// 次（写真）へ送ると入れ替わり、動画の src は外れる。
+	err = chromedp.Run(rctx,
+		chromedp.KeyEvent(kb.ArrowRight),
+		chromedp.Poll(`document.querySelector('#lightbox video').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(stateJS, &got),
+	)
+	require.NoError(t, err)
+	require.True(t, got.VHidden)
+	require.False(t, got.IHidden)
+	require.Empty(t, got.Src, "the video source is dropped when leaving the video")
+
+	// 閉じても外れたまま。
+	err = chromedp.Run(rctx,
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.Poll(`document.querySelector('#lightbox').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(stateJS, &got),
+	)
+	require.NoError(t, err)
+	require.Empty(t, got.Src)
+}

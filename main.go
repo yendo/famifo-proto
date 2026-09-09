@@ -164,14 +164,14 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	var c config.Config
 	var dirs string
 	fs.StringVar(&dirs, "dir", "",
-		fmt.Sprintf("directories to collect photos from (required); %q separates several",
+		fmt.Sprintf("directories to collect photos and videos from (required); %q separates several",
 			string(filepath.ListSeparator)))
 	fs.StringVar(&c.DataDir, "data", "./famifo-data", "where the database and generated thumbnails are stored")
 	fs.StringVar(&c.Addr, "addr", ":8080", "HTTP listen address")
 	// 適正値はCPU数とストレージの待ち時間の両方で決まる。NASでは読み込み待ちが
 	// 効くので、CPU数が最善とは限らない。実機で詰められるようフラグにしてある。
 	fs.IntVar(&c.ScanWorkers, "scan-workers", defaultScanWorkers(),
-		"how many photos are taken in at once, both by the scan and by the watcher")
+		"how many files are taken in at once, both by the scan and by the watcher")
 	// fsnotify は取りこぼす。溢れたことは検知できるが、監視枠を使い切って
 	// 監視を張れなかったディレクトリのように、取りこぼしたと知る手立てが無い
 	// 経路もある。定期的に突き合わせ直せば、検知の可否によらず整合性が戻る。
