@@ -263,6 +263,44 @@ func TestListRangeRejectsNegativeArguments(t *testing.T) {
 	require.Error(t, err)
 }
 
+// RankOf が返す位置は ListRange の並びそのものでなければならない。共有された
+// URLを開いたとき、クライアントはこの番号で飛ぶので、両者がずれると別の写真の
+// 位置に着地する。撮影日時が同じ組を混ぜて、同点の解き方も一緒に縛る。
+func TestRankOfLocatesThePhotoInListRange(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	ctx := context.Background()
+	same := time.Unix(1600000100, 0)
+	photos := []photo.Photo{
+		photoAt("/photos/new.jpg", time.Unix(1600000200, 0)),
+		photoAt("/photos/tie-a.jpg", same),
+		photoAt("/photos/tie-b.jpg", same),
+		photoAt("/photos/old.jpg", time.Unix(1600000000, 0)),
+	}
+	for _, p := range photos {
+		require.NoError(t, s.Upsert(ctx, p))
+	}
+
+	for _, p := range photos {
+		rank, err := s.RankOf(ctx, p.ID())
+		require.NoError(t, err)
+
+		at, err := s.ListRange(ctx, rank, 1)
+		require.NoError(t, err)
+		require.Len(t, at, 1)
+		require.Equal(t, p.Path(), at[0].Path(), "the photo at rank %d", rank)
+	}
+}
+
+func TestRankOfMissingReturnsErrNotFound(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+
+	_, err := s.RankOf(context.Background(), photo.IDFor("/photos/gone.jpg"))
+
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
 func TestDayGroupsCountsEachDay(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)

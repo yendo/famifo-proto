@@ -27,11 +27,11 @@
   <span class="count">{{.Total}} 枚</span>
 </header>
 
-<main id="gallery" class="gallery" data-total="{{.Total}}" data-chunk="{{.ChunkSize}}">
+<main id="gallery" class="gallery" data-total="{{.Total}}" data-chunk="{{.ChunkSize}}" data-open="{{.OpenIndex}}">
   <div id="spacer">
     <div id="colprobe" aria-hidden="true"></div>
     <div id="window" class="grid">
-{{template "items" .}}
+{{template "tiles" .}}
     </div>
   </div>
 </main>

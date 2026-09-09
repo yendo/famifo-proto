@@ -1908,11 +1908,11 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 	h := webSrv.Handler()
 	gate := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/items" {
+		if r.URL.Path == "/tiles" {
 			atomic.AddInt64(&items, 1)
 			gate <- struct{}{}
 			defer func() { <-gate }()
-			// ブラウザが取得をやめた要求はここで捨てる。実物の handleItems も
+			// ブラウザが取得をやめた要求はここで捨てる。実物の handleTiles も
 			// ListRange に r.Context() を渡しており、切断された要求は
 			// DBまで行かずに終わる。捨てないハーネスにすると、ブラウザが何を
 			// 諦めてもサーバは全部を挽き続け、この不具合の再現にならない。
@@ -2039,4 +2039,115 @@ func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 	require.Equalf(t, "resolved", got,
 		"could not resolve the URL of the oldest photo (%s); repainting the gallery is aborting the lightbox's fetch as well",
 		got)
+}
+
+// --- Task: 写真ごとのURL ---
+//
+// 共有されたURLを直接開くと、その写真でライトボックスが開くこと。先頭の塊の
+// 外にある写真を選ぶ。サーバーが埋めた通し番号から仮想スクロールが任意の位置へ
+// 飛べていなければ、ここで別の写真が出るか、そもそも開かない。
+func TestPhotoURLOpensTheLightbox(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	const target = testChunkSize + 40 // 初回HTMLに埋まっていない位置
+	want := expectedPhotoURLs(target + 1)[target]
+	id := strings.TrimPrefix(want, "/photo/")
+
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1600, 900),
+		chromedp.Navigate(baseURL+"/item/"+id),
+		waitForTiles(10*time.Second),
+		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+	)
+	require.NoError(t, err, "the lightbox never opened from the photo URL")
+
+	var got string
+	err = chromedp.Run(rctx, chromedp.Evaluate(
+		`document.querySelector('#lightbox img').getAttribute('src')`, &got))
+	require.NoError(t, err)
+	require.Equal(t, want, got, "the photo URL opened a different photo")
+}
+
+// タイルから開いたときもURLが写真のものになり、戻るボタンで閉じてギャラリーへ
+// 戻ること。ページ遷移ではなく履歴だけを積んでいることを、遷移すれば消える
+// 目印で確かめる。遷移してしまうと一覧のスクロール位置が失われる。
+func TestBackClosesTheLightbox(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	want := expectedPhotoURLs(1)[0]
+	id := strings.TrimPrefix(want, "/photo/")
+
+	var path string
+	var survived bool
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1600, 900),
+		chromedp.Navigate(baseURL),
+		waitForTiles(10*time.Second),
+		chromedp.Evaluate(`window.__noReload = true`, nil),
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Evaluate(`location.pathname`, &path),
+		chromedp.Evaluate(`window.__noReload === true`, &survived),
+	)
+	require.NoError(t, err, "the lightbox never opened from a tile")
+	require.Equal(t, "/item/"+id, path, "the URL does not name the open photo")
+	require.True(t, survived, "the page reloaded instead of only pushing history")
+
+	err = chromedp.Run(rctx,
+		chromedp.NavigateBack(),
+		chromedp.Poll(`document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Evaluate(`location.pathname`, &path),
+	)
+	require.NoError(t, err, "the back button did not close the lightbox")
+	require.Equal(t, "/", path)
+}
+
+// 送りではURLだけ差し替え、履歴には積まないこと。積むと、めくった枚数だけ
+// 戻るボタンを押さないとギャラリーへ帰れなくなる。
+func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	urls := expectedPhotoURLs(4)
+	third := strings.TrimPrefix(urls[3], "/photo/")
+
+	var path string
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1600, 900),
+		chromedp.Navigate(baseURL),
+		waitForTiles(10*time.Second),
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+	)
+	require.NoError(t, err)
+
+	for i := 1; i <= 3; i++ {
+		want := strings.Replace(urls[i], "/photo/", "/item/", 1)
+		err = chromedp.Run(rctx,
+			chromedp.KeyEvent(kb.ArrowRight),
+			chromedp.Poll(fmt.Sprintf(`location.pathname === %s`, strconv.Quote(want)), nil,
+				chromedp.WithPollingTimeout(10*time.Second)),
+		)
+		require.NoErrorf(t, err, "the URL did not follow the swipe to photo %d", i)
+	}
+
+	err = chromedp.Run(rctx, chromedp.Evaluate(`location.pathname`, &path))
+	require.NoError(t, err)
+	require.Equal(t, "/item/"+third, path)
+
+	err = chromedp.Run(rctx,
+		chromedp.NavigateBack(),
+		chromedp.Poll(`document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Evaluate(`location.pathname`, &path),
+	)
+	require.NoError(t, err, "one press of back did not return to the gallery")
+	require.Equal(t, "/", path, "the arrows stacked history entries")
 }

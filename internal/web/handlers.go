@@ -12,10 +12,37 @@ import (
 	"github.com/yendo/famifo-proto/internal/store"
 )
 
+// noOpenPhoto は「開いた写真は無い」ことを表す通し番号。
+const noOpenPhoto = -1
+
 // handleGallery はギャラリーのトップページを返す。
-// 先頭の塊を埋めた状態で返すので、開いた直後に灰色の画面が出ない。
 func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
-	items, err := s.buildRange(r, 0, s.chunkSize)
+	s.renderGallery(w, r, noOpenPhoto)
+}
+
+// handleItem は写真ごとのURLを受け、その写真を開いた状態のギャラリーを返す。
+// 返すHTMLは / と同じで、違いは「どれを開くか」を表す通し番号だけである。
+//
+// 消えた写真のURLを共有されることは普通に起きる。404にすると行き止まりになるので、
+// ギャラリーへ送る。
+func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
+	rank, err := s.st.RankOf(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.renderGallery(w, r, rank)
+}
+
+// renderGallery はギャラリーのHTMLを組み立てて返す。openIndex は開いた状態で
+// 表示する写真の通し番号で、noOpenPhoto なら閉じたまま開く。
+// 先頭の塊を埋めた状態で返すので、開いた直後に灰色の画面が出ない。
+func (s *Server) renderGallery(w http.ResponseWriter, r *http.Request, openIndex int) {
+	tiles, err := s.buildRange(r, 0, s.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -42,8 +69,8 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	view := galleryView{
-		itemsView: items, Total: total, ChunkSize: s.chunkSize,
-		DayGroups: template.JS(raw),
+		tilesView: tiles, Total: total, ChunkSize: s.chunkSize,
+		DayGroups: template.JS(raw), OpenIndex: openIndex,
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "gallery", view); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
@@ -52,24 +79,24 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleItems は仮想スクロール用のHTML断片を返す。
+// handleTiles は仮想スクロール用のHTML断片を返す。
 // 初回ページと同じテンプレートを使い、マークアップを1箇所に保つ。
-func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTiles(w http.ResponseWriter, r *http.Request) {
 	offset, limit, err := parseWindow(r, s.chunkSize)
 	if err != nil {
 		http.Error(w, "bad range", http.StatusBadRequest)
 		return
 	}
-	items, err := s.buildRange(r, offset, limit)
+	tiles, err := s.buildRange(r, offset, limit)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "items", items); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "tiles", tiles); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		s.log.Error("failed to render the items template", "err", err)
+		s.log.Error("failed to render the tiles template", "err", err)
 		return
 	}
 }

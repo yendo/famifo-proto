@@ -175,7 +175,13 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	// fsnotify は取りこぼす。溢れたことは検知できるが、監視枠を使い切って
 	// 監視を張れなかったディレクトリのように、取りこぼしたと知る手立てが無い
 	// 経路もある。定期的に突き合わせ直せば、検知の可否によらず整合性が戻る。
-	fs.DurationVar(&c.ScanInterval, "scan-interval", time.Hour,
+	//
+	// 1日に1回で足りる。溢れは検知した時点でスキャンを前倒すし、書き込みが
+	// 続いているファイルは Write イベントで積み直されるため、間隔を待たずに
+	// 復帰する。この待ちが効くのは、一時的なIOエラーで落ちた1枚の取り直しと、
+	// 取りこぼしに気づけなかったときのズレだけである。詰めても得るものが
+	// 少ないわりに、決して読めないファイルのデコードを繰り返すことになる。
+	fs.DurationVar(&c.ScanInterval, "scan-interval", 24*time.Hour,
 		"how often the index is reconciled with what is on disk")
 	showVersion := fs.Bool("version", false, "print the build version and exit")
 
