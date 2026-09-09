@@ -33,7 +33,7 @@ func TestScanIgnoresNonPhotos(t *testing.T) {
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	require.NoError(t, os.WriteFile(filepath.Join(f.root, "notes.txt"), []byte("x"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(f.root, "clip.mp4"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, "clip.avi"), []byte("x"), 0o644))
 
 	stats, err := f.ix.Scan(context.Background())
 

@@ -155,7 +155,7 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	path := filepath.Join(f.root, "a.mp4")
+	path := filepath.Join(f.root, "a.avi")
 	require.NoError(t, os.WriteFile(path, []byte("video"), 0o644))
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path), "an unsupported file is not an error")
@@ -163,6 +163,23 @@ func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
+}
+
+// 動画は自前でサムネイルを作れないが、インデックスには載る。壊れているかどうかは
+// デコードして初めて分かることで、famifoにデコーダが無い以上、載せる前に判定する
+// 手段が無い。黙って消えるより、絵の無いタイルとして出るほうを選ぶ。
+func TestIndexFileIndexesVideosWithoutAThumbnail(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	path := filepath.Join(f.root, "clip.mp4")
+	require.NoError(t, os.WriteFile(path, []byte("not a real container"), 0o644))
+
+	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	require.NoError(t, err)
+	require.Equal(t, path, got.Path())
+	require.Empty(t, f.generatedThumbs(t), "famifo never generates a thumbnail for a video")
 }
 
 func TestIndexFileIgnoresDirectories(t *testing.T) {
