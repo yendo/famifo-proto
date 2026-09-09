@@ -69,6 +69,52 @@ func TestHasThumbMIsFalseForAnEmptyThumbnail(t *testing.T) {
 	require.False(t, synology.HasThumbM(src))
 }
 
+func TestFilmPathPointsAtTheTranscodedVideo(t *testing.T) {
+	t.Parallel()
+	require.Equal(t,
+		"/photos/2026-09/@eaDir/PXL_20260909.mp4/SYNOPHOTO_FILM_H.mp4",
+		synology.FilmPath("/photos/2026-09/PXL_20260909.mp4"))
+}
+
+func TestHasFilmFindsTheTranscodeSynologyLeftBehind(t *testing.T) {
+	t.Parallel()
+	src := filepath.Join(t.TempDir(), "clip.mp4")
+	writeFile(t, src, "hevc original")
+	writeFile(t, synology.FilmPath(src), "h264 transcode")
+
+	require.True(t, synology.HasFilm(src))
+}
+
+func TestHasFilmIsFalseWithoutEaDir(t *testing.T) {
+	t.Parallel()
+	src := filepath.Join(t.TempDir(), "clip.mp4")
+	writeFile(t, src, "hevc original")
+
+	require.False(t, synology.HasFilm(src))
+}
+
+// サムネイルがあっても変換版があるとは限らない。実測した @eaDir には
+// SYNOPHOTO_THUMB_M.jpg があるのに SYNOPHOTO_FILM.fail があった。別の工程なので
+// 片方だけ成功しうる。
+func TestHasFilmIsFalseEvenWhenAThumbnailExists(t *testing.T) {
+	t.Parallel()
+	src := filepath.Join(t.TempDir(), "clip.mp4")
+	writeFile(t, src, "hevc original")
+	writeFile(t, synology.ThumbMPath(src), "borrowed")
+
+	require.False(t, synology.HasFilm(src))
+}
+
+// DSMは変換に失敗すると0バイトの .fail を置く。空のファイルは借りない。
+func TestHasFilmIsFalseForAnEmptyTranscode(t *testing.T) {
+	t.Parallel()
+	src := filepath.Join(t.TempDir(), "clip.mp4")
+	writeFile(t, src, "hevc original")
+	writeFile(t, synology.FilmPath(src), "")
+
+	require.False(t, synology.HasFilm(src))
+}
+
 func TestIsManagedDirCoversSynologysOwnDirectories(t *testing.T) {
 	t.Parallel()
 	require.True(t, synology.IsManagedDir("@eaDir"))
