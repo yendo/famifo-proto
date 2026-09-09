@@ -44,6 +44,12 @@
 
 <div id="lightbox" class="lightbox" hidden>
   <img alt="">
+  {{/* 自動再生はしない。一覧をめくっていて突然音が鳴るのを避ける。
+       playsinline は iOS Safari が全画面を乗っ取らないようにするため。 */}}
+  <video controls playsinline preload="metadata" hidden></video>
+  {{/* HEVCを出せない端末では要素は作られたまま再生に失敗し、画面が真っ黒になる。
+       何が起きたのか分からないのが一番困るので、短く伝える。 */}}
+  <p class="lb-error" hidden>この端末では再生できません</p>
   <button class="lb-nav lb-prev" type="button" aria-label="前へ">‹</button>
   <button class="lb-nav lb-next" type="button" aria-label="次へ">›</button>
 </div>

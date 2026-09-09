@@ -188,6 +188,16 @@ body.locked {
 	max-height: 100%;
 	object-fit: contain;
 }
+.lightbox video {
+	max-width: 100%;
+	max-height: 100%;
+}
+.lb-error {
+	position: absolute;
+	color: rgba(255, 255, 255, 0.8);
+	font-size: 0.9rem;
+	pointer-events: none;
+}
 
 .lb-nav {
 	position: absolute;
@@ -206,6 +216,12 @@ body.locked {
 .lb-next {
 	right: 0;
 }
+/* 動画のときは再生コントロールの帯を前後送りで覆わない。lb-nav は左右22%を
+   上下いっぱいに占めるので、そのままだとシークバーの両端が押せない。 */
+.lightbox.playing .lb-nav {
+	bottom: 4rem;
+}
+
 /* タッチ端末では矢印を出さない（スワイプで操作するため） */
 @media (hover: hover) {
 	.lb-nav:hover {
