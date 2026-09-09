@@ -5,8 +5,8 @@ import (
 	"net/http"
 )
 
-// photoView は1枚分のテンプレート入力。
-type photoView struct {
+// mediaView は1枚分のテンプレート入力。
+type mediaView struct {
 	ID       string
 	PageURL  string // その写真だけを開くURL。タイルのリンク先
 	ThumbURL string
@@ -16,7 +16,7 @@ type photoView struct {
 
 // tilesView は tiles.html の入力。
 type tilesView struct {
-	Photos []photoView
+	Photos []mediaView
 }
 
 // dayView は埋め込む日ごとの表の1要素。
@@ -36,7 +36,7 @@ type galleryView struct {
 	// そのまま出すため template.JS で渡す。中身は日付と数値だけなので
 	// "</script>" は構造上現れない。
 	DayGroups template.JS
-	// OpenIndex は開いた状態で表示する写真の通し番号。noOpenPhoto なら閉じたまま。
+	// OpenIndex は開いた状態で表示する写真の通し番号。noOpenItem なら閉じたまま。
 	OpenIndex int
 }
 
@@ -49,12 +49,12 @@ func (s *Server) buildRange(r *http.Request, offset, limit int) (tilesView, erro
 
 	// タイルのURLは出どころによらず /thumb/ である。どのファイルを出すかは
 	// ハンドラが調べるので、一覧の組み立てではファイルシステムを叩かない。
-	v := tilesView{Photos: make([]photoView, 0, len(photos))}
+	v := tilesView{Photos: make([]mediaView, 0, len(photos))}
 	for _, p := range photos {
-		v.Photos = append(v.Photos, photoView{
+		v.Photos = append(v.Photos, mediaView{
 			ID:       p.ID(),
 			PageURL:  "/item/" + p.ID(),
-			FullURL:  "/photo/" + p.ID(),
+			FullURL:  "/file/" + p.ID(),
 			ThumbURL: "/thumb/" + p.ID(),
 			Date:     p.TakenAt().Format("2006-01-02"),
 		})

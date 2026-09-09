@@ -45,7 +45,7 @@ import (
 	"github.com/yendo/famifo-proto/internal/web"
 
 	"github.com/yendo/famifo-proto/internal/index"
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
@@ -413,7 +413,7 @@ func expectedPhotoURLs(n int) []string {
 	out := make([]string, n)
 	for i := 0; i < n; i++ {
 		path := filepath.Join(testPhotoDir, fmt.Sprintf("p%04d.jpg", i))
-		out[i] = "/photo/" + photo.IDFor(path)
+		out[i] = "/file/" + media.IDFor(path)
 	}
 	return out
 }
@@ -2054,7 +2054,7 @@ func TestPhotoURLOpensTheLightbox(t *testing.T) {
 
 	const target = testChunkSize + 40 // 初回HTMLに埋まっていない位置
 	want := expectedPhotoURLs(target + 1)[target]
-	id := strings.TrimPrefix(want, "/photo/")
+	id := strings.TrimPrefix(want, "/file/")
 
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
@@ -2081,7 +2081,7 @@ func TestBackClosesTheLightbox(t *testing.T) {
 	defer cancel()
 
 	want := expectedPhotoURLs(1)[0]
-	id := strings.TrimPrefix(want, "/photo/")
+	id := strings.TrimPrefix(want, "/file/")
 
 	var path string
 	var survived bool
@@ -2117,7 +2117,7 @@ func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
 	defer cancel()
 
 	urls := expectedPhotoURLs(4)
-	third := strings.TrimPrefix(urls[3], "/photo/")
+	third := strings.TrimPrefix(urls[3], "/file/")
 
 	var path string
 	err := chromedp.Run(rctx,
@@ -2130,7 +2130,7 @@ func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	for i := 1; i <= 3; i++ {
-		want := strings.Replace(urls[i], "/photo/", "/item/", 1)
+		want := strings.Replace(urls[i], "/file/", "/item/", 1)
 		err = chromedp.Run(rctx,
 			chromedp.KeyEvent(kb.ArrowRight),
 			chromedp.Poll(fmt.Sprintf(`location.pathname === %s`, strconv.Quote(want)), nil,

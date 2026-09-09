@@ -24,7 +24,7 @@ import (
 	_ "image/png" // image.Decode にPNGを登録する
 
 	"github.com/yendo/famifo-proto/internal/imagefmt"
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/synology"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // image.Decode にWebPを登録する（デコードのみ）
@@ -67,7 +67,7 @@ func NewProvider(dir string) (*Provider, error) {
 //
 // 秒に丸めるのは、DBが mod_time を Unix 秒で持っているのに合わせるためと、
 // ファイルシステムによって時刻の粒度が違うのを避けるため。
-func (pv *Provider) GeneratedPath(p photo.Photo) string {
+func (pv *Provider) GeneratedPath(p media.Media) string {
 	name := fmt.Sprintf("%s-%d.jpg", p.ID(), p.ModTime().Unix())
 	return filepath.Join(pv.shardDir(p.ID()), name)
 }
@@ -90,7 +90,7 @@ func (pv *Provider) GeneratedPath(p photo.Photo) string {
 // 「famifoがデコードできる形式」と「ブラウザが表示できる形式」が一致しているためで、
 // 別の問いである。両者が食い違う形式（Goがデコードできないがブラウザは表示できる
 // AVIFなど）を表に足すときは、ここを分ける必要がある。
-func (pv *Provider) SmallPath(p photo.Photo) (path, contentType string, ok bool) {
+func (pv *Provider) SmallPath(p media.Media) (path, contentType string, ok bool) {
 	if synology.HasThumbM(p.Path()) {
 		m := synology.ThumbMPath(p.Path())
 		return m, imagefmt.ContentType(m), true
@@ -114,7 +114,7 @@ func (pv *Provider) SmallPath(p photo.Photo) (path, contentType string, ok bool)
 //
 // 借りたXLは .jpg なので、原本がHEICでもMIMEは image/jpeg になる。呼び出し側が
 // 選ばれたパスからMIMEを引き直さずに済むよう、ここで一緒に返す。
-func (pv *Provider) LargePath(p photo.Photo) (path, contentType string) {
+func (pv *Provider) LargePath(p media.Media) (path, contentType string) {
 	path = p.Path()
 	if imagefmt.IsSupported(path) && !imagefmt.IsDecodable(path) &&
 		synology.HasThumbM(p.Path()) {
@@ -137,7 +137,7 @@ func (pv *Provider) LargePath(p photo.Photo) (path, contentType string) {
 //
 // 生成に失敗した場合だけエラーを返す。インデックスに載せるかどうかは呼び出し側の
 // 判断である。
-func (pv *Provider) Prepare(p photo.Photo, orientation uint16) error {
+func (pv *Provider) Prepare(p media.Media, orientation uint16) error {
 	switch {
 	case synology.HasThumbM(p.Path()):
 		// 借りるほうへ切り替わったら、自前で作ったものは用済みになる。
@@ -172,7 +172,7 @@ func (pv *Provider) Prepare(p photo.Photo, orientation uint16) error {
 //
 // 作った（または既にあった）サムネイルのパスを返す。呼び出し側が、それ以外の版を
 // 掃除するために使う。
-func (pv *Provider) generate(p photo.Photo, orientation uint16) (string, error) {
+func (pv *Provider) generate(p media.Media, orientation uint16) (string, error) {
 	out := pv.GeneratedPath(p)
 	if isRegularFile(out) {
 		return out, nil

@@ -1,16 +1,16 @@
-package photo_test
+package media_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 )
 
 // newWithEXIFDate は撮影日時だけを変えて1枚を組み立てる。
-func newWithEXIFDate(exifTakenAt time.Time) photo.Photo {
-	return photo.New("/photos/a.jpg",
+func newWithEXIFDate(exifTakenAt time.Time) media.Media {
+	return media.New("/photos/a.jpg",
 		fakeFileInfo{modTime: testModTime}, exifTakenAt)
 }
 

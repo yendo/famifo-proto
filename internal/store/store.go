@@ -1,5 +1,5 @@
-// Package store は写真メタデータのSQLiteインデックスを提供する。
-// 画像の実体はファイルシステム上にあり、ここではパスとメタデータだけを持つ。
+// Package store は写真と動画のメタデータのSQLiteインデックスを提供する。
+// 実体はファイルシステム上にあり、ここではパスとメタデータだけを持つ。
 package store
 
 import (
@@ -12,24 +12,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 	_ "modernc.org/sqlite" // pure Goのsqliteドライバ。cgo不要。
 )
 
-// ErrNotFound は該当する写真が無いことを表す。
-var ErrNotFound = errors.New("photo not found")
+// ErrNotFound は該当する1件が無いことを表す。
+var ErrNotFound = errors.New("media not found")
 
 // Store はSQLiteインデックスへのアクセスを提供する。
 type Store struct{ db *sql.DB }
 
 const schema = `
-CREATE TABLE IF NOT EXISTS photos (
+CREATE TABLE IF NOT EXISTS media (
     id        TEXT PRIMARY KEY,
     path      TEXT NOT NULL UNIQUE,
     taken_at  INTEGER NOT NULL,
     mod_time  INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_photos_order ON photos(taken_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_media_order ON media(taken_at DESC, id DESC);
 `
 
 // Open はDBを開き、スキーマを作成する。親ディレクトリが無ければ作る。
@@ -69,7 +69,7 @@ func Open(dbPath string) (*Store, error) {
 // probeReadable はアプリが読む列をひと通り選んで、DBが実際に読めることを
 // 確かめる。行の有無は問わないので LIMIT 1 で足り、値も取り出さない。
 func probeReadable(db *sql.DB) error {
-	rows, err := db.Query(`SELECT id, ` + selectCols + ` FROM photos LIMIT 1`)
+	rows, err := db.Query(`SELECT id, ` + selectCols + ` FROM media LIMIT 1`)
 	if err != nil {
 		return fmt.Errorf("cannot read the database: %w", err)
 	}
@@ -83,79 +83,79 @@ func probeReadable(db *sql.DB) error {
 func (s *Store) Close() error { return s.db.Close() }
 
 const upsertSQL = `
-INSERT INTO photos (id, path, taken_at, mod_time)
+INSERT INTO media (id, path, taken_at, mod_time)
 VALUES (?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     path      = excluded.path,
     taken_at  = excluded.taken_at,
     mod_time  = excluded.mod_time`
 
-// Upsert は写真を登録または更新する。
-func (s *Store) Upsert(ctx context.Context, p photo.Photo) error {
+// Upsert は1件を登録または更新する。
+func (s *Store) Upsert(ctx context.Context, p media.Media) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
 		p.ID(), p.Path(), p.TakenAt().Unix(), p.ModTime().Unix())
 	if err != nil {
-		return fmt.Errorf("cannot save the photo (%s): %w", p.Path(), err)
+		return fmt.Errorf("cannot save the media (%s): %w", p.Path(), err)
 	}
 	return nil
 }
 
-// idは読まない。パスから導ける値なので、復元は photo.Restore に任せる。
+// idは読まない。パスから導ける値なので、復元は media.Restore に任せる。
 const selectCols = `path, taken_at, mod_time`
 
-// GetByID はIDで写真を引く。見つからない場合は ErrNotFound を返す。
-func (s *Store) GetByID(ctx context.Context, id string) (photo.Photo, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+selectCols+` FROM photos WHERE id = ?`, id)
-	p, err := scanPhoto(row)
+// GetByID はIDで1件を引く。見つからない場合は ErrNotFound を返す。
+func (s *Store) GetByID(ctx context.Context, id string) (media.Media, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+selectCols+` FROM media WHERE id = ?`, id)
+	p, err := scanMedia(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return photo.Photo{}, ErrNotFound
+		return media.Media{}, ErrNotFound
 	}
 	if err != nil {
-		return photo.Photo{}, fmt.Errorf("cannot get the photo: %w", err)
+		return media.Media{}, fmt.Errorf("cannot get the media: %w", err)
 	}
 	return p, nil
 }
 
-// DeleteByPath はパスで写真を削除し、削除した行を返す。
+// DeleteByPath はパスで1件を削除し、削除した行を返す。
 // 呼び出し側は返った行のIDでサムネイルを消す。
 // 該当が無い場合は ok=false を返し、エラーにはしない。
-func (s *Store) DeleteByPath(ctx context.Context, path string) (photo.Photo, bool, error) {
+func (s *Store) DeleteByPath(ctx context.Context, path string) (media.Media, bool, error) {
 	row := s.db.QueryRowContext(ctx,
-		`DELETE FROM photos WHERE path = ? RETURNING `+selectCols, path)
-	p, err := scanPhoto(row)
+		`DELETE FROM media WHERE path = ? RETURNING `+selectCols, path)
+	p, err := scanMedia(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return photo.Photo{}, false, nil
+		return media.Media{}, false, nil
 	}
 	if err != nil {
-		return photo.Photo{}, false, fmt.Errorf("cannot delete the photo (%s): %w", path, err)
+		return media.Media{}, false, fmt.Errorf("cannot delete the media (%s): %w", path, err)
 	}
 	return p, true, nil
 }
 
-// DeleteByPathPrefix はディレクトリ配下の写真をまとめて削除し、削除した行を返す。
+// DeleteByPathPrefix はディレクトリ配下の登録をまとめて削除し、削除した行を返す。
 // prefixにセパレータを1つ補ってから前方一致させるため、"album" が
 // "album2" のような兄弟ディレクトリを巻き込むことはない。
 //
 // 前方一致は LIKE ではなく範囲比較で書く。LIKE の前方一致の最適化は
-// ESCAPE 句があると効かず、削除1回ごとに photos の全行を舐めることになる。
+// ESCAPE 句があると効かず、削除1回ごとに media の全行を舐めることになる。
 // path は UNIQUE なので暗黙の索引があり、範囲比較ならそれが使われる。
-func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]photo.Photo, error) {
+func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]media.Media, error) {
 	dirPrefix := prefix
 	if !strings.HasSuffix(dirPrefix, string(filepath.Separator)) {
 		dirPrefix += string(filepath.Separator)
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`DELETE FROM photos WHERE path >= ? AND path < ? RETURNING `+selectCols,
+		`DELETE FROM media WHERE path >= ? AND path < ? RETURNING `+selectCols,
 		dirPrefix, upperBound(dirPrefix))
 	if err != nil {
-		return nil, fmt.Errorf("cannot delete the photos under the directory (%s): %w", prefix, err)
+		return nil, fmt.Errorf("cannot delete the media under the directory (%s): %w", prefix, err)
 	}
 	defer rows.Close()
 
-	var out []photo.Photo
+	var out []media.Media
 	for rows.Next() {
-		p, err := scanPhoto(rows)
+		p, err := scanMedia(rows)
 		if err != nil {
 			return nil, fmt.Errorf("cannot read the deletion result: %w", err)
 		}
@@ -176,7 +176,7 @@ func upperBound(prefix string) string {
 
 // ListRange は撮影日時の新しい順で offset 番目から limit 件を返す。
 // 仮想スクロールは任意の位置へ飛ぶため、カーソルではなくオフセットで引く。
-func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]photo.Photo, error) {
+func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]media.Media, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("offset must be 0 or greater: %d", offset)
 	}
@@ -185,58 +185,58 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]photo.Photo
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+selectCols+` FROM photos
+		`SELECT `+selectCols+` FROM media
 		 ORDER BY taken_at DESC, id DESC
 		 LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
-		return nil, fmt.Errorf("cannot list the photos: %w", err)
+		return nil, fmt.Errorf("cannot list the media: %w", err)
 	}
 	defer rows.Close()
 
-	var out []photo.Photo
+	var out []media.Media
 	for rows.Next() {
-		p, err := scanPhoto(rows)
+		p, err := scanMedia(rows)
 		if err != nil {
-			return nil, fmt.Errorf("cannot read the photo list: %w", err)
+			return nil, fmt.Errorf("cannot read the media list: %w", err)
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
 }
 
-// RankOf は一覧の並びでその写真が何番目かを返す（先頭が0）。写真ごとのURLから
+// RankOf は一覧の並びでその1件が何番目かを返す（先頭が0）。1件ごとのURLから
 // 開くとき、クライアントは通し番号で位置を決めるため、IDから番号へ引き直す経路が要る。
 // 該当が無い場合は ErrNotFound を返す。
 //
 // 並びは ListRange と同じ taken_at DESC, id DESC でなければならない。順序式が
-// 二重になるが、片方だけ変えるとURLが別の写真の位置を指すため、
+// 二重になるが、片方だけ変えるとURLが別の1件の位置を指すため、
 // TestRankOfLocatesThePhotoInListRange が両者の一致を縛っている。
 func (s *Store) RankOf(ctx context.Context, id string) (int, error) {
 	var takenAt int64
-	err := s.db.QueryRowContext(ctx, `SELECT taken_at FROM photos WHERE id = ?`, id).Scan(&takenAt)
+	err := s.db.QueryRowContext(ctx, `SELECT taken_at FROM media WHERE id = ?`, id).Scan(&takenAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
 	}
 	if err != nil {
-		return 0, fmt.Errorf("cannot get the photo: %w", err)
+		return 0, fmt.Errorf("cannot get the media: %w", err)
 	}
 
 	// 自分より前に並ぶ行を数える。OFFSET で数えるのと違い、途中の行を読まずに
 	// 索引だけで答えが出る。
 	var rank int
 	err = s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM photos
+		`SELECT COUNT(*) FROM media
 		 WHERE taken_at > ? OR (taken_at = ? AND id > ?)`,
 		takenAt, takenAt, id).Scan(&rank)
 	if err != nil {
-		return 0, fmt.Errorf("cannot count the photos before the photo: %w", err)
+		return 0, fmt.Errorf("cannot count the media before it: %w", err)
 	}
 	return rank, nil
 }
 
 // AllPaths は登録済みの全パスとそのmtimeを返す。スキャンでの差分検出に使う。
 func (s *Store) AllPaths(ctx context.Context) (map[string]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT path, mod_time FROM photos`)
+	rows, err := s.db.QueryContext(ctx, `SELECT path, mod_time FROM media`)
 	if err != nil {
 		return nil, fmt.Errorf("cannot list the paths: %w", err)
 	}
@@ -254,28 +254,28 @@ func (s *Store) AllPaths(ctx context.Context) (map[string]int64, error) {
 	return out, rows.Err()
 }
 
-// Count は登録枚数を返す。
+// Count は登録件数を返す。
 func (s *Store) Count(ctx context.Context) (int, error) {
 	var n int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photos`).Scan(&n); err != nil {
-		return 0, fmt.Errorf("cannot count the photos: %w", err)
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM media`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("cannot count the media: %w", err)
 	}
 	return n, nil
 }
 
-// DayGroup は、その日に撮った写真の枚数。一覧の区切りに使う。
+// DayGroup は、その日に撮った件数。一覧の区切りに使う。
 type DayGroup struct {
 	Date  string // "2006-01-02" 形式。ローカル時刻で判定する
 	Count int
 }
 
-// DayGroups は日ごとの枚数を新しい順に返す。一覧の区切りとスクラバーの目盛りに使う。
+// DayGroups は日ごとの件数を新しい順に返す。一覧の区切りとスクラバーの目盛りに使う。
 //
-// SQLの strftime は UTC で日を切るため使わない。ローカルで未明に撮った写真が
+// SQLの strftime は UTC で日を切るため使わない。ローカルで未明に撮ったものが
 // 前日に分類されてしまう。Go 側で time.Local に変換して数える。
 func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT taken_at FROM photos ORDER BY taken_at DESC, id DESC`)
+		`SELECT taken_at FROM media ORDER BY taken_at DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("cannot get the capture dates: %w", err)
 	}
@@ -297,11 +297,11 @@ func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 	return out, rows.Err()
 }
 
-func scanPhoto(row interface{ Scan(...any) error }) (photo.Photo, error) {
+func scanMedia(row interface{ Scan(...any) error }) (media.Media, error) {
 	var path string
 	var takenAt, modTime int64
 	if err := row.Scan(&path, &takenAt, &modTime); err != nil {
-		return photo.Photo{}, err
+		return media.Media{}, err
 	}
-	return photo.Restore(path, time.Unix(takenAt, 0), time.Unix(modTime, 0)), nil
+	return media.Restore(path, time.Unix(takenAt, 0), time.Unix(modTime, 0)), nil
 }

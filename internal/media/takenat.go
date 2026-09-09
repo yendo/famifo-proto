@@ -1,4 +1,4 @@
-package photo
+package media
 
 import "time"
 

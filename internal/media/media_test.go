@@ -1,4 +1,4 @@
-package photo_test
+package media_test
 
 import (
 	"io/fs"
@@ -6,16 +6,16 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 )
 
 func TestIDForIsStableAndDistinct(t *testing.T) {
 	t.Parallel()
-	a := photo.IDFor("/photos/a.jpg")
+	a := media.IDFor("/photos/a.jpg")
 
 	require.Len(t, a, 32)
-	require.Equal(t, a, photo.IDFor("/photos/a.jpg"))
-	require.NotEqual(t, a, photo.IDFor("/photos/b.jpg"))
+	require.Equal(t, a, media.IDFor("/photos/a.jpg"))
+	require.NotEqual(t, a, media.IDFor("/photos/b.jpg"))
 }
 
 // fakeFileInfo は New が読む ModTime だけを持つ fs.FileInfo。
@@ -33,9 +33,9 @@ func TestNewFillsTheFieldsFromThePathAndFileInfo(t *testing.T) {
 	t.Parallel()
 	const path = "/photos/A.JPG"
 
-	p := photo.New(path, fakeFileInfo{modTime: testModTime}, time.Time{})
+	p := media.New(path, fakeFileInfo{modTime: testModTime}, time.Time{})
 
-	require.Equal(t, photo.IDFor(path), p.ID(), "the ID is derived from the path")
+	require.Equal(t, media.IDFor(path), p.ID(), "the ID is derived from the path")
 	require.Equal(t, path, p.Path())
 	require.True(t, p.ModTime().Equal(testModTime))
 }

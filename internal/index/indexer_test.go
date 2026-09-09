@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/index"
 
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -115,7 +115,7 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path())
 	require.Len(t, f.generatedThumbs(t), 1, "nothing to borrow, so it makes its own")
@@ -146,7 +146,7 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path(), "indexed even with no thumbnail")
 	require.Empty(t, f.generatedThumbs(t), "HEIC cannot be decoded")
@@ -231,7 +231,7 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Empty(t, f.generatedThumbs(t), "makes none of its own when it can borrow")
 	small, _, _ := f.thumbs.SmallPath(got)
@@ -248,7 +248,7 @@ func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	small, _, _ := f.thumbs.SmallPath(got)
 	require.Equal(t, synology.ThumbMPath(path), small,
@@ -268,7 +268,7 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Empty(t, f.generatedThumbs(t))
 	_, _, ok := f.thumbs.SmallPath(got)

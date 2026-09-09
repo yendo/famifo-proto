@@ -16,7 +16,7 @@ import (
 
 	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/index/exif"
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
@@ -80,7 +80,7 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) error {
 	// Photoを先に組み立てる。ModTime が原本の版であり、thumb はそれを見て出力の
 	// 名前を決める。ここで確定させておけば、インデックスに載る版とサムネイルの
 	// 名前に入る版が食い違いようがない。
-	p := photo.New(path, fi, meta.TakenAt)
+	p := media.New(path, fi, meta.TakenAt)
 	if err := ix.thumbs.Prepare(p, meta.Orientation); err != nil {
 		return err
 	}
