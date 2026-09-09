@@ -75,6 +75,22 @@ func TestWatcherIgnoresNonPhotos(t *testing.T) {
 	requireCount(t, f, 1)
 }
 
+// fsnotify のイベントは @eaDir の中のファイルについても届く。走査とは別の経路なので
+// 別に確かめる。既存の TestWatcherIgnoresSynologyThumbnailsCreatedLater の動画版である。
+func TestWatcherIgnoresTheTranscodedVideoInEaDir(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	startWatcher(t, f)
+
+	entry := filepath.Join(f.root, "@eaDir", "clip.mp4")
+	require.NoError(t, os.MkdirAll(entry, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(entry, "SYNOPHOTO_FILM_H.mp4"), []byte("x"), 0o644))
+
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, "clip.mp4"), []byte("x"), 0o644))
+
+	requireCount(t, f, 1) // 原本だけが載る
+}
+
 func TestWatcherRemovesDeletedFile(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

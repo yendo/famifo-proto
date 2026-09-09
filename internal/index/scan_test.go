@@ -42,6 +42,28 @@ func TestScanIgnoresNonPhotos(t *testing.T) {
 	require.Equal(t, 0, stats.Skipped, "an unsupported extension is not counted as skipped")
 }
 
+// Synologyは動画の隣に SYNOPHOTO_FILM_H.mp4（H.264への変換版）を置く。拡張子は
+// 対応形式そのものなので、@eaDir を降りないガードが無ければ動画1本につき偽物が
+// 1件並ぶ。動画対応で初めて実害の出る箇所なので固定する。
+func TestScanIgnoresTheTranscodedVideoInEaDir(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, "clip.mp4"), []byte("x"), 0o644))
+
+	entry := filepath.Join(f.root, "@eaDir", "clip.mp4")
+	require.NoError(t, os.MkdirAll(entry, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(entry, "SYNOPHOTO_FILM_H.mp4"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(entry, "SYNOPHOTO_THUMB_M.jpg"), []byte("x"), 0o644))
+
+	stats, err := f.ix.Scan(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Indexed, "only the original is indexed")
+	n, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+}
+
 func TestScanSkipsBrokenFilesAndContinues(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
