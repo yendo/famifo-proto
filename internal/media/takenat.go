@@ -1,20 +1,23 @@
-package photo
+package media
 
 import "time"
 
-// resolveTakenAt は写真の撮影日時を決める。
+// resolveTakenAt は1件の撮影日時を決める。
 //
 // 撮影日時が取れないファイル（スクリーンショット、GIF、WebP、EXIFを削ぎ落と
-// された画像）は普通に存在し、それらを一覧から落とさないために必ずmodTimeで
-// 代替する。
-func resolveTakenAt(exifTakenAt, modTime time.Time) time.Time {
-	if exifTakenAt.IsZero() {
+// された画像、コンテナの壊れた動画）は普通に存在し、それらを一覧から落とさない
+// ために必ずmodTimeで代替する。
+func resolveTakenAt(takenAt, modTime time.Time) time.Time {
+	if takenAt.IsZero() {
 		return modTime
 	}
-	return assumeLocal(exifTakenAt)
+	return assumeLocal(takenAt)
 }
 
 // assumeLocal は時差の分からないEXIF日時を、撮影地の時刻とみなして解釈し直す。
+//
+// 動画には効かない。videometa が返す値は既に確定した瞬間で、Location が time.UTC
+// そのものになることはないためである（そう保証してある）。
 //
 // EXIFのDateTimeOriginalは時差を持たない。imagemeta はこれをUTCとして返すが、
 // 実際にはカメラが表示していた時刻なので、そのまま使うと時差のぶんずれる

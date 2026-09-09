@@ -22,7 +22,7 @@ func TestGalleryRendersTiles(t *testing.T) {
 	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
 	body := rec.Body.String()
 	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`)
-	require.Contains(t, body, `data-full="/photo/`+p.ID()+`"`)
+	require.Contains(t, body, `data-full="/file/`+p.ID()+`"`)
 }
 
 func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
@@ -72,7 +72,7 @@ func TestGalleryPointsEveryTileAtThumb(t *testing.T) {
 
 	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`,
 		"a tile points at /thumb/ even with no thumbnail; the handler falls back to the original")
-	require.NotContains(t, body, `src="/photo/`+p.ID()+`"`)
+	require.NotContains(t, body, `src="/file/`+p.ID()+`"`)
 }
 
 func TestGalleryOrdersNewestFirst(t *testing.T) {
@@ -99,7 +99,7 @@ func TestTilesReturnsFragmentOnly(t *testing.T) {
 	body := rec.Body.String()
 	require.NotContains(t, body, "<html", "a fragment, not a whole page")
 	require.NotContains(t, body, "<body")
-	require.Contains(t, body, "/photo/")
+	require.Contains(t, body, "/file/")
 }
 
 func TestTilesReturnsRequestedWindow(t *testing.T) {
@@ -308,5 +308,19 @@ func TestTilesLinkToThePhotoPage(t *testing.T) {
 	body := doGet(t, f.h, "/").Body.String()
 
 	require.Contains(t, body, `href="/item/`+p.ID()+`"`)
-	require.Contains(t, body, `data-full="/photo/`+p.ID()+`"`)
+	require.Contains(t, body, `data-full="/file/`+p.ID()+`"`)
+}
+
+// タイルが動画かどうかはHTMLに出る。app.js が拡大表示の切り替えに使い、
+// CSSが再生の印を重ねるのに使う。
+func TestGalleryMarksVideoTiles(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	still := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	video := f.addPhoto(t, "clip.mp4", time.Unix(1600000100, 0), noThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Regexp(t, `id="t-`+video.ID()+`"[^>]*data-video="1"`, body)
+	require.NotRegexp(t, `id="t-`+still.ID()+`"[^>]*data-video`, body)
 }

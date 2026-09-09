@@ -12,18 +12,18 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
 // photoOf はディスク上の src から、インデックスに載る1枚を組み立てる。
 // 本番と同じく ModTime が原本の版になる。
-func photoOf(t *testing.T, src string) photo.Photo {
+func photoOf(t *testing.T, src string) media.Media {
 	t.Helper()
 	fi, err := os.Stat(src)
 	require.NoError(t, err)
-	return photo.Restore(src, fi.ModTime(), fi.ModTime())
+	return media.Restore(src, fi.ModTime(), fi.ModTime())
 }
 
 // thumbPathFor は src のサムネイルが置かれるパスを返す。IDと版はどちらも
@@ -187,7 +187,7 @@ func TestGenerateFailsOnMissingFile(t *testing.T) {
 	pv := newTestProvider(t)
 	// 消えた直後にイベントを拾った状況。行だけあって原本が無い1枚を組み立てる。
 	missing := filepath.Join(t.TempDir(), "nope.jpg")
-	p := photo.Restore(missing, time.Unix(1600000000, 0), time.Unix(1600000000, 0))
+	p := media.Restore(missing, time.Unix(1600000000, 0), time.Unix(1600000000, 0))
 
 	require.Error(t, pv.Prepare(p, 1))
 }
@@ -198,10 +198,10 @@ func TestRemove(t *testing.T) {
 	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 	require.NoError(t, provide(t, pv, src, 1))
 
-	require.NoError(t, pv.Remove(photo.IDFor(src)))
+	require.NoError(t, pv.Remove(media.IDFor(src)))
 
 	require.NoFileExists(t, thumbPathFor(t, pv, src))
-	require.NoError(t, pv.Remove(photo.IDFor(src)), "deleting a thumbnail that does not exist is not an error")
+	require.NoError(t, pv.Remove(media.IDFor(src)), "deleting a thumbnail that does not exist is not an error")
 }
 
 // TestGenerateAppliesOrientation は、渡されたOrientationがサムネイルの

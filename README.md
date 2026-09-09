@@ -1,11 +1,11 @@
 # famifo-proto
 
-Indexes photos on a local disk and serves them as a browsable gallery to any browser on your LAN.
+Indexes photos and videos on a local disk and serves them as a browsable gallery to any browser on your LAN.
 
 ## Features
 
-- Indexes photos and presents them as a single gallery, ignoring the folder hierarchy
-- Ordered by EXIF capture time, falling back to the file's modification time
+- Indexes photos and videos and presents them as a single gallery, ignoring the folder hierarchy
+- Ordered by capture time, read from EXIF for photos and from the container for videos, falling back to the file's modification time
 - Full scan at startup, then follows changes automatically via fsnotify
 - A single binary. No cgo, no external database server
 
@@ -15,8 +15,7 @@ Indexes photos on a local disk and serves them as a browsable gallery to any bro
 |---|---|---|
 | `.jpg` `.jpeg` `.png` `.gif` `.webp` | generated | |
 | `.heic` `.heif` | borrowed from Synology if one is there | Synology's large JPEG is served in place of the original, so these display outside Safari too. With nothing to borrow the original is served as-is and only Safari shows it |
-
-Video is out of scope.
+| `.mp4` `.mov` | borrowed from Synology if one is there | famifo never decodes video, so it makes no thumbnail of its own. With nothing to borrow the tile carries a play mark and no picture |
 
 ### Synology thumbnails
 
@@ -30,6 +29,14 @@ directory instead of the original. famifo cannot decode HEIC and no browser but 
 display it, so the borrowed JPEG is what makes those photos viewable on Android and on a PC.
 Safari gives up some resolution in exchange. A HEIC with nothing to borrow still gets its
 original.
+
+Videos borrow twice. The tile comes from `SYNOPHOTO_THUMB_M.jpg` just like a photo's, and
+playing one serves `SYNOPHOTO_FILM_H.mp4` — Synology's H.264 transcode — instead of the
+original. Phones record HEVC, which plays only where the device has a hardware decoder, so
+the transcode is what makes a video watchable on Android and on a PC. Unlike the still
+thumbnails, a transcode is not implied by the thumbnail being there: the two are separate
+jobs and either can fail on its own, so its presence is checked directly. A video with no
+transcode to borrow gets its original, and whether it plays is up to the device.
 
 `@eaDir` is only ever read. famifo never writes to or deletes anything inside it.
 

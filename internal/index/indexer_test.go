@@ -8,11 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/index"
 
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -115,7 +116,7 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path())
 	require.Len(t, f.generatedThumbs(t), 1, "nothing to borrow, so it makes its own")
@@ -146,7 +147,7 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path(), "indexed even with no thumbnail")
 	require.Empty(t, f.generatedThumbs(t), "HEIC cannot be decoded")
@@ -155,7 +156,7 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	path := filepath.Join(f.root, "a.mp4")
+	path := filepath.Join(f.root, "a.avi")
 	require.NoError(t, os.WriteFile(path, []byte("video"), 0o644))
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path), "an unsupported file is not an error")
@@ -163,6 +164,55 @@ func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
+}
+
+// 動画は自前でサムネイルを作れないが、インデックスには載る。壊れているかどうかは
+// デコードして初めて分かることで、famifoにデコーダが無い以上、載せる前に判定する
+// 手段が無い。黙って消えるより、絵の無いタイルとして出るほうを選ぶ。
+func TestIndexFileIndexesVideosWithoutAThumbnail(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	path := filepath.Join(f.root, "clip.mp4")
+	require.NoError(t, os.WriteFile(path, []byte("not a real container"), 0o644))
+
+	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	require.NoError(t, err)
+	require.Equal(t, path, got.Path())
+	require.Empty(t, f.generatedThumbs(t), "famifo never generates a thumbnail for a video")
+}
+
+// 動画の撮影日時はEXIFではなくコンテナから来る。mtimeとは違う値になることで、
+// videometa が実際に読まれていることが分かる。
+func TestIndexFileReadsTheCaptureTimeFromTheContainer(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	want := time.Date(2026, 9, 9, 9, 39, 6, 0, time.UTC)
+	path := writeTestMP4(t, f.root, "clip.mp4", want)
+
+	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	require.NoError(t, err)
+	require.True(t, got.TakenAt().Equal(want), "got %v", got.TakenAt())
+}
+
+// コンテナから読めない動画はmtimeに落ちる。EXIFの無い写真と同じ扱いである。
+func TestIndexFileFallsBackToModTimeForAnUnreadableVideo(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	path := filepath.Join(f.root, "clip.mp4")
+	require.NoError(t, os.WriteFile(path, []byte("not a container"), 0o644))
+
+	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+
+	fi, err := os.Stat(path)
+	require.NoError(t, err)
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	require.NoError(t, err)
+	// インデックスは撮影日時をUnix秒で持つので、mtimeのナノ秒までは残らない。
+	require.Equal(t, fi.ModTime().Unix(), got.TakenAt().Unix())
 }
 
 func TestIndexFileIgnoresDirectories(t *testing.T) {
@@ -231,7 +281,7 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Empty(t, f.generatedThumbs(t), "makes none of its own when it can borrow")
 	small, _, _ := f.thumbs.SmallPath(got)
@@ -248,7 +298,7 @@ func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	small, _, _ := f.thumbs.SmallPath(got)
 	require.Equal(t, synology.ThumbMPath(path), small,
@@ -268,7 +318,7 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
-	got, err := f.st.GetByID(context.Background(), photo.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Empty(t, f.generatedThumbs(t))
 	_, _, ok := f.thumbs.SmallPath(got)

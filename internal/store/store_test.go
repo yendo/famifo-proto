@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/store"
 	_ "modernc.org/sqlite" // PRAGMAを直接読むために自前で接続する
 )
@@ -23,8 +23,8 @@ func openTestStore(t *testing.T) *store.Store {
 	return s
 }
 
-func photoAt(path string, takenAt time.Time) photo.Photo {
-	return photo.Restore(path, takenAt, takenAt)
+func photoAt(path string, takenAt time.Time) media.Media {
+	return media.Restore(path, takenAt, takenAt)
 }
 
 // store.Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
@@ -173,7 +173,7 @@ func TestAllPaths(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	p := photo.Restore("/photos/a.jpg",
+	p := media.Restore("/photos/a.jpg",
 		time.Unix(1600000000, 0), time.Unix(1650000000, 0))
 	require.NoError(t, s.Upsert(ctx, p))
 
@@ -218,7 +218,7 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 	// テストで句の削除だけを検出することは原理的にできない。
 	paths := []string{"/photos/a.jpg", "/photos/b.jpg", "/photos/c.jpg"}
 	want := append([]string(nil), paths...)
-	sort.Slice(want, func(i, j int) bool { return photo.IDFor(want[i]) > photo.IDFor(want[j]) })
+	sort.Slice(want, func(i, j int) bool { return media.IDFor(want[i]) > media.IDFor(want[j]) })
 
 	var seen []string
 	for i := range 3 {
@@ -271,7 +271,7 @@ func TestRankOfLocatesThePhotoInListRange(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 	same := time.Unix(1600000100, 0)
-	photos := []photo.Photo{
+	photos := []media.Media{
 		photoAt("/photos/new.jpg", time.Unix(1600000200, 0)),
 		photoAt("/photos/tie-a.jpg", same),
 		photoAt("/photos/tie-b.jpg", same),
@@ -296,7 +296,7 @@ func TestRankOfMissingReturnsErrNotFound(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 
-	_, err := s.RankOf(context.Background(), photo.IDFor("/photos/gone.jpg"))
+	_, err := s.RankOf(context.Background(), media.IDFor("/photos/gone.jpg"))
 
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
@@ -415,13 +415,13 @@ func TestOpenRejectsADatabaseWhoseColumnsHaveChanged(t *testing.T) {
 	// taken_at を別名にした古い世代のDB。索引の名前は今と同じなので、
 	// CREATE INDEX IF NOT EXISTS も作り直さない。
 	_, err = db.Exec(`
-CREATE TABLE photos (
+CREATE TABLE media (
     id       TEXT PRIMARY KEY,
     path     TEXT NOT NULL UNIQUE,
     shot_at  INTEGER NOT NULL,
     mod_time INTEGER NOT NULL
 );
-CREATE INDEX idx_photos_order ON photos(shot_at DESC, id DESC);`)
+CREATE INDEX idx_media_order ON media(shot_at DESC, id DESC);`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 

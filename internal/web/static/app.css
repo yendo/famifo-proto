@@ -143,6 +143,32 @@ body.locked {
 	object-fit: cover;
 }
 
+/* 動画のタイルには再生の印を重ねる。借りたサムネイルがあってもなくても同じ印が
+   乗るので、「動画である」ことは常に伝わる。数千件を貼り替えるので要素は足さず、
+   擬似要素だけで描く。 */
+.tile[data-video] {
+	position: relative;
+}
+.tile[data-video]::before {
+	content: "";
+	position: absolute;
+	right: 6px;
+	bottom: 6px;
+	width: 22px;
+	height: 22px;
+	border-radius: 50%;
+	background: rgba(0, 0, 0, 0.55);
+}
+.tile[data-video]::after {
+	content: "";
+	position: absolute;
+	right: 13px;
+	bottom: 12px;
+	border-style: solid;
+	border-width: 5px 0 5px 8px;
+	border-color: transparent transparent transparent #fff;
+}
+
 .lightbox {
 	position: fixed;
 	inset: 0;
@@ -162,6 +188,16 @@ body.locked {
 	max-height: 100%;
 	object-fit: contain;
 }
+.lightbox video {
+	max-width: 100%;
+	max-height: 100%;
+}
+.lb-error {
+	position: absolute;
+	color: rgba(255, 255, 255, 0.8);
+	font-size: 0.9rem;
+	pointer-events: none;
+}
 
 .lb-nav {
 	position: absolute;
@@ -180,6 +216,12 @@ body.locked {
 .lb-next {
 	right: 0;
 }
+/* 動画のときは再生コントロールの帯を前後送りで覆わない。lb-nav は左右22%を
+   上下いっぱいに占めるので、そのままだとシークバーの両端が押せない。 */
+.lightbox.playing .lb-nav {
+	bottom: 4rem;
+}
+
 /* タッチ端末では矢印を出さない（スワイプで操作するため） */
 @media (hover: hover) {
 	.lb-nav:hover {

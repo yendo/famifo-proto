@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/web"
 
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -59,12 +59,12 @@ const (
 )
 
 // addPhoto は原本ファイルとDB行を用意する。kind に応じてサムネイルも置く。
-func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, kind thumbKind) photo.Photo {
+func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, kind thumbKind) media.Media {
 	t.Helper()
 	path := filepath.Join(f.photoDir, name)
 	require.NoError(t, os.WriteFile(path, []byte("original-"+name), 0o644))
 
-	p := photo.Restore(path, takenAt, takenAt)
+	p := media.Restore(path, takenAt, takenAt)
 	require.NoError(t, f.st.Upsert(context.Background(), p))
 
 	switch kind {
@@ -180,7 +180,7 @@ func TestServeOriginal(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	rec := doGet(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/file/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String())
@@ -192,7 +192,7 @@ func TestServeOriginalSetsHEICContentType(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
-	rec := doGet(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/file/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.heic", rec.Body.String(),
@@ -205,7 +205,7 @@ func TestServeOriginalNotFoundForUnknownID(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
 
-	rec := doGet(t, f.h, "/photo/deadbeef")
+	rec := doGet(t, f.h, "/file/deadbeef")
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
@@ -215,9 +215,9 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 	f := newWebFixture(t, 10)
 	// パスではなくIDでしか引けないため、traversalは構造的に成立しない
 	for _, target := range []string{
-		"/photo/../../etc/passwd",
+		"/file/../../etc/passwd",
 		"/thumb/..%2f..%2fetc%2fpasswd",
-		"/photo/" + photo.IDFor("/etc/passwd"),
+		"/file/" + media.IDFor("/etc/passwd"),
 	} {
 		t.Run(target, func(t *testing.T) {
 			rec := doGet(t, f.h, target)
@@ -242,7 +242,7 @@ func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := doGet(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/file/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-xl-a.heic", rec.Body.String(),
@@ -256,7 +256,7 @@ func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := doGet(t, f.h, "/photo/"+p.ID())
+	rec := doGet(t, f.h, "/file/"+p.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String(),

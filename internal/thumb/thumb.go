@@ -6,7 +6,8 @@
 // 使う。置き場所の規則を知るのはこのパッケージだけで、どちらの側もサムネイルの
 // ディレクトリを持たない。
 //
-// 生成にHEICは来ない（自前ではデコードしない方針）。@eaDir のパスの組み立てと
+// 生成にHEICと動画は来ない（自前ではデコードしない方針）。動画は絵も再生用の
+// 変換版も借りるだけで、famifoが作るものは何も無い。@eaDir のパスの組み立てと
 // 存在確認は internal/synology が持ち、ここはそれを使って選ぶだけである。
 package thumb
 
@@ -24,7 +25,7 @@ import (
 	_ "image/png" // image.Decode にPNGを登録する
 
 	"github.com/yendo/famifo-proto/internal/imagefmt"
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/synology"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // image.Decode にWebPを登録する（デコードのみ）
@@ -67,7 +68,7 @@ func NewProvider(dir string) (*Provider, error) {
 //
 // 秒に丸めるのは、DBが mod_time を Unix 秒で持っているのに合わせるためと、
 // ファイルシステムによって時刻の粒度が違うのを避けるため。
-func (pv *Provider) GeneratedPath(p photo.Photo) string {
+func (pv *Provider) GeneratedPath(p media.Media) string {
 	name := fmt.Sprintf("%s-%d.jpg", p.ID(), p.ModTime().Unix())
 	return filepath.Join(pv.shardDir(p.ID()), name)
 }
@@ -90,7 +91,7 @@ func (pv *Provider) GeneratedPath(p photo.Photo) string {
 // 「famifoがデコードできる形式」と「ブラウザが表示できる形式」が一致しているためで、
 // 別の問いである。両者が食い違う形式（Goがデコードできないがブラウザは表示できる
 // AVIFなど）を表に足すときは、ここを分ける必要がある。
-func (pv *Provider) SmallPath(p photo.Photo) (path, contentType string, ok bool) {
+func (pv *Provider) SmallPath(p media.Media) (path, contentType string, ok bool) {
 	if synology.HasThumbM(p.Path()) {
 		m := synology.ThumbMPath(p.Path())
 		return m, imagefmt.ContentType(m), true
@@ -108,17 +109,29 @@ func (pv *Provider) SmallPath(p photo.Photo) (path, contentType string, ok bool)
 
 // LargePath は拡大表示に配信するファイルのパスと、そのMIMEタイプを返す。
 //
-// HEICはSafari以外のブラウザが表示できない。@eaDir から借りられるなら原本ではなく
-// SynologyのXL（長辺1707px）を返す。存在を確かめるのはMだけで、MとXLは同じ生成器が
-// 一緒に書くので、XLの存在はそこから導ける。
+// 借りるものが2種類ある。HEICはSafari以外のブラウザが表示できないので、@eaDir から
+// 借りられるなら原本ではなくSynologyのXL（長辺1707px）を返す。動画はHEVCが端末に
+// よって再生できないので、Synologyが作ったH.264版（SYNOPHOTO_FILM_H.mp4）を返す。
 //
-// 借りたXLは .jpg なので、原本がHEICでもMIMEは image/jpeg になる。呼び出し側が
-// 選ばれたパスからMIMEを引き直さずに済むよう、ここで一緒に返す。
-func (pv *Provider) LargePath(p photo.Photo) (path, contentType string) {
+// 動画を先に見るのは、静止画のXLを掴ませないためである。動画にもMとXLは作られるので、
+// 順序を逆にすると再生する場面で1枚の静止画が配られる。
+//
+// 写真では「MとXLは同じ生成器が一緒に書く」としてXLの存在を確かめていないが、動画では
+// その導出が成り立たない。サムネイル生成と動画変換は別の工程で、実測した @eaDir にも
+// SYNOPHOTO_THUMB_M.jpg があるのに SYNOPHOTO_FILM.fail があった。だからフィルムは
+// HasFilm で自分で確かめる。
+//
+// 借りたXLは .jpg、借りたフィルムは .mp4 なので、選ばれたパスからMIMEを引き直せる。
+// 呼び出し側が引き直さずに済むよう、ここで一緒に返す。
+func (pv *Provider) LargePath(p media.Media) (path, contentType string) {
 	path = p.Path()
-	if imagefmt.IsSupported(path) && !imagefmt.IsDecodable(path) &&
-		synology.HasThumbM(p.Path()) {
-		path = synology.ThumbXLPath(p.Path())
+	switch {
+	case imagefmt.IsVideo(path):
+		if synology.HasFilm(path) {
+			path = synology.FilmPath(path)
+		}
+	case imagefmt.IsSupported(path) && !imagefmt.IsDecodable(path) && synology.HasThumbM(path):
+		path = synology.ThumbXLPath(path)
 	}
 	return path, imagefmt.ContentType(path)
 }
@@ -137,7 +150,7 @@ func (pv *Provider) LargePath(p photo.Photo) (path, contentType string) {
 //
 // 生成に失敗した場合だけエラーを返す。インデックスに載せるかどうかは呼び出し側の
 // 判断である。
-func (pv *Provider) Prepare(p photo.Photo, orientation uint16) error {
+func (pv *Provider) Prepare(p media.Media, orientation uint16) error {
 	switch {
 	case synology.HasThumbM(p.Path()):
 		// 借りるほうへ切り替わったら、自前で作ったものは用済みになる。
@@ -172,7 +185,7 @@ func (pv *Provider) Prepare(p photo.Photo, orientation uint16) error {
 //
 // 作った（または既にあった）サムネイルのパスを返す。呼び出し側が、それ以外の版を
 // 掃除するために使う。
-func (pv *Provider) generate(p photo.Photo, orientation uint16) (string, error) {
+func (pv *Provider) generate(p media.Media, orientation uint16) (string, error) {
 	out := pv.GeneratedPath(p)
 	if isRegularFile(out) {
 		return out, nil

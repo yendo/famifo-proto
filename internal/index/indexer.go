@@ -1,8 +1,8 @@
-// Package index はディスク上の写真とSQLiteインデックスを同期させる。
+// Package index はディスク上の写真・動画とSQLiteインデックスを同期させる。
 // 起動時のスキャンとfsnotifyによる追従の両方をここで担う。
 //
-// 1枚を取り込む手順のうち、EXIFの読み取りは exif が担う。取り込み時にしか
-// 使わないのでサブパッケージに置く。
+// 1件を取り込む手順のうち、撮影日時の読み取りは exif（静止画）と videometa（動画）が
+// 担う。どちらも取り込み時にしか使わないのでサブパッケージに置く。
 //
 // サムネイルの調達は internal/thumb が担う。こちらは配信側とも共有するため、
 // 呼び出し側が組み立てたものを受け取る。
@@ -13,10 +13,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/index/exif"
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/index/videometa"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
@@ -73,18 +75,30 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) error {
 		return nil
 	}
 
-	// EXIFはここで1回だけ読む。撮影日時とサムネイルの向きの両方がこの1回で
-	// 決まるので、写真1枚につきEXIFのパースは1回で済む。
-	meta := exif.Read(path)
+	// 撮影日時の出どころは写真と動画で違う。静止画のEXIFは機種によらず時差を
+	// 持たないローカル時刻だが、動画のコンテナは機種によって規約が割れるので、
+	// videometa がブランドごとに解釈を変える。どちらもここで1回だけ読む。
+	//
+	// 向きは動画では常に1でよい。回転はブラウザが tkhd の行列を見て自分で当て、
+	// 借りるサムネイルはSynologyが回転済みで書いている。famifoが動画の画素に
+	// 触ることは無いので、向きを持ち回る意味がない。
+	var takenAt time.Time
+	orientation := uint16(1)
+	if imagefmt.IsVideo(path) {
+		takenAt = videometa.Read(path).TakenAt
+	} else {
+		meta := exif.Read(path)
+		takenAt, orientation = meta.TakenAt, meta.Orientation
+	}
 
-	// Photoを先に組み立てる。ModTime が原本の版であり、thumb はそれを見て出力の
+	// Mediaを先に組み立てる。ModTime が原本の版であり、thumb はそれを見て出力の
 	// 名前を決める。ここで確定させておけば、インデックスに載る版とサムネイルの
 	// 名前に入る版が食い違いようがない。
-	p := photo.New(path, fi, meta.TakenAt)
-	if err := ix.thumbs.Prepare(p, meta.Orientation); err != nil {
+	m := media.New(path, fi, takenAt)
+	if err := ix.thumbs.Prepare(m, orientation); err != nil {
 		return err
 	}
-	return ix.st.Upsert(ctx, p)
+	return ix.st.Upsert(ctx, m)
 }
 
 // removeFile はインデックスとサムネイルの両方から写真を消す。

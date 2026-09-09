@@ -8,16 +8,16 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/yendo/famifo-proto/internal/photo"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/store"
 )
 
-// noOpenPhoto は「開いた写真は無い」ことを表す通し番号。
-const noOpenPhoto = -1
+// noOpenItem は「開いた写真は無い」ことを表す通し番号。
+const noOpenItem = -1
 
 // handleGallery はギャラリーのトップページを返す。
 func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
-	s.renderGallery(w, r, noOpenPhoto)
+	s.renderGallery(w, r, noOpenItem)
 }
 
 // handleItem は写真ごとのURLを受け、その写真を開いた状態のギャラリーを返す。
@@ -39,7 +39,7 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 }
 
 // renderGallery はギャラリーのHTMLを組み立てて返す。openIndex は開いた状態で
-// 表示する写真の通し番号で、noOpenPhoto なら閉じたまま開く。
+// 表示する写真の通し番号で、noOpenItem なら閉じたまま開く。
 // 先頭の塊を埋めた状態で返すので、開いた直後に灰色の画面が出ない。
 func (s *Server) renderGallery(w http.ResponseWriter, r *http.Request, openIndex int) {
 	tiles, err := s.buildRange(r, 0, s.chunkSize)
@@ -104,7 +104,7 @@ func (s *Server) handleTiles(w http.ResponseWriter, r *http.Request) {
 // handleThumb は一覧のタイルを配信する。どのファイルを出すかは thumb が決める。
 // 出せる絵が無ければプレースホルダに差し替えるので、404にはならない。
 func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.lookupPhoto(w, r)
+	p, ok := s.lookupMedia(w, r)
 	if !ok {
 		return
 	}
@@ -119,9 +119,9 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-// handlePhoto は拡大表示用の画像を配信する。
-func (s *Server) handlePhoto(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.lookupPhoto(w, r)
+// handleFile は拡大表示用の画像を配信する。
+func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.lookupMedia(w, r)
 	if !ok {
 		return
 	}
@@ -166,17 +166,17 @@ func serveNoPreview(w http.ResponseWriter) {
 	w.Write(noPreview)
 }
 
-// lookupPhoto はURLのIDから写真を引く。
+// lookupMedia はURLのIDから写真を引く。
 // パスではなくIDを経由することで、インデックスに無いファイルは配信できない。
-func (s *Server) lookupPhoto(w http.ResponseWriter, r *http.Request) (photo.Photo, bool) {
+func (s *Server) lookupMedia(w http.ResponseWriter, r *http.Request) (media.Media, bool) {
 	p, err := s.st.GetByID(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
-		return photo.Photo{}, false
+		return media.Media{}, false
 	}
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return photo.Photo{}, false
+		return media.Media{}, false
 	}
 	return p, true
 }
