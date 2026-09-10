@@ -1,8 +1,9 @@
 package oidcauth_test
 
 // 偽のIdPを立てて認可コードフローを確かめる。IDトークンはテスト内で作ったRSA鍵で
-// 署名する。手書きの検証を選んだので、正常系だけでなく「通ってはいけないもの」を
-// 通さないことを固定するのが主眼である。
+// 署名する。正常系だけでなく「通ってはいけないもの」を通さないことを固定するのが
+// 主眼である。検証の大半はgo-oidcに委ねているが、依存の入れ替えやアップグレードが
+// 検証を静かに緩めても気づけるように、拒否されるべき経路をここでピン留めする。
 
 import (
 	"context"
@@ -175,7 +176,9 @@ func TestExchangeRejectsNonceMismatch(t *testing.T) {
 	i.claims["nonce"] = "someone-elses-nonce"
 
 	_, err = c.Exchange(context.Background(), "good-code", p)
-	require.Error(t, err)
+	// nonceの照合はgo-oidcに移していない、famifo自身のコードである。ここでの
+	// アサーションを緩めると、この防御が別の理由で通っていても気づけなくなる。
+	require.ErrorContains(t, err, "the id_token nonce does not match the one we sent")
 }
 
 func TestExchangeRejectsAnotherSigningKey(t *testing.T) {
@@ -263,6 +266,20 @@ func TestExchangeRejectsAnotherIssuer(t *testing.T) {
 
 	_, err = c.Exchange(context.Background(), "good-code", p)
 	require.Error(t, err)
+}
+
+func TestExchangeRejectsEmptySubject(t *testing.T) {
+	// go-oidc はsubが空でも拒否しない。空のままだと誰のものでもない利用者として
+	// セッションを張ってしまうので、famifo側で弾く。
+	i := newIDP(t)
+	c := newClient(t, i)
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+	i.claims["nonce"] = p.Nonce
+	i.claims["sub"] = ""
+
+	_, err = c.Exchange(context.Background(), "good-code", p)
+	require.ErrorContains(t, err, "the id_token carries no subject")
 }
 
 func TestExchangeFallsBackToSubWhenUsernameIsAbsent(t *testing.T) {

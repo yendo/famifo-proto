@@ -130,6 +130,11 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 	if idToken.Nonce != p.Nonce {
 		return Identity{}, fmt.Errorf("the id_token nonce does not match the one we sent")
 	}
+	// go-oidc は sub が空でも拒否しない。空のままセッションを張ると、
+	// 誰のものでもない利用者としてログインを許してしまうので、ここで弾く。
+	if idToken.Subject == "" {
+		return Identity{}, fmt.Errorf("the id_token carries no subject")
+	}
 	var claims struct {
 		Username string   `json:"username"`
 		Email    string   `json:"email"`
@@ -149,7 +154,8 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 }
 
 func randomString() (string, error) {
-	b := make([]byte, 32) // base64urlで43文字。PKCEの下限を満たす。
+	// state と nonce に使う。PKCEのverifierはoauth2.GenerateVerifier()が作る。
+	b := make([]byte, 32) // base64urlで43文字。
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("cannot generate a random value: %w", err)
 	}
