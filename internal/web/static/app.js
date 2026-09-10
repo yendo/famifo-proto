@@ -253,6 +253,13 @@ const famifo = (() => {
 				`/tiles?offset=${ci * chunkSize}&limit=${chunkSize}`,
 				{ signal: controller.signal },
 			);
+			// 401 はセッションが切れたということ。ここで握り潰すと、タイルが永久に
+			// 埋まらないまま理由の分からない画面が残る。読み直せば未認証の GET / が
+			// /login へ導いてくれる。
+			if (res.status === 401) {
+				location.reload();
+				return new Promise(() => {}); // 再読み込みまで呼び出し側を待たせる
+			}
 			if (!res.ok) throw new Error(`items ${res.status}`);
 			const html = await res.text();
 			const tiles = parseTiles(html);
