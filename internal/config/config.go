@@ -151,8 +151,16 @@ func (c Config) SessionKeyPath() string { return filepath.Join(c.DataDir, "sessi
 
 // RedirectURI は IdP に登録する戻り先を組み立てる。
 // ここで組み立てた文字列と、IdP 側に登録した文字列は完全に一致していなければならない。
-func (c Config) RedirectURI() string { return strings.TrimSuffix(c.ExternalURL, "/") + "/auth/callback" }
+func (c Config) RedirectURI() string {
+	return strings.TrimSuffix(c.ExternalURL, "/") + "/auth/callback"
+}
 
 // CookieSecure は Cookie に Secure を付けるかを返す。
 // ヘッダからは推測しない。設定した外部URLの scheme だけで決める。
-func (c Config) CookieSecure() bool { return strings.HasPrefix(c.ExternalURL, "https://") }
+// Validate と同じ net/url での解釈に揃える。url.Parse は scheme を小文字化するので、
+// "HTTPS://..." のような大文字混じりの入力でも文字列プレフィックス比較のように
+// 見落とさない。
+func (c Config) CookieSecure() bool {
+	u, err := url.Parse(c.ExternalURL)
+	return err == nil && u.Scheme == "https"
+}

@@ -202,3 +202,9 @@ func TestCookieSecureIsFalseForHTTP(t *testing.T) {
 	c.ExternalURL = "http://famifo.example.invalid:8080"
 	require.False(t, c.CookieSecure())
 }
+
+func TestCookieSecureIsTrueForUppercaseScheme(t *testing.T) {
+	c := validConfig(t)
+	c.ExternalURL = "HTTPS://famifo.example.invalid:8443"
+	require.True(t, c.CookieSecure())
+}
