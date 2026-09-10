@@ -27,11 +27,12 @@ import (
 // idp はテスト用のIdP。既定では正しく振る舞い、フィールドを差し替えると壊れた
 // 応答を返す。
 type idp struct {
-	srv    *httptest.Server
-	key    *rsa.PrivateKey
-	claims map[string]any // 上書きしたいclaim
-	alg    string         // IDトークンのヘッダに載せるalg
-	sign   func(signing string) string // 署名の作り方。既定はRS256
+	srv            *httptest.Server
+	key            *rsa.PrivateKey
+	claims         map[string]any // 上書きしたいclaim
+	alg            string         // IDトークンのヘッダに載せるalg
+	sign           func(signing string) string // 署名の作り方。既定はRS256
+	issuerOverride string                       // discoveryが名乗るissuer。空ならi.srv.URL
 }
 
 func newIDP(t *testing.T) *idp {
@@ -42,8 +43,12 @@ func newIDP(t *testing.T) *idp {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		issuer := i.srv.URL
+		if i.issuerOverride != "" {
+			issuer = i.issuerOverride
+		}
 		writeJSON(w, map[string]any{
-			"issuer":                 i.srv.URL,
+			"issuer":                 issuer,
 			"authorization_endpoint": i.srv.URL + "/authorize",
 			"token_endpoint":         i.srv.URL + "/token",
 			"jwks_uri":               i.srv.URL + "/jwks",
@@ -278,6 +283,16 @@ func TestExchangeReportsATokenEndpointError(t *testing.T) {
 }
 
 func TestNewFailsWhenTheIssuerDoesNotMatch(t *testing.T) {
+	i := newIDP(t)
+	i.issuerOverride = "https://evil.example.invalid/sso"
+	_, err := oidcauth.New(context.Background(), oidcauth.Config{
+		Issuer: i.srv.URL, ClientID: "famifo", ClientSecret: "s",
+		RedirectURI: "https://famifo.example.invalid/auth/callback",
+	})
+	require.ErrorContains(t, err, "the issuer does not match")
+}
+
+func TestNewFailsWhenDiscoveryIsUnreachable(t *testing.T) {
 	i := newIDP(t)
 	_, err := oidcauth.New(context.Background(), oidcauth.Config{
 		Issuer: i.srv.URL + "/elsewhere", ClientID: "famifo", ClientSecret: "s",
