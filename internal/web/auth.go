@@ -3,6 +3,8 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -112,32 +114,32 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie(flowCookie)
 	if err != nil {
-		http.Error(w, "the login attempt has expired, please start again", http.StatusBadRequest)
+		s.callbackError(w, "the login attempt has expired, please start again", http.StatusBadRequest)
 		return
 	}
 	raw, ok := s.flowCodec.Verify(c.Value, time.Now())
 	if !ok {
-		http.Error(w, "the login attempt has expired, please start again", http.StatusBadRequest)
+		s.callbackError(w, "the login attempt has expired, please start again", http.StatusBadRequest)
 		return
 	}
 	var f flowState
 	if err := json.Unmarshal([]byte(raw), &f); err != nil {
-		http.Error(w, "the login attempt is unreadable, please start again", http.StatusBadRequest)
+		s.callbackError(w, "the login attempt is unreadable, please start again", http.StatusBadRequest)
 		return
 	}
 	// stateが合わないものを通すとCSRFになる。
 	if q := r.URL.Query().Get("state"); q == "" || q != f.State {
-		http.Error(w, "the login attempt does not match, please start again", http.StatusBadRequest)
+		s.callbackError(w, "the login attempt does not match, please start again", http.StatusBadRequest)
 		return
 	}
 	if e := r.URL.Query().Get("error"); e != "" {
 		s.log.Warn("the identity provider refused the login", "err", e)
-		http.Error(w, "the identity provider refused the login", http.StatusBadRequest)
+		s.callbackError(w, "the identity provider refused the login", http.StatusBadRequest)
 		return
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		http.Error(w, "the identity provider returned no code", http.StatusBadRequest)
+		s.callbackError(w, "the identity provider returned no code", http.StatusBadRequest)
 		return
 	}
 
@@ -145,7 +147,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// famifo は動いているがIdPとの往復が失敗した、という区別を残す。
 		s.log.Error("cannot complete the login", "err", err)
-		http.Error(w, "cannot reach the identity provider", http.StatusBadGateway)
+		s.callbackError(w, "cannot reach the identity provider", http.StatusBadGateway)
 		return
 	}
 	s.clearCookie(w, flowCookie)
@@ -172,6 +174,19 @@ func safeNext(next string) string {
 		return "/"
 	}
 	return next
+}
+
+// callbackError は失敗した /auth/callback を、/login へのリンク付きの小さな
+// HTMLページで終える。素のtext/plainな400だとURLバーを手で書き換えるしか
+// 戻る手段がない。ここで一時Cookieも消す。消さないと、失敗した往復のあとも
+// famifo_oidc が最長flowTTLぶん残り、「やり直してください」が実際にはやり直し
+// にならない（別タブが一時Cookieを上書きしてここに来るのは日常的に起きる）。
+func (s *Server) callbackError(w http.ResponseWriter, message string, status int) {
+	s.clearCookie(w, flowCookie)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, `<!doctype html><title>Sign-in failed</title><p>%s</p><p><a href="/login">Try signing in again</a></p>`,
+		html.EscapeString(message))
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int) {

@@ -179,6 +179,31 @@ func TestCallbackReportsAProviderError(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, resp.StatusCode)
 }
 
+// TestCallbackFailureClearsTheFlowCookie は失敗した往復のあとにやり直しても、
+// 古い一時Cookieがそのまま10分残らないことを固定する。残ると「やり直し」が
+// 実際にはやり直しにならない。
+func TestCallbackFailureClearsTheFlowCookie(t *testing.T) {
+	f := newAuthFixture(t)
+	start := get(t, f.h, "/login")
+	flow := cookieNamed(start, "famifo_oidc")
+
+	resp := get(t, f.h, "/auth/callback?code=good&state=not-the-one", flow)
+	cleared := cookieNamed(resp, "famifo_oidc")
+	require.NotNil(t, cleared, "the flow cookie must be reset on failure")
+	require.Less(t, cleared.MaxAge, 0, "the flow cookie must be told to expire")
+}
+
+// TestCallbackFailureGivesAWayBack はエラー画面に /login への導線があることを
+// 固定する。別タブが一時Cookieを上書きしてここに来るのは日常的に起きる。
+func TestCallbackFailureGivesAWayBack(t *testing.T) {
+	f := newAuthFixture(t)
+	start := get(t, f.h, "/login")
+	flow := cookieNamed(start, "famifo_oidc")
+
+	resp := get(t, f.h, "/auth/callback?code=good&state=not-the-one", flow)
+	require.Contains(t, bodyOf(t, resp), `href="/login"`)
+}
+
 func TestNextMustBeALocalPath(t *testing.T) {
 	// "//evil.example" はプロトコル相対URLで、別サイトへのリダイレクトになる。
 	f := newAuthFixture(t)
