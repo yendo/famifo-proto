@@ -28,7 +28,8 @@ Identity Provider に委ねる。どちらを採るかはまだ決めていな�
 **増える**もの。
 
 - OIDC クライアント（discovery、認可へのリダイレクト、state/nonce/PKCE、callback、
-  コード交換、ID トークンの検証）。実測では標準ライブラリだけで 250 行程度に収まった
+  コード交換、ID トークンの検証）。ただし検証そのものは `go-oidc` に委ねる（後述）
+- 依存が2つ増える。`github.com/coreos/go-oidc/v3` と `golang.org/x/oauth2`
 - IdP 側にクライアントを登録する運用
 - famifo が自分の外部 URL を知る必要（`redirect_uri` は絶対 URL）
 - コンテナに CA 証明書が要る（後述）
@@ -119,11 +120,28 @@ discovery は issuer 直下の `/.well-known/openid-configuration` にあり、�
 **`email` は DSM アカウントに設定があれば入る。** 設定していないアカウントでは空になるので、
 鍵には使えない。
 
-### 標準ライブラリだけで実装できる
+### 標準ライブラリだけでも書けるが、検証はライブラリに任せる
 
 確認に使ったクライアントは Go の標準ライブラリだけで書いた。discovery の取得、
 state/nonce/PKCE の生成、コード交換、JWKS の取得、RS256 署名の検証、`iss`/`aud`/`exp`/
-`nonce` の検証まで含めて 250 行程度である。**`go-oidc` と `oauth2` への依存は必須ではない。**
+`nonce` の検証まで含めて 250 行程度である。技術的には依存は必須ではない。
+
+**それでも ID トークンの検証は `go-oidc` に委ねる。** 一度この方針で実装してレビューを
+通したところ、issuer すり替えの防御を検証しているはずのテストが、別の理由（discovery の
+404）で通っていた。防御のコードは正しかったが、一度も実行されていなかった。
+`oidc.NewProvider` は discovery が名乗る issuer の一致確認を内部に持つので、この防御を
+自分で書く必要も、そのテストを書き損なう機会も無くなる。
+
+一般化すると、プローブが一往復通ったことは実現可能性の証拠であって、失敗経路の正しさの
+証拠ではない。セキュリティのコードが住んでいるのは失敗経路のほうで、そこは実績のある
+実装に任せるほうが安い。JWKS の鍵ローテーション、`aud` の配列形式、クロックスキュー、
+JWKS の `use`/`alg` による鍵の選別といった、レビューが「いつか」に回した項目も、
+まとめてライブラリの側に移る。
+
+**Cookie の署名は自前のまま残す。** こちらは `internal/session` が用途ごとに鍵を導出する
+形になっており（後述）、`gorilla/securecookie` が Cookie 名を MAC に含めて得ているのと
+同じ性質を既に持っている。置き換えても得るものが薄く、候補となるライブラリは
+最終リリースが 2023 年 10 月で2年動いていない。
 
 ## 目標
 
@@ -148,8 +166,9 @@ state/nonce/PKCE の生成、コード交換、JWKS の取得、RS256 署名の�
 
 ### パッケージ境界
 
-- `internal/oidcauth`（新規）— OIDC の認可コードフローを扱い、famifo が必要とする2つの
-  操作だけを公開する。標準ライブラリだけで書く（後述）
+- `internal/oidcauth`（新規）— `go-oidc` と `x/oauth2` を包み、famifo が必要とする操作だけを
+  公開する。ライブラリと同じ名前にしないのは、import したときにどちらの話をしているか
+  読めるようにするため
 - `internal/session`（新規）— 署名付き Cookie の組み立てと検証。OIDC も HTTP も知らない
 - `internal/web/auth.go`（新規）— ハンドラと認証ミドルウェア
 
@@ -174,26 +193,25 @@ func (c *Client) AuthURL(state, nonce, pkceVerifier string) string
 func (c *Client) Exchange(ctx context.Context, code, pkceVerifier, nonce string) (Identity, error)
 ```
 
-**標準ライブラリだけで実装する。** `go-oidc` を使わないのは、実測で足りることを確認した
-ことと、依存を増やさない方針に沿うためである。ただし手書きの JWT 検証は落とし穴が多いので、
-安全側に倒すための制約を設計に埋め込む。
+`New` は `oidc.NewProvider` で discovery を引く。起動時に1回だけ行い、IdP に届かなければ
+起動を止める。認証すると宣言しておいて黙って無認証で配信するより、起動しないほうがよい。
+`NewProvider` は discovery が名乗る issuer と設定した issuer の一致も確かめるので、
+その防御を自分で書く必要はない。
 
-- 署名アルゴリズムは **RS256 に固定**する。ヘッダの `alg` を見て分岐しない。`none` や
-  HMAC への取り違えという典型的な脆弱性を、そもそも起こしえなくする
-- **JWKS はログインのたびに取得**し、キャッシュしない。鍵のローテーションに自動で追随でき、
-  キャッシュの無効化を書かずに済む。セッションは30日なのでログインは稀であり、
-  1リクエストの往復は問題にならない
-- `iss`、`aud`、`exp`、`nonce` をすべて検証する。どれか1つでも欠けたら失敗させる
+ID トークンの検証は `provider.Verifier(&oidc.Config{ClientID: …})` が返す
+`IDTokenVerifier` に任せる。署名、`iss`、`aud`、`exp`/`nbf` を見る。
 
-`New` は起動時に1回だけ discovery を引く。IdP に届かなければ起動を止める。認証すると
-宣言しておいて黙って無認証で配信するより、起動しないほうがよい。
+**`nonce` だけは対象外である。** `IDTokenVerifier.Verify` は nonce を検証しないと
+明記されており、呼び出し側の責任になる。`idToken.Nonce` を自分で比べること。ここを
+忘れると、認可コードを横取りした攻撃者の再生を防げなくなる。
+
+PKCE は `x/oauth2` の `GenerateVerifier` / `S256ChallengeOption` / `VerifierOption` を
+使う。`plain` は選ばない。
 
 要求するスコープは `openid email groups`。`profile` は SSO Server に無いので要求しない。
 `email` と `groups` は本案では使わないが、`username` claim がどのスコープに紐づくかは
 文書化されていない。提供される3つをすべて要求しておき、実機で通したあとに減らせるかを
 確かめる。減らせるなら `openid` だけにする。
-ID トークンの検証は上の制約どおりに行う。署名の比較には `hmac.Equal` ではなく
-`rsa.VerifyPKCS1v15` を使う（公開鍵での検証なので秘密の比較ではない）。
 
 `username` は標準の claim ではないので、`IDToken.Claims` に独自の構造体を渡して取り出す。
 IdP を差し替えたときにここが空になる可能性があるため、**空なら `sub` で代用する**。
@@ -417,7 +435,9 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
 - `main.go` — フラグの追加と組み立て
 - `Dockerfile` — CA バンドルの取り込み
 
-`go.mod` は変えない。新しい依存を入れない。
+`go.mod` に2つ増える。`github.com/coreos/go-oidc/v3` と `golang.org/x/oauth2`
+（推移的に `github.com/go-jose/go-jose/v4` が入る）。Cookie の署名は自前のままなので
+`internal/session` は変わらない。
 
 ## 失敗の仕方
 
@@ -445,6 +465,8 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
 - **運用の前提が増える。** LAN 内の DNS の上書き、IdP へのクライアント登録、
   DSM のリバースプロキシ、DDNS と証明書。前案はこれらを必要としない
 - **IdP が単一障害点になる。** SSO Server が壊れると新規のログインができない
+- **依存が2つ増える。** `go-oidc` と `x/oauth2`。当初は標準ライブラリだけで書いたが、
+  issuer すり替えの防御が未テストのまま通っていたことを受けて、検証はライブラリに移した
 - **LAN 内の名前解決が、回線由来の IPv6 アドレスに依存する。** 詳細は「到達性の条件」に
   書いた。プレフィックスが変われば `shirotae.synology.me` だけが引けなくなり、
   famifo にログインできなくなる
@@ -456,8 +478,12 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
 - `oidcauth` — `httptest.Server` で偽の IdP を立てる。discovery、JWKS、トークン
   エンドポイントを返し、テスト内で生成した RSA 鍵で ID トークンに署名する。正常系、
   `nonce` 不一致、署名が別鍵、期限切れ、`aud` 違い、`iss` 違い、`username` が空のとき
-  `sub` に落ちること。加えて **`alg` が RS256 以外の ID トークンを拒否すること**
-  （`none` と HMAC の両方）。手書きの検証を選んだ以上、ここは必ず test で押さえる
+  `sub` に落ちること、issuer すり替えを拒否すること。加えて **`alg` が RS256 以外の
+  ID トークンを拒否すること**（`none` と HMAC の両方）。
+  検証そのものは `go-oidc` の担当になったので、これらの狙いは「ライブラリが正しいこと」の
+  再確認ではなく、**私たちの配線が正しいこと**である。とくに `nonce` は
+  `IDTokenVerifier.Verify` の対象外で呼び出し側の責任なので、`nonce` 不一致のテストは
+  外せない。依存を差し替えたときに気づけるのも、この種のテストだけである
 - `session` — 署名して検証できること、期限切れ、1バイト改竄、別の鍵、壊れた形式。
   鍵と時刻を注入するので実時間に依存しない
 - `web` — 未認証時のリダイレクトと 401 の出し分け、`next` の検証
