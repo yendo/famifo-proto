@@ -125,6 +125,7 @@ docker run -d --restart unless-stopped -p 8080:8080 \
 | `-oidc-issuer` | The provider's issuer, **including the port**. Empty turns authentication off |
 | `-oidc-client-id` | The client id registered with the provider |
 | `-external-url` | The URL famifo is reached at from outside. The redirect URI is this plus `/auth/callback` |
+| `-oidc-logout-url` | Optional. The provider's own logout URL. Set only alongside `-oidc-issuer`. See [Sessions](#sessions) |
 | `FAMIFO_OIDC_CLIENT_SECRET` | The client secret. Read from the environment, never from a flag — command-line arguments are readable by anyone on the host through `/proc` |
 
 famifo never sees a password. Two-factor authentication, lockouts and password
@@ -192,11 +193,19 @@ After a successful login famifo issues its own signed cookie and stops asking th
 provider. Sessions last 30 days and survive restarts, because the signing key lives in
 `<data>/session.key`.
 
-Individual sessions cannot be revoked. Deleting `session.key` and restarting logs every
-device out at once, which is the only lever there is.
+Individual sessions cannot be revoked, and deleting `session.key` and restarting is not
+a substitute: it invalidates every famifo session, but any device whose provider session
+is still alive is signed straight back in on its next visit without being asked for
+anything, confirmed on hardware by a fresh sign-in appearing in the log seconds after
+the restart. Real revocation lives at the provider — disable the account, or end its
+sessions there.
 
-Signing out of famifo does not sign you out of DSM: the provider offers no logout
-endpoint, so the same browser can walk straight back in.
+Signing out of famifo does not sign you out of the provider by itself: the provider
+offers no logout endpoint, so the same browser can normally walk straight back in. Set
+`-oidc-logout-url` to change that: `/logout` then clears famifo's cookies and sends the
+browser to that URL, so one press of the button ends both sessions. Leave it unset and
+the button only ends famifo's own session, as above. For Synology SSO Server the value
+is `https://<host>:5001/webman/logout.cgi`.
 
 ## Docker
 

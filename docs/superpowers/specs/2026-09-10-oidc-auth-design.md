@@ -154,8 +154,12 @@ JWKS の `use`/`alg` による鍵の選別といった、レビューが「い�
 ## 目標としないこと
 
 - **認可**。IdP が認証した人は全員 famifo を見られる
-- **RP-initiated logout**。discovery に `end_session_endpoint` が無いので実現できない。
-  famifo からログアウトしても DSM のセッションは残る
+- **プロトコルとしての RP-initiated logout**。discovery に `end_session_endpoint` が
+  無いので、`prompt=login` や `max_age=0` と同じく標準の手段では実現できない
+  （実機で確認：Synology SSO Server はどちらも無視して無言でコードを返す）。
+  ただし `-oidc-logout-url` に IdP 自身のログアウトURLを設定で渡せば、famifo は
+  自分のCookieを消したあとそこへブラウザを送り、同じ効果を設定によって得られる。
+  discovery もプロトコルも使わない回避であり、値は運用側が調べて渡す
 - **個別セッションの失効**。署名付き Cookie を選んだ帰結
 - **famifo 自身の TLS 終端**。HTTPS は DSM のリバースプロキシに任せる
 - **`internal/synology` の改名**。前案では `dsmauth` を兄弟に並べるために
@@ -268,8 +272,14 @@ base64url("<失効時刻のUnix秒>\n<payload>") + "." + base64url(HMAC-SHA256(�
 
 **署名鍵**はデータディレクトリの `session.key` に置く。無ければ起動時に `crypto/rand` で
 32 バイトを作り、`0600` で書く。再起動をまたいでセッションが生き残るのはこのファイルの
-おかげである。消して再起動すれば全端末が一斉にログアウトする。個別の失効ができない
-構えなので、これが唯一の一括失効手段になる。
+おかげである。
+
+**消して再起動しても一括失効にはならない。** famifo 自身のセッションはすべて無効になるが、
+IdP 側のセッションが生きている端末は、次にアクセスしたときに何も聞かれず新しいセッションを
+発行し直される。実機で確認した：再起動の数秒後、ログに新規サインインが記録される。したがって
+これは「家族の端末を1台締め出したい」に使える操作ではない。本当に締め出すには IdP 側で
+そのアカウントを無効化するか、アカウントのセッションを IdP 側で終わらせる必要がある。
+`session.key` の削除は famifo 側の状態をリセットする操作であって、失効の手段ではない。
 
 **属性**は `HttpOnly`、`SameSite=Lax`、`Path=/`、そして外部 URL が `https` のとき `Secure`。
 
@@ -291,6 +301,13 @@ callback へ差し戻し、新しいセッションを発行してしまう。�
 共有端末では、次に触る人がサインインしたまま残ることになる。RP-initiated logout が
 無い（`end_session_endpoint` が discovery に無い）ことの帰結として、famifo 側から
 DSM 側のセッションを断ち切る手段は無い。案内ページで済ませているのはこのためである。
+
+**追記（実機で確認）。** `prompt=login` と `max_age=0` を試したが、Synology SSO Server は
+どちらも無視してパスワードを求めずコードを返す。標準の手段は無い。それでも動作したのは、
+famifo 側のCookieを消したあと **IdP 自身のログアウトURLへブラウザを送る**という手順で、
+これを行うと次に famifo を開いたときパスワードを求められる。`-oidc-logout-url` に設定した
+ときは `/logout` がCookieを消したあとそのURLへリダイレクトし、案内ページの代わりにこの
+手順を自動で行う。設定しなければ従来どおり案内ページのままである。
 
 ### 経路とミドルウェア
 
@@ -416,6 +433,7 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
 | `-oidc-issuer` | 空 | IdP の issuer。空なら認証しない。ポート番号を含める |
 | `-oidc-client-id` | 空 | IdP に登録したクライアント ID |
 | `-external-url` | 空 | famifo が外から見える URL。`redirect_uri` の組み立てに使う |
+| `-oidc-logout-url` | 空 | IdP 自身のログアウト URL（任意）。設定すると `/logout` が famifo の Cookie を消したあとそこへリダイレクトする。空のままなら famifo 自身のセッションしか終わらない。`-oidc-issuer` と組み合わせてのみ意味を持ち、単独で渡すと `Validate` が落とす。Synology SSO Server の例は `https://<host>:5001/webman/logout.cgi`（`<host>` は DSM のアドレス）。この値はコードが知っているものではなく、運用側が調べて渡す |
 
 クライアントシークレットはフラグで渡さない。コマンドライン引数は同じホストの誰からでも
 `/proc` で読める。環境変数 `FAMIFO_OIDC_CLIENT_SECRET` から読む。
@@ -443,7 +461,7 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
 - `internal/web/view.go` — `galleryView` に認証の有無を足す
 - `internal/web/templates/gallery.html` — ログアウトのボタン
 - `internal/config/config.go` — `OIDCIssuer`、`OIDCClientID`、`OIDCClientSecret`、
-  `ExternalURL`、`SessionKeyPath()`、検証
+  `ExternalURL`、`OIDCLogoutURL`、`SessionKeyPath()`、検証
 - `main.go` — フラグの追加と組み立て
 - `Dockerfile` — CA バンドルの取り込み
 
@@ -463,8 +481,9 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
 - **`state` が合わない・一時 Cookie が無い** — `/login` からやり直させる。Cookie を
   消した、10 分以上放置した、別のタブで始めた、のいずれか
 - **`session.key` が読めない・書けない** — 起動を止める
-- **鍵が変わった** — 全員のCookieが検証に落ち、ログインへ送られる。意図した一括
-  ログアウトの手段でもある
+- **鍵が変わった** — 全員の famifo Cookie が検証に落ち、ログインへ送られる。ただし
+  IdP 側のセッションが生きている端末は、何も聞かれず新しいセッションを発行し直される
+  ので、単独では一括ログアウトの手段にならない（「セッション」の節を見よ）
 - **時計のずれ** — ID トークンの `exp` / `iat` の検証に落ちる。NAS とコンテナは
   同じ時計を見るので、IdP が同じ機械にいる限り起きにくい
 
@@ -472,8 +491,10 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
 
 - **認可を持たない。** IdP にアカウントがある人は全員 famifo を見られる
 - **個別のセッションを失効できない。** 漏れた Cookie は期限が切れるまで有効である
-- **famifo からログアウトしても DSM のセッションは残る。** `end_session_endpoint` が
-  無いため。同じブラウザからは即座に入り直せる
+- **famifo からログアウトしても DSM のセッションは、`-oidc-logout-url` を設定しない
+  限り残る。** `end_session_endpoint` が discovery に無いため、プロトコルとしては
+  実現できない。設定すれば `/logout` がそこへブラウザを送り、同じブラウザは次の訪問で
+  パスワードを求められる。設定しなければ従来どおり即座に入り直せる
 - **運用の前提が増える。** LAN 内の DNS の上書き、IdP へのクライアント登録、
   DSM のリバースプロキシ、DDNS と証明書。前案はこれらを必要としない
 - **IdP が単一障害点になる。** SSO Server が壊れると新規のログインができない
