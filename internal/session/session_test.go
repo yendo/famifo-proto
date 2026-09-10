@@ -20,7 +20,7 @@ func newCodec(t *testing.T) *session.Codec {
 	for i := range key {
 		key[i] = byte(i)
 	}
-	c, err := session.NewCodec(key)
+	c, err := session.NewCodec(key, "test")
 	require.NoError(t, err)
 	return c
 }
@@ -65,11 +65,30 @@ func TestVerifyRejectsAnotherKey(t *testing.T) {
 	v := newCodec(t).Sign("yendo", now.Add(time.Hour))
 
 	other := make([]byte, session.KeyLen) // すべて0の別の鍵
-	oc, err := session.NewCodec(other)
+	oc, err := session.NewCodec(other, "test")
 	require.NoError(t, err)
 
 	_, ok := oc.Verify(v, now)
 	require.False(t, ok)
+}
+
+func TestVerifyRejectsAnotherPurpose(t *testing.T) {
+	// 用途ごとに鍵を分けるのは、ログインの往復用Cookieがそのままセッション
+	// Cookieとして通ってしまう事態を防ぐため。
+	key := make([]byte, session.KeyLen)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	now := time.Unix(1_700_000_000, 0)
+
+	sessionCodec, err := session.NewCodec(key, "session")
+	require.NoError(t, err)
+	flowCodec, err := session.NewCodec(key, "flow")
+	require.NoError(t, err)
+
+	v := flowCodec.Sign("yendo", now.Add(time.Hour))
+	_, ok := sessionCodec.Verify(v, now)
+	require.False(t, ok, "a value signed for one purpose must not verify for another")
 }
 
 func TestVerifyRejectsMalformed(t *testing.T) {
@@ -94,7 +113,12 @@ func TestPayloadMayContainNewlines(t *testing.T) {
 }
 
 func TestNewCodecRejectsWrongKeyLength(t *testing.T) {
-	_, err := session.NewCodec([]byte("short"))
+	_, err := session.NewCodec([]byte("short"), "test")
+	require.Error(t, err)
+}
+
+func TestNewCodecRejectsEmptyPurpose(t *testing.T) {
+	_, err := session.NewCodec(make([]byte, session.KeyLen), "")
 	require.Error(t, err)
 }
 

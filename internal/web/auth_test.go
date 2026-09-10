@@ -52,11 +52,9 @@ func newAuthFixture(t *testing.T) *authFixture {
 	require.NoError(t, err)
 
 	key := make([]byte, session.KeyLen)
-	codec, err := session.NewCodec(key)
-	require.NoError(t, err)
 
 	prov := &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}
-	srv, err := web.NewServer(st, thumbs, &web.Auth{OIDC: prov, Session: codec}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	srv, err := web.NewServer(st, thumbs, &web.Auth{OIDC: prov, Key: key}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 	return &authFixture{h: srv.Handler(), prov: prov}
 }
@@ -115,6 +113,23 @@ func TestLoginRedirectsToTheProvider(t *testing.T) {
 	require.NotNil(t, cookieNamed(resp, "famifo_oidc"), "the flow state must be carried in a cookie")
 }
 
+// TestLoginFlowCookieDoesNotAuthenticate はログイン往復用Cookieをそのまま
+// セッションCookieとして送り返しても認証されないことを固定する。用途ごとに
+// 別のCodecを導出していないと、往復用の署名済み値がそのままセッションとして
+// 通ってしまう。
+func TestLoginFlowCookieDoesNotAuthenticate(t *testing.T) {
+	f := newAuthFixture(t)
+
+	start := get(t, f.h, "/login")
+	flow := cookieNamed(start, "famifo_oidc")
+	require.NotNil(t, flow)
+
+	forged := &http.Cookie{Name: "famifo_session", Value: flow.Value}
+	resp := get(t, f.h, "/", forged)
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Location"), "/login")
+}
+
 func TestCallbackIssuesASessionAndReturnsToNext(t *testing.T) {
 	f := newAuthFixture(t)
 
@@ -168,7 +183,7 @@ func TestNextMustBeALocalPath(t *testing.T) {
 	// "//evil.example" はプロトコル相対URLで、別サイトへのリダイレクトになる。
 	f := newAuthFixture(t)
 
-	for _, next := range []string{"//evil.example", "https://evil.example", "http://evil.example/x"} {
+	for _, next := range []string{"//evil.example", "https://evil.example", "http://evil.example/x", `/\evil.example`, `/\/evil.example`} {
 		start := get(t, f.h, "/login?next="+url.QueryEscape(next))
 		flow := cookieNamed(start, "famifo_oidc")
 		resp := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
@@ -202,11 +217,9 @@ func TestSecureAttributeFollowsTheSetting(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	thumbs, err := thumb.NewProvider(dir + "/thumbs")
 	require.NoError(t, err)
-	codec, err := session.NewCodec(make([]byte, session.KeyLen))
-	require.NoError(t, err)
 	prov := &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}
 	srv, err := web.NewServer(st, thumbs,
-		&web.Auth{OIDC: prov, Session: codec, Secure: true},
+		&web.Auth{OIDC: prov, Key: make([]byte, session.KeyLen), Secure: true},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 	h := srv.Handler()
@@ -217,7 +230,7 @@ func TestSecureAttributeFollowsTheSetting(t *testing.T) {
 
 func TestAnExpiredSessionIsRefused(t *testing.T) {
 	f := newAuthFixture(t)
-	codec, err := session.NewCodec(make([]byte, session.KeyLen))
+	codec, err := session.NewCodec(make([]byte, session.KeyLen), "session")
 	require.NoError(t, err)
 	stale := &http.Cookie{Name: "famifo_session", Value: codec.Sign("yendo", time.Now().Add(-time.Minute))}
 

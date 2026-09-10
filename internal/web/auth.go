@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/yendo/famifo-proto/internal/oidcauth"
-	"github.com/yendo/famifo-proto/internal/session"
 )
 
 // sessionTTL はログイン状態が続く長さ。
@@ -36,9 +35,9 @@ type Provider interface {
 
 // Auth は認証の手段をまとめる。NewServer に nil を渡すと認証しない。
 type Auth struct {
-	OIDC    Provider
-	Session *session.Codec
-	Secure  bool // Cookie に Secure を付けるか。外部URLがhttpsのときだけ真
+	OIDC   Provider
+	Key    []byte // session.KeyLen バイト。webが用途ごとのCodecを導出する
+	Secure bool   // Cookie に Secure を付けるか。外部URLがhttpsのときだけ真
 }
 
 // flowState は認可の往復のあいだ持ち越す値。署名付きCookieに載せる。
@@ -79,7 +78,7 @@ func (s *Server) currentUser(r *http.Request) string {
 	if err != nil {
 		return ""
 	}
-	user, ok := s.auth.Session.Verify(c.Value, time.Now())
+	user, ok := s.sessionCodec.Verify(c.Value, time.Now())
 	if !ok {
 		return ""
 	}
@@ -105,7 +104,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.setCookie(w, flowCookie, s.auth.Session.Sign(string(raw), time.Now().Add(flowTTL)), int(flowTTL.Seconds()))
+	s.setCookie(w, flowCookie, s.flowCodec.Sign(string(raw), time.Now().Add(flowTTL)), int(flowTTL.Seconds()))
 	http.Redirect(w, r, s.auth.OIDC.AuthURL(p), http.StatusFound)
 }
 
@@ -116,7 +115,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the login attempt has expired, please start again", http.StatusBadRequest)
 		return
 	}
-	raw, ok := s.auth.Session.Verify(c.Value, time.Now())
+	raw, ok := s.flowCodec.Verify(c.Value, time.Now())
 	if !ok {
 		http.Error(w, "the login attempt has expired, please start again", http.StatusBadRequest)
 		return
@@ -150,7 +149,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearCookie(w, flowCookie)
-	s.setCookie(w, sessionCookie, s.auth.Session.Sign(id.Username, time.Now().Add(sessionTTL)), int(sessionTTL.Seconds()))
+	s.setCookie(w, sessionCookie, s.sessionCodec.Sign(id.Username, time.Now().Add(sessionTTL)), int(sessionTTL.Seconds()))
 	s.log.Info("signed in", "user", id.Username)
 	http.Redirect(w, r, safeNext(f.Next), http.StatusFound)
 }
@@ -159,13 +158,17 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 // 署名付きCookieを選んだ帰結として、他の端末のセッションは生き続ける。
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.clearCookie(w, sessionCookie)
+	// ログインを始めて完了させなかった端末に往復用Cookieが残らないようにする。
+	s.clearCookie(w, flowCookie)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 // safeNext は戻り先を自サイト内に限る。
 // "//evil.example" はプロトコル相対URLで、別サイトへのリダイレクトになる。
+// "\" を含むものも拒む。ブラウザはWHATWG URLの仕様に従って "\" を "/" に
+// 正規化するので、"/\evil.example" も別サイトへのリダイレクトになる。
 func safeNext(next string) string {
-	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.Contains(next, `\`) {
 		return "/"
 	}
 	return next

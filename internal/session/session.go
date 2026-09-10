@@ -23,15 +23,18 @@ const KeyLen = 32
 // Codec は署名鍵を持ち、payloadに失効時刻を添えて署名する。
 type Codec struct{ key []byte }
 
-// NewCodec は鍵を確かめてCodecを作る。
-func NewCodec(key []byte) (*Codec, error) {
+// NewCodec は署名鍵と用途からCodecを作る。用途ごとに別の鍵を導出するので、
+// ある用途で署名した値を別の用途のCookieとして送り返しても検証は通らない。
+func NewCodec(key []byte, purpose string) (*Codec, error) {
 	if len(key) != KeyLen {
 		return nil, fmt.Errorf("the signing key must be %d bytes, got %d", KeyLen, len(key))
 	}
-	// 呼び出し側が後から書き換えても影響しないよう写しを持つ。
-	k := make([]byte, KeyLen)
-	copy(k, key)
-	return &Codec{key: k}, nil
+	if purpose == "" {
+		return nil, fmt.Errorf("the purpose must not be empty")
+	}
+	m := hmac.New(sha256.New, key)
+	m.Write([]byte(purpose))
+	return &Codec{key: m.Sum(nil)}, nil
 }
 
 // Sign はpayloadと失効時刻を1つの文字列にまとめて署名する。

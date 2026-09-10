@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/yendo/famifo-proto/internal/session"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
@@ -34,12 +35,14 @@ const defaultChunkSize = 120
 
 // Server はギャラリーのHTTPハンドラ群を保持する。
 type Server struct {
-	st        *store.Store
-	tmpl      *template.Template
-	thumbs    *thumb.Provider
-	chunkSize int
-	auth      *Auth // nil なら認証しない
-	log       *slog.Logger
+	st           *store.Store
+	tmpl         *template.Template
+	thumbs       *thumb.Provider
+	chunkSize    int
+	auth         *Auth // nil なら認証しない
+	sessionCodec *session.Codec
+	flowCodec    *session.Codec
+	log          *slog.Logger
 }
 
 // NewServer はテンプレートを読み込んでServerを作る。
@@ -49,13 +52,26 @@ type Server struct {
 // サーバーはサムネイルの置き場所を知らない。
 //
 // auth に nil を渡すと認証しない。開発機やテストでIdPを立てずに動かせるようにするため
-// であり、既定の構成でもある。
+// であり、既定の構成でもある。auth.Key からは用途ごとに別のCodecを導出する。
+// 同じCodecをセッションとログイン往復の両方に使うと、往復用のCookieがそのまま
+// セッションCookieとして通ってしまう。
 func NewServer(st *store.Store, thumbs *thumb.Provider, auth *Auth, log *slog.Logger) (*Server, error) {
 	tmpl, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("cannot load the templates: %w", err)
 	}
-	return &Server{st: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, auth: auth, log: log}, nil
+	srv := &Server{st: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, auth: auth, log: log}
+	if auth != nil {
+		srv.sessionCodec, err = session.NewCodec(auth.Key, "session")
+		if err != nil {
+			return nil, fmt.Errorf("cannot build the session codec: %w", err)
+		}
+		srv.flowCodec, err = session.NewCodec(auth.Key, "flow")
+		if err != nil {
+			return nil, fmt.Errorf("cannot build the login flow codec: %w", err)
+		}
+	}
+	return srv, nil
 }
 
 // Handler はルーティング済みのハンドラを返す。
