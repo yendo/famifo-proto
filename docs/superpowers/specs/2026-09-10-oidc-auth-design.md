@@ -202,8 +202,8 @@ IdP を差し替えたときにここが空になる可能性があるため、*
 
 リダイレクトから callback までの間、`state`、`nonce`、PKCE の verifier、戻り先の
 `next` を保持する必要がある。サーバー側に状態を持たず、**短命の署名付き Cookie**に
-入れる。セッションと同じ `session.Codec` で署名し、有効期限は 10 分。callback で
-使い切ったら消す。
+入れる。有効期限は 10 分で、callback で使い切ったら消す。署名にはセッションとは
+**別の鍵**を使う（後述）。
 
 PKCE の verifier を Cookie に置いても差し支えない。PKCE が防ぐのは第三者による
 認可コードの横取りで、Cookie を読めるのは利用者本人だからである。`state` と `nonce` に
@@ -213,22 +213,37 @@ PKCE の verifier を Cookie に置いても差し支えない。PKCE が防ぐ�
 
 ### セッション
 
-`session.Codec` は署名鍵を持ち、任意の文字列に署名する。
+`session.Codec` は署名鍵と**用途**を持ち、任意の文字列に署名する。
 
 ```go
+func NewCodec(key []byte, purpose string) (*Codec, error)
 func (c *Codec) Sign(payload string, expiry time.Time) string
 func (c *Codec) Verify(value string, now time.Time) (payload string, ok bool)
 ```
 
 ログイン後のセッションは payload に利用者名を入れ、往復の一時状態は payload に
-`state` / `nonce` / verifier / `next` をまとめた JSON を入れる。用途を Codec に
-知らせないことで、Codec は鍵と時刻だけを相手にする小さな部品のままでいられる。
+`state` / `nonce` / verifier / `next` をまとめた JSON を入れる。
+
+**用途ごとに鍵を分けるのは、分けないと認証が丸ごと迂回できるからである。** 当初の設計は
+1つの `Codec` で両方に署名していた。payload には自分が何であるかを示すものが無いので、
+`/login` が匿名の訪問者に渡す一時 Cookie の値を、名前だけ `famifo_session` に変えて
+送り返すと検証が通り、資格情報も IdP との往復も無しにギャラリーが開く。実装のレビューで
+実際に再現した。
+
+`NewCodec` は `HMAC-SHA256(マスター鍵, 用途)` で用途ごとの部分鍵を導出する。導出した鍵は
+互いに無関係なので、ある用途で署名した値が別の用途で通ることが表現できなくなる。
+`web.Auth` が受け取るのは `Codec` ではなくマスター鍵そのもので、2つの `Codec`
+（用途 `"session"` と `"flow"`）は `web` の内部で導出する。呼び出し側が同じ `Codec` を
+両方に渡す余地を残さないためである。
 
 Cookie の値は次の形にする。
 
 ```
-base64url("<payload>\n<失効時刻のUnix秒>") + "." + base64url(HMAC-SHA256(鍵, 前半))
+base64url("<失効時刻のUnix秒>\n<payload>") + "." + base64url(HMAC-SHA256(用途ごとの鍵, 前半))
 ```
+
+失効時刻を先に置くのは、payload に改行が混ざっても最初の1つで切り出せるようにするため
+である（一時状態は JSON を載せる）。
 
 検証は前半から署名を作り直し `hmac.Equal` で比べる。`==` で比べると、一致する接頭辞の
 長さが実行時間に出る。
@@ -281,10 +296,9 @@ DSM のセッションは残る。同じブラウザで再度ログインする�
 ```go
 // Auth は認証の手段をまとめる。nil を渡すと認証しない。
 type Auth struct {
-	OIDC       *oidcauth.Client
-	Session    *session.Codec
-	ExternalURL string // redirect_uri の組み立てに使う
-	Secure     bool    // Cookie に Secure を付けるか
+	OIDC   Provider // *oidcauth.Client が満たす。テストが偽物を渡せるようにする
+	Key    []byte   // 署名のマスター鍵。用途ごとの Codec は web が導出する
+	Secure bool     // Cookie に Secure を付けるか
 }
 ```
 
