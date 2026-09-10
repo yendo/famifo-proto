@@ -26,6 +26,8 @@ import (
 
 	"github.com/yendo/famifo-proto/internal/config"
 	"github.com/yendo/famifo-proto/internal/index"
+	"github.com/yendo/famifo-proto/internal/oidcauth"
+	"github.com/yendo/famifo-proto/internal/session"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
 	"github.com/yendo/famifo-proto/internal/web"
@@ -78,7 +80,30 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	srv, err := web.NewServer(st, thumbs, nil, log)
+	// 認証は -oidc-issuer を渡したときだけ有効になる。IdP に届かなければ起動を
+	// 止める。認証すると宣言しておいて黙って無認証で配信するより、起動しないほうがよい。
+	var auth *web.Auth
+	if cfg.OIDCIssuer != "" {
+		key, err := session.LoadOrCreateKey(cfg.SessionKeyPath())
+		if err != nil {
+			return err
+		}
+		oidcClient, err := oidcauth.New(ctx, oidcauth.Config{
+			Issuer:       cfg.OIDCIssuer,
+			ClientID:     cfg.OIDCClientID,
+			ClientSecret: cfg.OIDCClientSecret,
+			RedirectURI:  cfg.RedirectURI(),
+		})
+		if err != nil {
+			return err
+		}
+		auth = &web.Auth{OIDC: oidcClient, Key: key, Secure: cfg.CookieSecure()}
+		log.Info("authentication is on", "issuer", cfg.OIDCIssuer, "redirect", cfg.RedirectURI())
+	} else {
+		log.Warn("authentication is off, anyone who can reach this address can see the photos")
+	}
+
+	srv, err := web.NewServer(st, thumbs, auth, log)
 	if err != nil {
 		return err
 	}
@@ -183,6 +208,11 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	// 少ないわりに、決して読めないファイルのデコードを繰り返すことになる。
 	fs.DurationVar(&c.ScanInterval, "scan-interval", 24*time.Hour,
 		"how often the index is reconciled with what is on disk")
+	fs.StringVar(&c.OIDCIssuer, "oidc-issuer", "",
+		"OIDC issuer to authenticate against, including the port; authentication is off when empty")
+	fs.StringVar(&c.OIDCClientID, "oidc-client-id", "", "client id registered with the OIDC provider")
+	fs.StringVar(&c.ExternalURL, "external-url", "",
+		"URL famifo is reached at from outside, used to build the redirect URI")
 	showVersion := fs.Bool("version", false, "print the build version and exit")
 
 	if err := fs.Parse(args); err != nil {
@@ -190,6 +220,9 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	}
 	// 空文字を SplitList に渡すと [""] ではなく [] が返る。
 	c.PhotoDirs = filepath.SplitList(dirs)
+	// 秘密をフラグで受け取らない。コマンドライン引数は同じホストの誰からでも
+	// /proc で読める。
+	c.OIDCClientSecret = os.Getenv("FAMIFO_OIDC_CLIENT_SECRET")
 	return c, *showVersion, nil
 }
 

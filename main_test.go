@@ -74,12 +74,15 @@ func TestParseArgsUsesDefaults(t *testing.T) {
 }
 
 func TestParseArgsOverridesEveryFlag(t *testing.T) {
-	t.Parallel()
+	t.Setenv("FAMIFO_OIDC_CLIENT_SECRET", "s3cret")
 	dir := t.TempDir()
 
 	got, _, err := parseArgs([]string{
 		"-dir", dir, "-data", "/var/famifo", "-addr", "192.168.1.10:9000",
 		"-scan-workers", "3", "-scan-interval", "10m",
+		"-oidc-issuer", "https://idp.example.invalid/sso",
+		"-oidc-client-id", "famifo",
+		"-external-url", "https://famifo.example.invalid:8443",
 	}, io.Discard)
 
 	require.NoError(t, err)
@@ -87,6 +90,32 @@ func TestParseArgsOverridesEveryFlag(t *testing.T) {
 	require.Equal(t, "192.168.1.10:9000", got.Addr)
 	require.Equal(t, 3, got.ScanWorkers)
 	require.Equal(t, 10*time.Minute, got.ScanInterval)
+	require.Equal(t, "https://idp.example.invalid/sso", got.OIDCIssuer)
+	require.Equal(t, "famifo", got.OIDCClientID)
+	require.Equal(t, "s3cret", got.OIDCClientSecret)
+	require.Equal(t, "https://famifo.example.invalid:8443", got.ExternalURL)
+}
+
+func TestParseArgsReadsTheAuthFlags(t *testing.T) {
+	t.Setenv("FAMIFO_OIDC_CLIENT_SECRET", "s3cret")
+
+	c, _, err := parseArgs([]string{
+		"-dir", t.TempDir(), "-data", t.TempDir(),
+		"-oidc-issuer", "https://idp.example.invalid/sso",
+		"-oidc-client-id", "famifo",
+		"-external-url", "https://famifo.example.invalid:8443",
+	}, io.Discard)
+	require.NoError(t, err)
+	require.Equal(t, "https://idp.example.invalid/sso", c.OIDCIssuer)
+	require.Equal(t, "famifo", c.OIDCClientID)
+	require.Equal(t, "s3cret", c.OIDCClientSecret, "the secret comes from the environment, not a flag")
+	require.Equal(t, "https://famifo.example.invalid:8443", c.ExternalURL)
+}
+
+func TestParseArgsLeavesAuthEmptyByDefault(t *testing.T) {
+	c, _, err := parseArgs([]string{"-dir", t.TempDir(), "-data", t.TempDir()}, io.Discard)
+	require.NoError(t, err)
+	require.Empty(t, c.OIDCIssuer)
 }
 
 func TestParseArgsSplitsDirOnTheListSeparator(t *testing.T) {
