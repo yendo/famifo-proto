@@ -99,9 +99,16 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 			writeOIDCJSON(w, map[string]any{"error": "invalid_grant"})
 			return
 		}
+		// x/oauth2 は既定でまず HTTP Basic を試す。Synology SSO Server は
+		// client_secret_basic と client_secret_post の両方を広告しているので、
+		// 偽物も両方受ける。
+		id := r.Form.Get("client_id")
+		if u, _, ok := r.BasicAuth(); ok && u != "" {
+			id = u
+		}
 		writeOIDCJSON(w, map[string]any{
 			"access_token": "at", "token_type": "Bearer", "expires_in": 180,
-			"id_token": i.idToken(t, r.Form.Get("client_id")),
+			"id_token": i.idToken(t, id),
 		})
 	})
 	i.srv = httptest.NewServer(mux)

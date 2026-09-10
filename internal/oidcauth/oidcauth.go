@@ -66,12 +66,11 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("cannot read the OIDC discovery document: %w", err)
 	}
 	endpoint := provider.Endpoint()
-	// x/oauth2 の既定 AuthStyleAutoDetect はまず HTTP Basic を試す。それ自体は
-	// client_secret_basic を広告する IdP には通るが、成否を HTTP ステータスでしか
-	// 判定しないため、client_id をフォームでしか読まない IdP に対しては 200 が
-	// 返って自動検出が成功したと誤解し、aud が空の id_token を検証で落とすまで
-	// 気づけない。Synology SSO Server は client_secret_post も広告しているので、
-	// ここで明示して揺れを無くす。
+	// Synology SSO Server は client_secret_basic と client_secret_post の両方を
+	// 広告しているが、実機で認可コードフローを1往復させて確かめたのは
+	// client_secret_post のほうだけである。x/oauth2 の既定 AuthStyleAutoDetect は
+	// まず HTTP Basic を試すので、放っておくと本番の最初のログインが一度も
+	// 検証していない経路を通ることになる。検証済みの方式に固定する。
 	endpoint.AuthStyle = oauth2.AuthStyleInParams
 	return &Client{
 		oauth: &oauth2.Config{
