@@ -29,10 +29,10 @@ import (
 type idp struct {
 	srv            *httptest.Server
 	key            *rsa.PrivateKey
-	claims         map[string]any // 上書きしたいclaim
-	alg            string         // IDトークンのヘッダに載せるalg
+	claims         map[string]any              // 上書きしたいclaim
+	alg            string                      // IDトークンのヘッダに載せるalg
 	sign           func(signing string) string // 署名の作り方。既定はRS256
-	issuerOverride string                       // discoveryが名乗るissuer。空ならi.srv.URL
+	issuerOverride string                      // discoveryが名乗るissuer。空ならi.srv.URL
 }
 
 func newIDP(t *testing.T) *idp {
