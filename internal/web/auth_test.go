@@ -247,6 +247,48 @@ func TestLogoutClearsTheSession(t *testing.T) {
 	require.Contains(t, bodyOf(t, resp), `href="/login"`, "the page must offer a way to sign in again")
 }
 
+// TestLogoutRedirectsToTheProviderWhenConfigured は、IdP のログアウトURLが
+// 設定されているとき、/logout がfamifo自身のCookieを消したうえでそちらへ
+// 302することを固定する。1回のボタン操作で両方のセッションが終わる。
+func TestLogoutRedirectsToTheProviderWhenConfigured(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir + "/famifo.db")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	thumbs, err := thumb.NewProvider(dir + "/thumbs")
+	require.NoError(t, err)
+	prov := &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}
+	const logoutURL = "https://idp.example.invalid:5001/webman/logout.cgi"
+	srv, err := web.NewServer(st, thumbs,
+		&web.Auth{OIDC: prov, Key: make([]byte, session.KeyLen), LogoutURL: logoutURL},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	h := srv.Handler()
+
+	start := get(t, h, "/login")
+	flow := cookieNamed(start, "famifo_oidc")
+	cb := get(t, h, "/auth/callback?code=good&state="+url.QueryEscape(prov.lastParams.State), flow)
+	sess := cookieNamed(cb, "famifo_session")
+
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	req.AddCookie(sess)
+	req.AddCookie(flow)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	resp := rec.Result()
+
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	require.Equal(t, logoutURL, resp.Header.Get("Location"))
+
+	cleared := cookieNamed(resp, "famifo_session")
+	require.NotNil(t, cleared)
+	require.Less(t, cleared.MaxAge, 0, "the session cookie must be told to expire")
+
+	clearedFlow := cookieNamed(resp, "famifo_oidc")
+	require.NotNil(t, clearedFlow)
+	require.Less(t, clearedFlow.MaxAge, 0, "the flow cookie must be told to expire")
+}
+
 func TestSecureAttributeFollowsTheSetting(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(dir + "/famifo.db")

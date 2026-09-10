@@ -174,6 +174,38 @@ func TestValidateRejectsABadExternalURL(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsALogoutURLWithoutAnIssuer(t *testing.T) {
+	c := validConfig(t)
+	c.OIDCLogoutURL = "https://idp.example.invalid:5001/webman/logout.cgi"
+
+	require.Error(t, c.Validate())
+}
+
+func TestValidateAcceptsALogoutURL(t *testing.T) {
+	base := validConfig(t)
+	base.OIDCIssuer = "https://idp.example.invalid/sso"
+	base.OIDCClientID = "famifo"
+	base.OIDCClientSecret = "s3cret"
+	base.ExternalURL = "https://famifo.example.invalid:8443"
+	base.OIDCLogoutURL = "https://idp.example.invalid:5001/webman/logout.cgi"
+
+	require.NoError(t, base.Validate())
+}
+
+func TestValidateRejectsABadLogoutURL(t *testing.T) {
+	base := validConfig(t)
+	base.OIDCIssuer = "https://idp.example.invalid/sso"
+	base.OIDCClientID = "famifo"
+	base.OIDCClientSecret = "s3cret"
+	base.ExternalURL = "https://famifo.example.invalid:8443"
+
+	for _, u := range []string{"idp.example.invalid", "ftp://idp.example.invalid", "/relative"} {
+		c := base
+		c.OIDCLogoutURL = u
+		require.Error(t, c.Validate(), "must reject %q", u)
+	}
+}
+
 func TestSessionKeyPathSitsInTheDataDir(t *testing.T) {
 	c := validConfig(t)
 	require.Equal(t, filepath.Join(c.DataDir, "session.key"), c.SessionKeyPath())

@@ -40,6 +40,10 @@ type Auth struct {
 	OIDC   Provider
 	Key    []byte // session.KeyLen バイト。webが用途ごとのCodecを導出する
 	Secure bool   // Cookie に Secure を付けるか。外部URLがhttpsのときだけ真
+	// LogoutURL はIdP自身のログアウトURL。空ならfamifoは自分のCookieを消す
+	// だけで、案内ページを返す。設定すると /logout はCookieを消したうえで
+	// そこへリダイレクトし、1回の操作でIdP側のセッションも終わらせる。
+	LogoutURL string
 }
 
 // flowState は認可の往復のあいだ持ち越す値。署名付きCookieに載せる。
@@ -171,6 +175,13 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.clearCookie(w, sessionCookie)
 	// ログインを始めて完了させなかった端末に往復用Cookieが残らないようにする。
 	s.clearCookie(w, flowCookie)
+	// IdP自身のログアウトURLが設定されていれば、Cookieを消したあとそこへ送る。
+	// famifoの案内ページだけではIdP側のセッションが残り、共有端末で次に触る
+	// 人がサインインしたまま残ってしまう。
+	if s.auth.LogoutURL != "" {
+		http.Redirect(w, r, s.auth.LogoutURL, http.StatusFound)
+		return
+	}
 	s.writeHTMLPage(w, http.StatusOK, "サインアウトしました", `<link rel="stylesheet" href="/static/app.css">`+
 		`<p>famifo からサインアウトしました。</p>`+
 		`<p>ログイン画面へのサインインは、これとは別に残っていることがあります。もう一度サインインしても`+
