@@ -1,38 +1,24 @@
 // Package oidcauth は OpenID Connect の認可コードフローを扱う。
 //
-// 標準ライブラリだけで書く。手書きのJWT検証は落とし穴が多いので、安全側に倒す
-// 制約を実装に埋め込んである。
+// discovery と ID トークンの検証は go-oidc に、PKCE とコード交換は x/oauth2 に任せる。
+// famifo に残るのは nonce の照合と claim の取り出しだけである。
 //
-//   - 署名アルゴリズムはRS256に固定する。ヘッダのalgを見て検証方法を選ばない。
-//     algを信じると、署名なし（alg=none）や、公開鍵をHMACの鍵に使わせる取り違えを
-//     受け入れてしまう。
-//   - JWKSはログインのたびに取得する。鍵の入れ替えに自動で追随でき、キャッシュの
-//     無効化を書かずに済む。セッションは30日なのでログインは稀である。
-//   - iss、aud、exp、nonce をすべて確かめる。1つでも欠けたら失敗させる。
+// 当初は標準ライブラリだけで書いていた。動いてはいたが、issuer すり替えの防御を
+// 検証しているはずのテストが別の理由で通っていたことがレビューで分かり、
+// 失敗経路の正しさは実績のある実装に任せるほうが安いと判断した。
 package oidcauth
 
 import (
 	"context"
-	"crypto"
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
-	"encoding/json"
 	"fmt"
-	"io"
-	"math/big"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
-)
 
-// scopes は要求する権限。profile はSynology SSO Serverに無いので要求しない。
-// email と groups は現時点では使わないが、username claim がどのスコープに紐づくかが
-// 文書化されていないため、提供される3つをすべて要求する。
-const scopes = "openid email groups"
+	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
+)
 
 // httpTimeout はIdPへの1回の往復に許す時間。
 const httpTimeout = 20 * time.Second
@@ -62,254 +48,105 @@ type Params struct {
 
 // Client はIdPと話す。New が discovery を引いた時点で不変になる。
 type Client struct {
-	cfg      Config
-	authURL  string
-	tokenURL string
-	jwksURL  string
-	http     *http.Client
-}
-
-type discovery struct {
-	Issuer   string `json:"issuer"`
-	AuthURL  string `json:"authorization_endpoint"`
-	TokenURL string `json:"token_endpoint"`
-	JWKSURL  string `json:"jwks_uri"`
+	oauth    *oauth2.Config
+	verifier *oidc.IDTokenVerifier
 }
 
 // New は discovery を引いてClientを組み立てる。
+//
 // 起動時に1回だけ呼ぶ。IdPに届かなければエラーを返し、呼び出し側は起動を止める。
+// oidc.NewProvider は discovery が名乗る issuer と設定した issuer の一致も確かめるので、
+// その防御をこちらで書く必要はない。
 func New(ctx context.Context, cfg Config) (*Client, error) {
-	c := &Client{cfg: cfg, http: &http.Client{Timeout: httpTimeout}}
-	var d discovery
-	if err := c.getJSON(ctx, strings.TrimSuffix(cfg.Issuer, "/")+"/.well-known/openid-configuration", &d); err != nil {
+	// 既定のクライアントは待ち時間の上限を持たない。落ちたIdPに繋ぎに行ったまま
+	// 起動が止まらないよう、明示する。
+	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: httpTimeout})
+	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
+	if err != nil {
 		return nil, fmt.Errorf("cannot read the OIDC discovery document: %w", err)
 	}
-	// 取りに行った先が名乗るissuerと、設定したissuerが一致しない場合は信用しない。
-	if d.Issuer != cfg.Issuer {
-		return nil, fmt.Errorf("the issuer does not match: %q was configured, %q was advertised", cfg.Issuer, d.Issuer)
-	}
-	if d.AuthURL == "" || d.TokenURL == "" || d.JWKSURL == "" {
-		return nil, fmt.Errorf("the discovery document is missing an endpoint")
-	}
-	c.authURL, c.tokenURL, c.jwksURL = d.AuthURL, d.TokenURL, d.JWKSURL
-	return c, nil
+	endpoint := provider.Endpoint()
+	// x/oauth2 の既定 AuthStyleAutoDetect はまず HTTP Basic を試す。それ自体は
+	// client_secret_basic を広告する IdP には通るが、成否を HTTP ステータスでしか
+	// 判定しないため、client_id をフォームでしか読まない IdP に対しては 200 が
+	// 返って自動検出が成功したと誤解し、aud が空の id_token を検証で落とすまで
+	// 気づけない。Synology SSO Server は client_secret_post も広告しているので、
+	// ここで明示して揺れを無くす。
+	endpoint.AuthStyle = oauth2.AuthStyleInParams
+	return &Client{
+		oauth: &oauth2.Config{
+			ClientID:     cfg.ClientID,
+			ClientSecret: cfg.ClientSecret,
+			RedirectURL:  cfg.RedirectURI,
+			Endpoint:     endpoint,
+			// profile は Synology SSO Server に無いので要求しない。email と groups は
+			// 今は使わないが、username claim がどのスコープに紐づくかが文書化されて
+			// いないため、提供される3つをすべて要求する。
+			Scopes: []string{oidc.ScopeOpenID, "email", "groups"},
+		},
+		// 受け入れる署名アルゴリズムを discovery が広告する集合に委ねない。IdPが将来
+		// 弱いものを広告し始めても、こちらが受け入れる範囲は変わらないようにする。
+		verifier: provider.Verifier(&oidc.Config{
+			ClientID:             cfg.ClientID,
+			SupportedSigningAlgs: []string{oidc.RS256},
+		}),
+	}, nil
 }
 
 // NewParams は往復に使う値を作る。
 func NewParams() (Params, error) {
-	var p Params
-	for _, dst := range []*string{&p.State, &p.Nonce, &p.Verifier} {
-		v, err := randomString()
-		if err != nil {
-			return Params{}, err
-		}
-		*dst = v
+	state, err := randomString()
+	if err != nil {
+		return Params{}, err
 	}
-	return p, nil
+	nonce, err := randomString()
+	if err != nil {
+		return Params{}, err
+	}
+	return Params{State: state, Nonce: nonce, Verifier: oauth2.GenerateVerifier()}, nil
 }
 
 // AuthURL はIdPの認可エンドポイントへ送るURLを組み立てる。
 func (c *Client) AuthURL(p Params) string {
-	q := url.Values{
-		"client_id":             {c.cfg.ClientID},
-		"response_type":         {"code"},
-		"scope":                 {scopes},
-		"redirect_uri":          {c.cfg.RedirectURI},
-		"state":                 {p.State},
-		"nonce":                 {p.Nonce},
-		"code_challenge":        {challenge(p.Verifier)},
-		"code_challenge_method": {"S256"},
-	}
-	return c.authURL + "?" + q.Encode()
+	return c.oauth.AuthCodeURL(p.State, oidc.Nonce(p.Nonce), oauth2.S256ChallengeOption(p.Verifier))
 }
 
 // Exchange は認可コードをトークンに交換し、IDトークンを検証して利用者を返す。
 func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity, error) {
-	form := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"redirect_uri":  {c.cfg.RedirectURI},
-		"client_id":     {c.cfg.ClientID},
-		"client_secret": {c.cfg.ClientSecret},
-		"code_verifier": {p.Verifier},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, strings.NewReader(form.Encode()))
+	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: httpTimeout})
+	tok, err := c.oauth.Exchange(ctx, code, oauth2.VerifierOption(p.Verifier))
 	if err != nil {
-		return Identity{}, err
+		return Identity{}, fmt.Errorf("cannot exchange the authorization code: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return Identity{}, fmt.Errorf("cannot reach the token endpoint: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return Identity{}, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return Identity{}, fmt.Errorf("the token endpoint returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var tok struct {
-		IDToken string `json:"id_token"`
-	}
-	if err := json.Unmarshal(body, &tok); err != nil {
-		return Identity{}, fmt.Errorf("the token response is not JSON: %w", err)
-	}
-	if tok.IDToken == "" {
+	raw, ok := tok.Extra("id_token").(string)
+	if !ok || raw == "" {
 		return Identity{}, fmt.Errorf("the token response carries no id_token")
 	}
-	return c.verify(ctx, tok.IDToken, p.Nonce)
-}
-
-// verify はIDトークンの署名とclaimを確かめる。
-func (c *Client) verify(ctx context.Context, raw, nonce string) (Identity, error) {
-	parts := strings.Split(raw, ".")
-	if len(parts) != 3 {
-		return Identity{}, fmt.Errorf("the id_token is not a JWT")
-	}
-	var hdr struct {
-		Alg string `json:"alg"`
-		Kid string `json:"kid"`
-	}
-	if err := decodeSegment(parts[0], &hdr); err != nil {
-		return Identity{}, err
-	}
-	// algを見て分岐しない。RS256でなければここで捨てる。
-	if hdr.Alg != "RS256" {
-		return Identity{}, fmt.Errorf("the id_token is signed with %q, only RS256 is accepted", hdr.Alg)
-	}
-	pub, err := c.publicKey(ctx, hdr.Kid)
+	idToken, err := c.verifier.Verify(ctx, raw)
 	if err != nil {
-		return Identity{}, err
+		return Identity{}, fmt.Errorf("the id_token does not verify: %w", err)
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil {
-		return Identity{}, fmt.Errorf("the id_token signature is not base64url: %w", err)
+	// Verify は nonce を見ない。仕様上ここは呼び出し側の責任である。忘れると
+	// 認可コードを横取りした攻撃者の再生を防げなくなる。
+	if idToken.Nonce != p.Nonce {
+		return Identity{}, fmt.Errorf("the id_token nonce does not match the one we sent")
 	}
-	sum := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
-	if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, sum[:], sig); err != nil {
-		return Identity{}, fmt.Errorf("the id_token signature does not verify: %w", err)
-	}
-
 	var claims struct {
-		Iss      string   `json:"iss"`
-		Aud      any      `json:"aud"`
-		Exp      int64    `json:"exp"`
-		Nonce    string   `json:"nonce"`
-		Sub      string   `json:"sub"`
 		Username string   `json:"username"`
 		Email    string   `json:"email"`
 		Groups   []string `json:"groups"`
 	}
-	if err := decodeSegment(parts[1], &claims); err != nil {
-		return Identity{}, err
-	}
-	if claims.Iss != c.cfg.Issuer {
-		return Identity{}, fmt.Errorf("the id_token issuer is %q, want %q", claims.Iss, c.cfg.Issuer)
-	}
-	if !audienceHas(claims.Aud, c.cfg.ClientID) {
-		return Identity{}, fmt.Errorf("the id_token is not addressed to this client")
-	}
-	if claims.Exp == 0 || !time.Now().Before(time.Unix(claims.Exp, 0)) {
-		return Identity{}, fmt.Errorf("the id_token has expired")
-	}
-	if claims.Nonce != nonce {
-		return Identity{}, fmt.Errorf("the id_token nonce does not match the one we sent")
-	}
-	if claims.Sub == "" {
-		return Identity{}, fmt.Errorf("the id_token carries no subject")
+	if err := idToken.Claims(&claims); err != nil {
+		return Identity{}, fmt.Errorf("cannot read the id_token claims: %w", err)
 	}
 	name := claims.Username
 	if name == "" {
 		// username は標準のclaimではない。別のIdPでは無いことがある。
-		name = claims.Sub
+		name = idToken.Subject
 	}
-	return Identity{Subject: claims.Sub, Username: name, Email: claims.Email, Groups: claims.Groups}, nil
-}
-
-// publicKey はJWKSを取って、kidに合うRSA公開鍵を返す。
-// キャッシュしない。鍵の入れ替えに追随するためと、無効化を書かずに済ませるため。
-func (c *Client) publicKey(ctx context.Context, kid string) (*rsa.PublicKey, error) {
-	var jwks struct {
-		Keys []struct {
-			Kty string `json:"kty"`
-			Kid string `json:"kid"`
-			N   string `json:"n"`
-			E   string `json:"e"`
-		} `json:"keys"`
-	}
-	if err := c.getJSON(ctx, c.jwksURL, &jwks); err != nil {
-		return nil, fmt.Errorf("cannot read the JWKS: %w", err)
-	}
-	for _, k := range jwks.Keys {
-		if k.Kty != "RSA" || (kid != "" && k.Kid != kid) {
-			continue
-		}
-		nb, err := base64.RawURLEncoding.DecodeString(k.N)
-		if err != nil {
-			return nil, fmt.Errorf("the JWKS modulus is not base64url: %w", err)
-		}
-		eb, err := base64.RawURLEncoding.DecodeString(k.E)
-		if err != nil {
-			return nil, fmt.Errorf("the JWKS exponent is not base64url: %w", err)
-		}
-		if len(eb) > 8 {
-			return nil, fmt.Errorf("the JWKS exponent is too large")
-		}
-		buf := make([]byte, 8)
-		copy(buf[8-len(eb):], eb)
-		return &rsa.PublicKey{N: new(big.Int).SetBytes(nb), E: int(binary.BigEndian.Uint64(buf))}, nil
-	}
-	return nil, fmt.Errorf("the JWKS has no RSA key for kid %q", kid)
-}
-
-func (c *Client) getJSON(ctx context.Context, u string, v any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s returned %d", u, resp.StatusCode)
-	}
-	return json.Unmarshal(b, v)
-}
-
-// audienceHas は aud が文字列でも配列でも扱えるようにする。
-func audienceHas(aud any, want string) bool {
-	switch a := aud.(type) {
-	case string:
-		return a == want
-	case []any:
-		for _, x := range a {
-			if s, ok := x.(string); ok && s == want {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func decodeSegment(seg string, v any) error {
-	b, err := base64.RawURLEncoding.DecodeString(seg)
-	if err != nil {
-		return fmt.Errorf("the id_token segment is not base64url: %w", err)
-	}
-	return json.Unmarshal(b, v)
-}
-
-func challenge(verifier string) string {
-	sum := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
+	return Identity{
+		Subject: idToken.Subject, Username: name, Email: claims.Email, Groups: claims.Groups,
+	}, nil
 }
 
 func randomString() (string, error) {
