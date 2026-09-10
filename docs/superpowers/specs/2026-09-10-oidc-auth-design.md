@@ -28,9 +28,7 @@ Identity Provider に委ねる。どちらを採るかはまだ決めていな�
 **増える**もの。
 
 - OIDC クライアント（discovery、認可へのリダイレクト、state/nonce/PKCE、callback、
-  コード交換、ID トークンの検証）。ただし `github.com/coreos/go-oidc/v3` と
-  `golang.org/x/oauth2` に任せられる
-- 依存が 2 つ増える
+  コード交換、ID トークンの検証）。実測では標準ライブラリだけで 250 行程度に収まった
 - IdP 側にクライアントを登録する運用
 - famifo が自分の外部 URL を知る必要（`redirect_uri` は絶対 URL）
 - コンテナに CA 証明書が要る（後述）
@@ -41,37 +39,91 @@ famifo が書くコードは前案より減り、複雑さはコードから設�
 ## 実機で確認したこと
 
 2026-09-10 に DSM（DS918、`192.168.1.2`）で Synology SSO Server を導入し、OIDC を
-有効にして discovery を取得した。結論として **`go-oidc` にそのまま任せられる**。
+有効にして、**認可コードフローを実際に1往復させた**。使い捨てのクライアントを書いて、
+ブラウザで DSM にログインし、claim を取得するところまで通している。結論として
+**標準的な OIDC として扱える**。
+
+### discovery
 
 ```
-issuer                          https://shirotae.synology.me/webman/sso
-authorization_endpoint          .../webman/sso/SSOOauth.cgi
-token_endpoint                  .../webman/sso/SSOAccessToken.cgi
-userinfo_endpoint               .../webman/sso/SSOUserInfo.cgi
-jwks_uri                        .../webman/sso/openid-jwks.json
+issuer                            https://shirotae.synology.me:5001/webman/sso
+authorization_endpoint            .../webman/sso/SSOOauth.cgi
+token_endpoint                    .../webman/sso/SSOAccessToken.cgi
+userinfo_endpoint                 .../webman/sso/SSOUserInfo.cgi
+jwks_uri                          .../webman/sso/openid-jwks.json
 code_challenge_methods_supported  S256, plain
-grant_types_supported           authorization_code, implicit
-response_types_supported        code, code id_token, id_token, id_token token
-id_token_signing_alg_values      RS256
-token_endpoint_auth_methods      client_secret_basic, client_secret_post
-scopes_supported                email, groups, openid
-claims_supported                aud, email, exp, groups, iat, iss, sub, username
+grant_types_supported             authorization_code, implicit
+response_types_supported          code, code id_token, id_token, id_token token
+id_token_signing_alg_values       RS256
+token_endpoint_auth_methods       client_secret_basic, client_secret_post
+scopes_supported                  email, groups, openid
+claims_supported                  aud, email, exp, groups, iat, iss, sub, username
 ```
 
 discovery は issuer 直下の `/.well-known/openid-configuration` にあり、仕様どおりの
-配置である。`oidc.NewProvider(ctx, issuer)` が細工なしで動く。JWKS も取得でき、
-RS256 の鍵が1本入っていた。
+配置である。JWKS も取得でき、RS256 の鍵が1本入っていた。
 
-**標準から外れる点が2つある。**
+### issuer にはポート番号を含める
+
+**SSO Server の「サーバー URL」にはポートを書く必要がある。** これを省くと issuer が
+443 番になり、そこでは動かない。443 番で待っているのは DSM 本体ではなく静的配信の
+既定サイトで、GET は通るが **POST が nginx に 405 で拒否される**（`/webapi/entry.cgi`
+でも同じ）。したがってトークン交換が必ず失敗する。authorization_endpoint も 443 番では
+実体がなく、`location.replace` で 5001 番へ飛ばす JavaScript を返すだけである。
+ブラウザは追随するがサーバー間の POST は追随しないので、この壊れ方は見つけにくい。
+
+サーバー URL を `https://shirotae.synology.me:5001` にすると、広告される URL がすべて
+5001 番になり、実体と一致する。リバースプロキシも DSM のポート変更も要らない。
+
+### 一往復させて分かったこと
+
+| 項目 | 結果 |
+|---|---|
+| PKCE | S256 で通る |
+| クライアント認証 | `client_secret_post` で通る |
+| ID トークン | RS256、JWKS の鍵で署名を検証できた |
+| `nonce` | 要求した値がそのまま入る |
+| トークンの寿命 | `expires_in=180`（3分） |
+
+取得した claim。
+
+```json
+{
+  "iss": "https://shirotae.synology.me:5001/webman/sso",
+  "aud": "<client_id>",
+  "sub": "yendo",
+  "username": "yendo",
+  "email": "<DSM アカウントに設定したアドレス>",
+  "groups": ["users"],
+  "auth_time": 1789031843,
+  "iat": 1789031843,
+  "exp": 1789032023,
+  "nonce": "<要求した値>"
+}
+```
+
+**標準から外れる点が3つある。**
 
 1. ユーザー名の claim は **`username`** で、標準の `preferred_username` ではない
 2. **`profile` スコープが無い**。要求できるのは `openid`、`email`、`groups`
+3. **`sub` が不透明な識別子ではなく、ユーザー名そのもの**である。したがって DSM で
+   アカウント名を変更すると `sub` も変わる。「安定した識別子」として扱えない
 
-**`groups` claim が最初から入る。** 本案では使わないが、グループで絞りたくなったときに
-追加の API 呼び出しが要らないことは記録しておく。
+3 は本案では実害が小さい。認可を持たず（全員通す）、famifo は `sub` を鍵にして何かを
+保存するわけではなく、誰のセッションかを示すために持つだけだからである。将来ユーザーごとの
+状態を持つようになったら、この前提を見直す必要がある。
 
-**エンドポイントは 443 番でのみ提供される。** 5001 番の同じパスは `not enabled` を返す。
-これが後述の到達性の条件を決める。
+**`groups` claim が実際に入った**（`["users"]`）。本案では使わないが、グループで絞りたく
+なったときに追加の API 呼び出しが要らないことは確認できている。
+
+**`email` は DSM アカウントに設定があれば入る。** 設定していないアカウントでは空になるので、
+鍵には使えない。
+
+### 標準ライブラリだけで実装できる
+
+確認に使ったクライアントは Go の標準ライブラリだけで書いた。discovery の取得、
+state/nonce/PKCE の生成、コード交換、JWKS の取得、RS256 署名の検証、`iss`/`aud`/`exp`/
+`nonce` の検証まで含めて 250 行程度である。**`go-oidc` と `oauth2` への依存は必須ではない。**
 
 ## 目標
 
@@ -96,9 +148,8 @@ RS256 の鍵が1本入っていた。
 
 ### パッケージ境界
 
-- `internal/oidcauth`（新規）— `go-oidc` と `oauth2` を包み、famifo が必要とする2つの
-  操作だけを公開する。ライブラリと同じ名前にしないのは、import したときにどちらの話を
-  しているか読めるようにするため
+- `internal/oidcauth`（新規）— OIDC の認可コードフローを扱い、famifo が必要とする2つの
+  操作だけを公開する。標準ライブラリだけで書く（後述）
 - `internal/session`（新規）— 署名付き Cookie の組み立てと検証。OIDC も HTTP も知らない
 - `internal/web/auth.go`（新規）— ハンドラと認証ミドルウェア
 
@@ -109,7 +160,7 @@ RS256 の鍵が1本入っていた。
 ```go
 // Identity は認証できた利用者。
 type Identity struct {
-	Subject  string   // sub。安定した識別子。鍵にするならこれ
+	Subject  string   // sub。この IdP ではユーザー名そのもので、不透明ではない
 	Username string   // username claim。表示とログに使う
 	Email    string   // 空のことがある
 	Groups   []string // 本案では使わない。記録のみ
@@ -123,15 +174,26 @@ func (c *Client) AuthURL(state, nonce, pkceVerifier string) string
 func (c *Client) Exchange(ctx context.Context, code, pkceVerifier, nonce string) (Identity, error)
 ```
 
-`New` は `oidc.NewProvider` で discovery を引く。起動時に1回だけ行い、IdP に届かなければ
-起動を止める。認証すると宣言しておいて黙って無認証で配信するより、起動しないほうがよい。
+**標準ライブラリだけで実装する。** `go-oidc` を使わないのは、実測で足りることを確認した
+ことと、依存を増やさない方針に沿うためである。ただし手書きの JWT 検証は落とし穴が多いので、
+安全側に倒すための制約を設計に埋め込む。
+
+- 署名アルゴリズムは **RS256 に固定**する。ヘッダの `alg` を見て分岐しない。`none` や
+  HMAC への取り違えという典型的な脆弱性を、そもそも起こしえなくする
+- **JWKS はログインのたびに取得**し、キャッシュしない。鍵のローテーションに自動で追随でき、
+  キャッシュの無効化を書かずに済む。セッションは30日なのでログインは稀であり、
+  1リクエストの往復は問題にならない
+- `iss`、`aud`、`exp`、`nonce` をすべて検証する。どれか1つでも欠けたら失敗させる
+
+`New` は起動時に1回だけ discovery を引く。IdP に届かなければ起動を止める。認証すると
+宣言しておいて黙って無認証で配信するより、起動しないほうがよい。
 
 要求するスコープは `openid email groups`。`profile` は SSO Server に無いので要求しない。
 `email` と `groups` は本案では使わないが、`username` claim がどのスコープに紐づくかは
 文書化されていない。提供される3つをすべて要求しておき、実機で通したあとに減らせるかを
 確かめる。減らせるなら `openid` だけにする。
-ID トークンの検証は `go-oidc` に任せる（署名、`iss`、`aud`、`exp`、`iat`）。`nonce` の
-一致だけは呼び出し側で確かめる。
+ID トークンの検証は上の制約どおりに行う。署名の比較には `hmac.Equal` ではなく
+`rsa.VerifyPKCS1v15` を使う（公開鍵での検証なので秘密の比較ではない）。
 
 `username` は標準の claim ではないので、`IDToken.Claims` に独自の構造体を渡して取り出す。
 IdP を差し替えたときにここが空になる可能性があるため、**空なら `sub` で代用する**。
@@ -231,15 +293,45 @@ type Auth struct {
 
 ### 到達性の条件
 
-本案は前案に無い前提を2つ持ち込む。どちらも実機の確認で判明した。
+本案は前案に無い前提を2つ持ち込む。どちらも実機で構築し、動作を確認した。
 
-**1. `shirotae.synology.me` を LAN 内で `192.168.1.2` に解決させる必要がある。**
-この名前は公開 IP を指し、ポートを開けていないので LAN 内からは届かない。そして
-OIDC のエンドポイントは 443 番でのみ提供される。ブラウザ（認可へのリダイレクト）も
-famifo（discovery、JWKS、トークン交換）も、この名前でこのホストに届かなければならない。
+**1. LAN 内で `shirotae.synology.me` が `192.168.1.2` に解決される必要がある。**
 
-ルーターの DNS に静的エントリを足すのが LAN 全体に効いて簡単である。famifo の
-コンテナには `docker run --add-host shirotae.synology.me:192.168.1.2` を渡す。
+この名前は DDNS で登録した公開 IP を指す。ポートを開けていないので、LAN 内から
+その名前で NAS には届かない。ブラウザ（認可へのリダイレクト）も famifo（discovery、
+JWKS、トークン交換）も、この名前でこのホストに届かなければならない。
+
+実際に機能した構成は次のとおり。
+
+1. DSM に **DNS Server パッケージ**を入れ、「解決」で転送（フォワーダー）を有効にする。
+   これを飛ばすと DSM が持つゾーン以外を答えられず、LAN の名前解決が壊れる
+2. `shirotae.synology.me` のマスターゾーンを作り、apex の A レコードで `192.168.1.2` を返す
+3. ホームゲートウェイ（NTT RV-230NE）の**ローカルドメイン設定**で、ドメイン名に
+   `shirotae.synology.me`、プライマリ DNS に **DSM の IPv6 アドレス**を指定する
+
+3 で IPv6 を使うのは好みではなく強制である。**この欄は IPv4 アドレスを受け付けない。**
+`192.168.1.2` も `8.8.8.8` も「アドレスが入力範囲外です」で弾かれる。エラーメッセージは
+値の範囲の問題に見えるが、実際はアドレスの種別の問題である。同じ挙動が同型機
+（RV-440NE）でも報告されている。
+
+この形の利点は、DHCP を一切触らずに済み、影響範囲が `shirotae.synology.me` の1ドメインに
+閉じることである。DSM が止まっても他の名前解決はホームゲートウェイが答え続ける。
+DSM を LAN 全体の DHCP/DNS にする案も検討したが、ホームゲートウェイが IPv6 の広告（RA）を
+出し続ける以上、IPv6 対応の端末が DSM の配る DNS を無視しうるため採らなかった。
+
+**弱点。** ローカルドメイン設定に書くのは DSM の IPv6 アドレスそのものである。その後半
+（インターフェース ID）は MAC から作られるので変わらないが、**前半のプレフィックスは
+回線側から配られる**ので変わりうる。フレッツでは何年も変わらないことが多く、機器の再起動や
+停電では変わらないが、ホームゲートウェイの交換・初期化、回線の引き直し、事業者の変更で
+変わる。
+
+変わったときの症状は「**famifo にだけログインできない。他のサイトは普通に見られる**」で
+ある。原因に辿り着きにくいので、確認場所をここに書き残す。ホームゲートウェイのローカル
+ドメイン設定のプライマリ DNS が、DSM の現在の IPv6 アドレスと一致しているかを見る。
+
+**コンテナからの名前解決。** DSM 上の Docker はホストの解決器を使うので、上の構成が
+効いていれば追加の手当ては要らないはずである。ただし確認していない。起動時に IdP へ
+届かなければ `docker run --add-host shirotae.synology.me:192.168.1.2` で固定する。
 
 **2. コンテナに CA 証明書が要る。** famifo の Dockerfile は `FROM scratch` で
 バイナリしか入れていない（`Dockerfile:15-17`）。CA バンドルが無いので、いまの famifo は
@@ -254,30 +346,39 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 検証を無効化する選択肢は作らない。平文より安全に見えて実際はそうでない構成を
 選べるようにしない。
 
+**証明書について。** DSM の証明書は Synology DDNS のホスト名に対して Let's Encrypt で
+取得した。DDNS の登録画面にある証明書取得のチェックボックスを使うと、所有確認が
+Synology の DNS 側で行われるため、**ポートを1つも開けずに正規の証明書が手に入る**。
+コントロールパネルの証明書画面から取る経路は HTTP-01 になり、ポート 80 の開放が要る。
+SAN には `shirotae.synology.me` と `*.shirotae.synology.me` の両方が入った。
+
 ### famifo をどの URL で見せるか
 
 DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP のまま待ち受ける。
-証明書は DSM が持つ Let's Encrypt のもの（`shirotae.synology.me` と
-`*.shirotae.synology.me` の両方を含む）をそのまま使えるので、famifo は証明書を知らない。
+証明書は DSM が持つ Let's Encrypt のものをそのまま使えるので、famifo は証明書を知らない。
 
-**`https://shirotae.synology.me:8443` を推奨する。** 443 番は DSM が使っているため
-別のポートを充てる。名前が1つで済むので、DNS の上書きも1件で足りる。
+**`https://shirotae.synology.me:8443` を推奨する。** 5001 番は DSM 本体、443 番は DSM の
+既定サイトが使っているため、別のポートを充てる。DNS のゾーンに追加のレコードが要らない。
 
-ワイルドカード証明書があるので `https://famifo.shirotae.synology.me` のように
-サブドメインで分ける構成も選べる（DSM のリバースプロキシはホスト名でも振り分けられる）。
-URL からポートが消える代わりに、DNS の上書きが2件になる。好みで選べるが、
-本 spec は前者を前提に書く。
+ワイルドカード証明書があるので `https://famifo.shirotae.synology.me` のようにサブドメインで
+分ける構成も選べる。DSM のゾーンには `famifo` の A レコードを既に置いてあり、証明書も
+覆っている。URL からポートが消える代わりに、443 番で既定サイトより先にリバースプロキシへ
+振り分けられるかを確かめる必要がある。未確認なので、本 spec は前者を前提に書く。
 
 ### 設定
 
 | フラグ | 既定 | 意味 |
 |---|---|---|
-| `-oidc-issuer` | 空 | IdP の issuer。空なら認証しない |
+| `-oidc-issuer` | 空 | IdP の issuer。空なら認証しない。ポート番号を含める |
 | `-oidc-client-id` | 空 | IdP に登録したクライアント ID |
 | `-external-url` | 空 | famifo が外から見える URL。`redirect_uri` の組み立てに使う |
 
 クライアントシークレットはフラグで渡さない。コマンドライン引数は同じホストの誰からでも
 `/proc` で読める。環境変数 `FAMIFO_OIDC_CLIENT_SECRET` から読む。
+
+`-oidc-issuer` にはポート番号が要る。Synology SSO Server の場合は
+`https://shirotae.synology.me:5001/webman/sso` である。省くと discovery は引けるが
+トークン交換が 405 で失敗する（「実機で確認したこと」を見よ）。
 
 `Config.Validate` は、`-oidc-issuer` が指定されたら `-oidc-client-id`、`-external-url`、
 シークレットの環境変数がすべて揃っていることを確かめ、欠けていたら落とす。`-external-url` は
@@ -301,7 +402,8 @@ URL からポートが消える代わりに、DNS の上書きが2件になる�
   `ExternalURL`、`SessionKeyPath()`、検証
 - `main.go` — フラグの追加と組み立て
 - `Dockerfile` — CA バンドルの取り込み
-- `go.mod` — `go-oidc` と `oauth2`
+
+`go.mod` は変えない。新しい依存を入れない。
 
 ## 失敗の仕方
 
@@ -329,7 +431,9 @@ URL からポートが消える代わりに、DNS の上書きが2件になる�
 - **運用の前提が増える。** LAN 内の DNS の上書き、IdP へのクライアント登録、
   DSM のリバースプロキシ、DDNS と証明書。前案はこれらを必要としない
 - **IdP が単一障害点になる。** SSO Server が壊れると新規のログインができない
-- **依存が2つ増える。** `go-oidc` と `oauth2`
+- **LAN 内の名前解決が、回線由来の IPv6 アドレスに依存する。** 詳細は「到達性の条件」に
+  書いた。プレフィックスが変われば `shirotae.synology.me` だけが引けなくなり、
+  famifo にログインできなくなる
 
 ## テスト
 
@@ -337,8 +441,9 @@ URL からポートが消える代わりに、DNS の上書きが2件になる�
 
 - `oidcauth` — `httptest.Server` で偽の IdP を立てる。discovery、JWKS、トークン
   エンドポイントを返し、テスト内で生成した RSA 鍵で ID トークンに署名する。正常系、
-  `nonce` 不一致、署名が別鍵、期限切れ、`aud` 違い、`username` が空のとき `sub` に
-  落ちること
+  `nonce` 不一致、署名が別鍵、期限切れ、`aud` 違い、`iss` 違い、`username` が空のとき
+  `sub` に落ちること。加えて **`alg` が RS256 以外の ID トークンを拒否すること**
+  （`none` と HMAC の両方）。手書きの検証を選んだ以上、ここは必ず test で押さえる
 - `session` — 署名して検証できること、期限切れ、1バイト改竄、別の鍵、壊れた形式。
   鍵と時刻を注入するので実時間に依存しない
 - `web` — 未認証時のリダイレクトと 401 の出し分け、`next` の検証
@@ -351,9 +456,11 @@ URL からポートが消える代わりに、DNS の上書きが2件になる�
 ## ドキュメント
 
 - `README.md`（英語）— 認証の節を足す。SSO Server にアプリケーションを登録する手順、
-  `redirect_uri` を一致させること、フラグと環境変数、LAN 内で DDNS 名を NAS の IP へ
-  向ける必要があること、`--add-host`、DSM のリバースプロキシの設定、`session.key` を
-  消して再起動すると全端末がログアウトすること。現行の
+  `redirect_uri` を一致させること、issuer にポートを含めること、フラグと環境変数、
+  LAN 内の名前解決（DNS Server パッケージのゾーンと、ホームゲートウェイのローカル
+  ドメイン設定に DSM の IPv6 アドレスを入れること）、`--add-host`、DSM のリバース
+  プロキシの設定、`session.key` を消して再起動すると全端末がログアウトすること、
+  IPv6 プレフィックスが変わったときの症状と確認場所。現行の
   「Neither authentication nor HTTPS is implemented」も直す
 - `docs/design.md`（日本語）— 「認証: なし」「通信: HTTPのみ」を書き換える
 
