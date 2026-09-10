@@ -101,6 +101,103 @@ msg=starting version="v0.1.0" timezone=JST+09:00 dirs=[/photos] ...
 
 Check that line before letting a first index run to completion; rebuilding one costs hours.
 
+## Authentication
+
+Off by default: without `-oidc-issuer`, anyone who can reach the address sees the
+photos. Pass it and famifo hands the visitor to an OpenID Connect provider and shows
+nothing until they come back identified. Everyone the provider accepts gets in —
+famifo keeps no user list of its own, so who may look is decided where the accounts
+already live.
+
+```bash
+docker run -d --restart unless-stopped -p 8080:8080 \
+  -v /volume1/photo:/photos:ro \
+  -v /volume1/famifo/data:/data \
+  -e FAMIFO_OIDC_CLIENT_SECRET=<secret> \
+  famifo -dir /photos -data /data \
+  -oidc-issuer https://nas.example.com:5001/webman/sso \
+  -oidc-client-id <client id> \
+  -external-url https://nas.example.com:8443
+```
+
+| Setting | Meaning |
+|---|---|
+| `-oidc-issuer` | The provider's issuer, **including the port**. Empty turns authentication off |
+| `-oidc-client-id` | The client id registered with the provider |
+| `-external-url` | The URL famifo is reached at from outside. The redirect URI is this plus `/auth/callback` |
+| `FAMIFO_OIDC_CLIENT_SECRET` | The client secret. Read from the environment, never from a flag — command-line arguments are readable by anyone on the host through `/proc` |
+
+famifo never sees a password. Two-factor authentication, lockouts and password
+changes all stay with the provider.
+
+### With Synology SSO Server
+
+Install the SSO Server package, enable OIDC, and set its server URL to the NAS with
+**the DSM port included**, for example `https://nas.example.com:5001`. Leaving the port
+out looks like it works — the discovery document is served — but every login then fails
+at the token exchange: without a port the advertised endpoints land on 443, which serves
+DSM's static default site and answers POST with `405 Not Allowed`.
+
+Register famifo as an application and set its redirect URI to `-external-url` plus
+`/auth/callback`, character for character. A mismatch is rejected by the provider.
+
+DSM's certificate is easiest to get from the DDNS screen: registering a Synology DDNS
+hostname with the certificate box ticked obtains a Let's Encrypt certificate through
+Synology's own DNS, so no port has to be opened. Taking one from the certificate screen
+uses HTTP-01 instead and needs port 80 reachable from the internet.
+
+### Serving famifo over HTTPS
+
+famifo speaks plain HTTP and does not terminate TLS. Put it behind DSM's reverse proxy
+(Control Panel → Login Portal) and let DSM present the certificate it already has:
+
+```
+https://nas.example.com:8443  ->  http://localhost:8080
+```
+
+When `-external-url` starts with `https://`, famifo marks its cookies `Secure`. It never
+infers this from a header.
+
+### Resolving the provider's name inside the LAN
+
+The browser and famifo both reach the provider by name, and that name normally points at
+your public address. With no ports open, nothing on the LAN can reach it there, so the
+name has to resolve to the NAS locally.
+
+1. Install the **DNS Server** package on the NAS. Under Resolution, enable resolution and
+   set a forwarder, or everything except your own zone stops resolving.
+2. Create a master zone for the DDNS name with an A record pointing at the NAS.
+3. On the router, forward that domain to the NAS. On an NTT home gateway this is under
+   Local Domain. **That field only accepts IPv6 addresses** — an IPv4 address is rejected
+   as out of range, which reads like a typo but is not.
+
+If the container cannot resolve the name at startup it refuses to start and logs
+`cannot read the OIDC discovery document`. Pin the address if that happens:
+
+```bash
+docker run --add-host nas.example.com:192.168.1.2 ...
+```
+
+**If logins break one day and nothing else does, look here first.** The address written
+into the router is the NAS's IPv6 address, and while its host half is derived from the
+MAC and never moves, the prefix is handed out by the ISP. It survives reboots and power
+cuts but not a replaced or reset gateway, a re-provisioned line, or a change of provider.
+The symptom is narrow and misleading: famifo refuses every login while the rest of the
+internet works. Compare the address in the router's Local Domain settings with the NAS's
+current IPv6 address.
+
+### Sessions
+
+After a successful login famifo issues its own signed cookie and stops asking the
+provider. Sessions last 30 days and survive restarts, because the signing key lives in
+`<data>/session.key`.
+
+Individual sessions cannot be revoked. Deleting `session.key` and restarting logs every
+device out at once, which is the only lever there is.
+
+Signing out of famifo does not sign you out of DSM: the provider offers no logout
+endpoint, so the same browser can walk straight back in.
+
 ## Docker
 
 The image is built `FROM scratch` around the static binary — 15MB, no runtime
@@ -229,9 +326,9 @@ skipping.
   (NFS/SMB), so the target directory has to be mounted locally. Pointing it straight at a NAS
   share will not work — the intended setup is to run it on a machine on the LAN and let it serve
   that machine's local disk.
-- **Meant for use inside a LAN.** Neither authentication nor HTTPS is implemented. To reach it
-  from outside, connect to your home LAN over a VPN (Tailscale or similar) rather than opening a
-  port.
+- **Meant for use inside a LAN.** HTTPS is not implemented; authentication is optional and off by default.
+  To reach it from outside, connect to your home LAN over a VPN (Tailscale or similar) rather than
+  opening a port.
 - **A root that scans empty loses nothing.** Starting up while an external drive is unmounted
   produces an empty scan of that root, which looks exactly like "everything under it was
   deleted". `Scan` therefore judges each root separately: a root that turns up no photos

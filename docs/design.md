@@ -146,8 +146,9 @@ grill-meによる設計インタビューで確定した方針をまとめる。
 ## 運用
 
 - **公開範囲**: 自宅LAN内のみ（外出先からはVPN等での接続を想定し、外部公開はしない）
-- **認証**: なし（LAN内の信頼されたネットワーク前提）
-- **通信**: HTTPのみ（TLS証明書の運用コストに見合わないため）
+- **認証**: 任意。`-oidc-issuer` を渡すと OIDC で認証する（既定は無効）。
+  設計は `docs/superpowers/specs/2026-09-10-oidc-auth-design.md`
+- **通信**: famifo自身はHTTPのみ。HTTPSが要る構成では DSM のリバースプロキシに終端させる
 - **配備先**: Synology DS918+（x86_64）上の DSM 6
 - **運用方式**: Dockerコンテナ（`FROM scratch` + 静的バイナリ、15MB）
   - DSM 6 は systemd ではなく upstart を使う。自前のユニットやジョブはDSMの更新で
