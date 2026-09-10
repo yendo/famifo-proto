@@ -78,7 +78,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	srv, err := web.NewServer(st, thumbs, log)
+	srv, err := web.NewServer(st, thumbs, nil, log)
 	if err != nil {
 		return err
 	}

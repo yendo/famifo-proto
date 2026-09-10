@@ -38,6 +38,7 @@ type Server struct {
 	tmpl      *template.Template
 	thumbs    *thumb.Provider
 	chunkSize int
+	auth      *Auth // nil なら認証しない
 	log       *slog.Logger
 }
 
@@ -46,12 +47,15 @@ type Server struct {
 //
 // thumbs は取り込み側と共有する。配信するファイルの選択はすべてそこが決めるので、
 // サーバーはサムネイルの置き場所を知らない。
-func NewServer(st *store.Store, thumbs *thumb.Provider, log *slog.Logger) (*Server, error) {
+//
+// auth に nil を渡すと認証しない。開発機やテストでIdPを立てずに動かせるようにするため
+// であり、既定の構成でもある。
+func NewServer(st *store.Store, thumbs *thumb.Provider, auth *Auth, log *slog.Logger) (*Server, error) {
 	tmpl, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("cannot load the templates: %w", err)
 	}
-	return &Server{st: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, log: log}, nil
+	return &Server{st: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, auth: auth, log: log}, nil
 }
 
 // Handler はルーティング済みのハンドラを返す。
@@ -62,12 +66,21 @@ func (s *Server) Handler() http.Handler {
 	if err != nil {
 		panic(err) // embedの内容は固定なので、ここで失敗するならビルドの不備
 	}
+	// 未認証でもCSSは当たるようにする。ログイン前の画面が崩れる意味がない。
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
-	mux.HandleFunc("GET /{$}", s.handleGallery)
-	mux.HandleFunc("GET /item/{id}", s.handleItem)
-	mux.HandleFunc("GET /tiles", s.handleTiles)
-	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
-	mux.HandleFunc("GET /file/{id}", s.handleFile)
+	protected := http.NewServeMux()
+	protected.HandleFunc("GET /{$}", s.handleGallery)
+	protected.HandleFunc("GET /item/{id}", s.handleItem)
+	protected.HandleFunc("GET /tiles", s.handleTiles)
+	protected.HandleFunc("GET /thumb/{id}", s.handleThumb)
+	protected.HandleFunc("GET /file/{id}", s.handleFile)
+	mux.Handle("/", s.authenticate(protected))
+
+	if s.auth != nil {
+		mux.HandleFunc("GET /login", s.handleLogin)
+		mux.HandleFunc("GET /auth/callback", s.handleCallback)
+		mux.HandleFunc("POST /logout", s.handleLogout)
+	}
 	return mux
 }

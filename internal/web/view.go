@@ -41,6 +41,8 @@ type galleryView struct {
 	DayGroups template.JS
 	// OpenIndex は開いた状態で表示する写真の通し番号。noOpenItem なら閉じたまま。
 	OpenIndex int
+	// AuthEnabled は認証が有効かどうか。無効ならログアウトのボタンを出さない。
+	AuthEnabled bool
 }
 
 // buildRange はオフセット指定で1窓枠分を組み立てる。
