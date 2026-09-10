@@ -158,11 +158,24 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 // handleLogout はこの端末のセッションを捨てる。
 // 署名付きCookieを選んだ帰結として、他の端末のセッションは生き続ける。
+//
+// 消したあとに "/" へリダイレクトしてはいけない。ギャラリーはすべて認証の
+// 内側にあるので、"/" は未認証を検知して /login に送り、/login はIdPの
+// authorize エンドポイントへ送る。IdP側のセッションはfamifoより長生きする
+// ことが多く、まだ生きていれば利用者に何も聞かずそのままcallbackへ差し戻し、
+// 新しいセッションを発行してしまう。結果としてサインアウトが見た目上何も
+// していないように見え、共有端末では次の利用者がサインインしたままになる。
+// そのため /logout はミドルウェアの外側（認証不要な経路）で完結する自前の
+// ページを200で返す。
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.clearCookie(w, sessionCookie)
 	// ログインを始めて完了させなかった端末に往復用Cookieが残らないようにする。
 	s.clearCookie(w, flowCookie)
-	http.Redirect(w, r, "/", http.StatusFound)
+	s.writeHTMLPage(w, http.StatusOK, "Signed out", `<link rel="stylesheet" href="/static/app.css">`+
+		`<p>famifo からサインアウトしました。</p>`+
+		`<p>IDプロバイダー側のセッションは別に残っていることがある。もう一度サインインしても何も聞かれない場合があり、`+
+		`IDプロバイダー側からのサインアウトはそれとは別の操作になる。</p>`+
+		`<p><a href="/login">もう一度サインインする</a></p>`)
 }
 
 // safeNext は戻り先を自サイト内に限る。
@@ -183,10 +196,17 @@ func safeNext(next string) string {
 // にならない（別タブが一時Cookieを上書きしてここに来るのは日常的に起きる）。
 func (s *Server) callbackError(w http.ResponseWriter, message string, status int) {
 	s.clearCookie(w, flowCookie)
+	s.writeHTMLPage(w, status, "Sign-in failed",
+		fmt.Sprintf(`<p>%s</p><p><a href="/login">Try signing in again</a></p>`, html.EscapeString(message)))
+}
+
+// writeHTMLPage は認証の内側を経由しない小さなHTMLページを書き出す。bodyHTML
+// はすでに安全な断片であることを呼び出し側が保証する（利用者由来の文字列を
+// 混ぜるときはhtml.EscapeStringを通すこと）。
+func (s *Server) writeHTMLPage(w http.ResponseWriter, status int, title, bodyHTML string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	fmt.Fprintf(w, `<!doctype html><title>Sign-in failed</title><p>%s</p><p><a href="/login">Try signing in again</a></p>`,
-		html.EscapeString(message))
+	fmt.Fprintf(w, `<!doctype html><title>%s</title>%s`, html.EscapeString(title), bodyHTML)
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int) {

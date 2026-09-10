@@ -216,6 +216,10 @@ func TestNextMustBeALocalPath(t *testing.T) {
 	}
 }
 
+// TestLogoutClearsTheSession は /logout がセッションと往復用Cookieの両方を
+// 破棄し、かつ保護された領域へリダイレクトしないことを固定する。/ へ戻すと、
+// IdP側のセッションがまだ生きている場合に /login からそのまま再ログインが
+// 走ってしまい、サインアウトが見た目上何もしていないことになる。
 func TestLogoutClearsTheSession(t *testing.T) {
 	f := newAuthFixture(t)
 	start := get(t, f.h, "/login")
@@ -225,14 +229,22 @@ func TestLogoutClearsTheSession(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	req.AddCookie(sess)
+	req.AddCookie(flow)
 	rec := httptest.NewRecorder()
 	f.h.ServeHTTP(rec, req)
 	resp := rec.Result()
 
-	require.Equal(t, http.StatusFound, resp.StatusCode)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "logout must not redirect back into the protected area")
+
 	cleared := cookieNamed(resp, "famifo_session")
 	require.NotNil(t, cleared)
-	require.Less(t, cleared.MaxAge, 0, "the cookie must be told to expire")
+	require.Less(t, cleared.MaxAge, 0, "the session cookie must be told to expire")
+
+	clearedFlow := cookieNamed(resp, "famifo_oidc")
+	require.NotNil(t, clearedFlow)
+	require.Less(t, clearedFlow.MaxAge, 0, "the flow cookie must be told to expire")
+
+	require.Contains(t, bodyOf(t, resp), `href="/login"`, "the page must offer a way to sign in again")
 }
 
 func TestSecureAttributeFollowsTheSetting(t *testing.T) {
