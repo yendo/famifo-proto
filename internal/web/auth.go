@@ -171,10 +171,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.clearCookie(w, sessionCookie)
 	// ログインを始めて完了させなかった端末に往復用Cookieが残らないようにする。
 	s.clearCookie(w, flowCookie)
-	s.writeHTMLPage(w, http.StatusOK, "Signed out", `<link rel="stylesheet" href="/static/app.css">`+
+	s.writeHTMLPage(w, http.StatusOK, "サインアウトしました", `<link rel="stylesheet" href="/static/app.css">`+
 		`<p>famifo からサインアウトしました。</p>`+
-		`<p>IDプロバイダー側のセッションは別に残っていることがある。もう一度サインインしても何も聞かれない場合があり、`+
-		`IDプロバイダー側からのサインアウトはそれとは別の操作になる。</p>`+
+		`<p>ログイン画面へのサインインは、これとは別に残っていることがあります。もう一度サインインしても`+
+		`何も聞かれないことがありますが、それはこのためです。</p>`+
 		`<p><a href="/login">もう一度サインインする</a></p>`)
 }
 
