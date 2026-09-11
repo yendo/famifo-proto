@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -201,6 +202,14 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 // から切り詰める。順序を逆にすると、切り詰めの境目でsecretが分断され、
 // ReplaceAllが後半だけになった破片を見つけられずログに残ってしまう。
 //
+// x/oauth2 はPOSTボディを application/x-www-form-urlencoded で組み立てるので、
+// secretは url.Values.Encode() と同じ規則でパーセントエンコードされた形でも
+// リクエストに載っている。secretがbase64由来だと "+" や "/" や "=" を含むのが
+// 普通で、リテラルの置換だけではこの形を取りこぼす。url.QueryEscapeは
+// url.Values.Encode() と同じエンコードを作るので、両方の形を置換する。
+// エンコードしても変わらない（16進数などの）secretで同じ置換を二度走らせない
+// よう、一致するときはスキップする。
+//
 // 置換のあとに切り詰めるので、その時点でマルチバイト文字の途中を切ることがある。
 // string()は不正なUTF-8でも失敗しないが、slogはそれを出力時にU+FFFDへ置き換える
 // ため見た目が壊れる。strings.ToValidUTF8で有効な境界まで戻す。
@@ -208,6 +217,9 @@ func (c *Client) sanitizeProviderBody(body []byte) string {
 	s := string(body)
 	if secret := c.oauth.ClientSecret; secret != "" {
 		s = strings.ReplaceAll(s, secret, "[redacted]")
+		if encoded := url.QueryEscape(secret); encoded != secret {
+			s = strings.ReplaceAll(s, encoded, "[redacted]")
+		}
 	}
 	if len(s) > maxProviderErrorBody {
 		s = strings.ToValidUTF8(s[:maxProviderErrorBody], "")

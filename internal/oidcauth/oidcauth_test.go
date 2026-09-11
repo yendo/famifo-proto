@@ -413,6 +413,33 @@ func TestExchangeRedactsTheClientSecretFromTheProviderBody(t *testing.T) {
 	require.Contains(t, perr.Body, "[redacted]")
 }
 
+// TestExchangeRedactsAURLEncodedClientSecret は、secretがform-reservedな文字
+// （"+" "/" "="）を含むときに、x/oauth2 がPOSTボディで使うパーセントエンコード
+// 形でもリダクションが効くことを固定する。base64由来のsecretはこれらの文字を
+// 含むのが普通で、リテラル一致だけでは取りこぼす。
+func TestExchangeRedactsAURLEncodedClientSecret(t *testing.T) {
+	i := newIDP(t)
+	secret := "se+cr/et="
+	encoded := url.QueryEscape(secret)
+	require.NotEqual(t, secret, encoded, "the secret must actually need encoding for this test to mean anything")
+	i.tokenErrStatus = http.StatusBadRequest
+	i.tokenErrBody = []byte(`{"error":"server_error","echo":"client_secret=` + encoded + `&code=wrong-code"}`)
+	c, err := oidcauth.New(context.Background(), oidcauth.Config{
+		Issuer: i.srv.URL, ClientID: "famifo", ClientSecret: secret,
+		RedirectURI: "https://famifo.example.invalid/auth/callback",
+	})
+	require.NoError(t, err)
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+
+	_, err = c.Exchange(context.Background(), "wrong-code", p)
+	var perr *oidcauth.ProviderError
+	require.ErrorAs(t, err, &perr)
+	require.NotContains(t, perr.Body, secret)
+	require.NotContains(t, perr.Body, encoded)
+	require.Contains(t, perr.Body, "[redacted]")
+}
+
 func TestNewFailsWhenTheIssuerDoesNotMatch(t *testing.T) {
 	i := newIDP(t)
 	i.issuerOverride = "https://evil.example.invalid/sso"
