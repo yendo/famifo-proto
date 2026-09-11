@@ -4,6 +4,7 @@ package web_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -169,7 +170,9 @@ func TestCallbackRejectsAMissingFlowCookie(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
-func TestCallbackReportsAProviderError(t *testing.T) {
+// TestCallbackReportsAnUnreachableProvider はIdPに届かなかった場合、従来どおり
+// 502と「IdPに到達できない」を返すことを固定する。
+func TestCallbackReportsAnUnreachableProvider(t *testing.T) {
 	f := newAuthFixture(t)
 	f.prov.err = context.DeadlineExceeded
 	start := get(t, f.h, "/login")
@@ -177,6 +180,26 @@ func TestCallbackReportsAProviderError(t *testing.T) {
 
 	resp := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
 	require.Equal(t, http.StatusBadGateway, resp.StatusCode)
+	require.Contains(t, bodyOf(t, resp), "cannot reach")
+}
+
+// TestCallbackReportsAProviderRefusal はIdPが応答したうえで交換を拒んだ場合、
+// 「到達できない」ではなく拒まれた旨を伝え、502は使わないことを固定する。
+// 実機のインシデントでは両方とも「IdPに到達できない」と表示され、原因調査を
+// 誤った方向に導いた。
+func TestCallbackReportsAProviderRefusal(t *testing.T) {
+	f := newAuthFixture(t)
+	f.prov.err = fmt.Errorf("cannot exchange the authorization code: %w",
+		&oidcauth.ProviderError{StatusCode: http.StatusBadRequest, Body: `{"error":"server_error"}`})
+	start := get(t, f.h, "/login")
+	flow := cookieNamed(start, "famifo_oidc")
+
+	resp := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	body := bodyOf(t, resp)
+	require.Contains(t, body, "refused")
+	require.NotContains(t, body, "cannot reach")
+	require.Contains(t, body, `href="/login"`)
 }
 
 // TestCallbackFailureClearsTheFlowCookie は失敗した往復のあとにやり直しても、

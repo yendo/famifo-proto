@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -22,6 +23,31 @@ import (
 
 // httpTimeout はIdPへの1回の往復に許す時間。
 const httpTimeout = 20 * time.Second
+
+// maxProviderErrorBody はProviderError.Bodyに残す上限。相手が暴れてもログが
+// 埋まらないように切り詰める。
+const maxProviderErrorBody = 1024
+
+// ErrProviderRefused はIdPがトークン交換そのものには応答したが、その交換を
+// 拒んだことを表す番兵。呼び出し側は errors.Is で「IdPに届かない」場合と
+// 区別できる。
+var ErrProviderRefused = errors.New("the identity provider refused the exchange")
+
+// ProviderError はErrProviderRefusedを満たす。IdPの応答（HTTPステータスと本文）を
+// 保持しており、呼び出し側はログに残せる。本文は1KiBに切り詰めてある。
+type ProviderError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *ProviderError) Error() string {
+	return fmt.Sprintf("the identity provider refused the exchange: status %d, body %q", e.StatusCode, e.Body)
+}
+
+// Is はErrProviderRefusedとの errors.Is 判定を成立させる。
+func (e *ProviderError) Is(target error) bool {
+	return target == ErrProviderRefused
+}
 
 // Config はクライアントの設定。すべて起動時に決まる。
 type Config struct {
@@ -115,6 +141,23 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: httpTimeout})
 	tok, err := c.oauth.Exchange(ctx, code, oauth2.VerifierOption(p.Verifier))
 	if err != nil {
+		// x/oauth2 はトークンエンドポイントが応答したうえで拒んだ場合、
+		// *oauth2.RetrieveError を返す。IdPに届いていないのか、届いたうえで
+		// 拒まれたのかは呼び出し側が知りたいことが違う（「まだ試して良いか」
+		// 「何が悪かったのか」）ので、ここで区別できる形にして返す。
+		var rErr *oauth2.RetrieveError
+		if errors.As(err, &rErr) {
+			body := rErr.Body
+			if len(body) > maxProviderErrorBody {
+				body = body[:maxProviderErrorBody]
+			}
+			status := 0
+			if rErr.Response != nil {
+				status = rErr.Response.StatusCode
+			}
+			return Identity{}, fmt.Errorf("cannot exchange the authorization code: %w",
+				&ProviderError{StatusCode: status, Body: string(body)})
+		}
 		return Identity{}, fmt.Errorf("cannot exchange the authorization code: %w", err)
 	}
 	raw, ok := tok.Extra("id_token").(string)

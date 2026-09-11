@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -149,7 +150,20 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	id, err := s.auth.OIDC.Exchange(r.Context(), code, oidcauth.Params{State: f.State, Nonce: f.Nonce, Verifier: f.Verifier})
 	if err != nil {
-		// famifo は動いているがIdPとの往復が失敗した、という区別を残す。
+		// 「IdPに届かない」と「IdPが応答したうえで拒んだ」は原因の調べ方が違う。
+		// 実機のインシデントでは両方が同じ「IdPに到達できない」に丸められ、
+		// 調査が違う方向へ進んだ。ProviderErrorが載っていれば後者である。
+		var perr *oidcauth.ProviderError
+		if errors.As(err, &perr) {
+			s.log.Error("the identity provider refused the login", "status", perr.StatusCode, "body", perr.Body)
+			// 502はここでは正しくない。502は上流から届いた応答が不正なときの
+			// もので、ここでは上流は普通に応答し、そのうえで拒んだだけである。
+			// 503は「今は無理だが、また試して良い」を表す。実際に効くことが
+			// 多い（インシデントはどれも再試行で通っている）。
+			s.callbackError(w, "the identity provider refused the sign-in, please try again", http.StatusServiceUnavailable)
+			return
+		}
+		// famifo は動いているがIdPに届かなかった、という区別を残す。
 		s.log.Error("cannot complete the login", "err", err)
 		s.callbackError(w, "cannot reach the identity provider", http.StatusBadGateway)
 		return

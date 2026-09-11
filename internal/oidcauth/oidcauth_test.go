@@ -6,6 +6,7 @@ package oidcauth_test
 // 検証を静かに緩めても気づけるように、拒否されるべき経路をここでピン留めする。
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/hmac"
@@ -14,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +36,8 @@ type idp struct {
 	alg            string                      // IDトークンのヘッダに載せるalg
 	sign           func(signing string) string // 署名の作り方。既定はRS256
 	issuerOverride string                      // discoveryが名乗るissuer。空ならi.srv.URL
+	tokenErrStatus int                         // 0なら既定の400/invalid_grantを返す
+	tokenErrBody   []byte                      // tokenErrStatusとあわせて使う
 }
 
 func newIDP(t *testing.T) *idp {
@@ -65,6 +69,11 @@ func newIDP(t *testing.T) *idp {
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, r.ParseForm())
 		if r.Form.Get("code") != "good-code" {
+			if i.tokenErrStatus != 0 {
+				w.WriteHeader(i.tokenErrStatus)
+				_, _ = w.Write(i.tokenErrBody)
+				return
+			}
 			w.WriteHeader(http.StatusBadRequest)
 			writeJSON(w, map[string]any{"error": "invalid_grant"})
 			return
@@ -304,6 +313,61 @@ func TestExchangeReportsATokenEndpointError(t *testing.T) {
 
 	_, err = c.Exchange(context.Background(), "wrong-code", p)
 	require.Error(t, err)
+}
+
+// TestExchangeReportsAProviderRefusal はIdPがトークン交換に応答したうえで拒んだ
+// ときに、ステータスと本文（error_descriptionを含む）が取り出せることを固定する。
+// 実機のインシデントでは "server_error" とだけ言われ、本文を捨てていたせいで
+// 原因の手がかりが残らなかった。
+func TestExchangeReportsAProviderRefusal(t *testing.T) {
+	i := newIDP(t)
+	i.tokenErrStatus = http.StatusBadRequest
+	i.tokenErrBody = []byte(`{"error":"server_error","error_description":"upstream hiccup"}`)
+	c := newClient(t, i)
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+
+	_, err = c.Exchange(context.Background(), "wrong-code", p)
+	require.Error(t, err)
+	require.ErrorIs(t, err, oidcauth.ErrProviderRefused)
+
+	var perr *oidcauth.ProviderError
+	require.ErrorAs(t, err, &perr)
+	require.Equal(t, http.StatusBadRequest, perr.StatusCode)
+	require.Contains(t, perr.Body, "upstream hiccup")
+}
+
+// TestExchangeTruncatesAHugeProviderBody は本文を1KiBに切り詰めることを固定する。
+// 相手が暴れても、ログが埋まらないようにするため。
+func TestExchangeTruncatesAHugeProviderBody(t *testing.T) {
+	i := newIDP(t)
+	i.tokenErrStatus = http.StatusInternalServerError
+	i.tokenErrBody = bytes.Repeat([]byte("a"), 10*1024)
+	c := newClient(t, i)
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+
+	_, err = c.Exchange(context.Background(), "wrong-code", p)
+	var perr *oidcauth.ProviderError
+	require.ErrorAs(t, err, &perr)
+	require.LessOrEqual(t, len(perr.Body), 1024)
+}
+
+// TestExchangeReportsAnUnreachableProvider は「IdPに届かない」と「IdPに拒まれた」
+// を区別できることを固定する。discoveryが済んだあとにサーバーを落とし、
+// トークンエンドポイントへの接続そのものを失敗させる。
+func TestExchangeReportsAnUnreachableProvider(t *testing.T) {
+	i := newIDP(t)
+	c := newClient(t, i)
+	i.srv.Close()
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+
+	_, err = c.Exchange(context.Background(), "good-code", p)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, oidcauth.ErrProviderRefused)
+	var perr *oidcauth.ProviderError
+	require.False(t, errors.As(err, &perr))
 }
 
 func TestNewFailsWhenTheIssuerDoesNotMatch(t *testing.T) {
