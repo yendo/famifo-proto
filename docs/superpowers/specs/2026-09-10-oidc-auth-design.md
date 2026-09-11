@@ -154,12 +154,17 @@ JWKS の `use`/`alg` による鍵の選別といった、レビューが「い�
 ## 目標としないこと
 
 - **認可**。IdP が認証した人は全員 famifo を見られる
-- **プロトコルとしての RP-initiated logout**。discovery に `end_session_endpoint` が
-  無いので、`prompt=login` や `max_age=0` と同じく標準の手段では実現できない
-  （実機で確認：Synology SSO Server はどちらも無視して無言でコードを返す）。
-  ただし `-oidc-logout-url` に IdP 自身のログアウトURLを設定で渡せば、famifo は
-  自分のCookieを消したあとそこへブラウザを送り、同じ効果を設定によって得られる。
-  discovery もプロトコルも使わない回避であり、値は運用側が調べて渡す
+- **`end_session_endpoint` を持たない IdP でのプロトコルとしてのログアウト**。
+  Synology SSO Server は discovery に `end_session_endpoint` を持たない
+  （実機で確認：discovery は13個のキーを持ち、この中に含まれない）。
+  `prompt=login` や `max_age=0` も無言で無視される。標準の手段が無い以上、
+  famifo にできるのは自分の Cookie を消すところまでで、IdP 側のセッションには
+  触れない。当初は IdP 自身のログアウト URL を設定で渡す回避（`-oidc-logout-url`）
+  を用意したが、これは discovery もプロトコルも使わない、この IdP 専用の回避
+  だった。あとで RP-Initiated Logout（標準の手段。後述）に置き換え、この
+  フラグは削除した。`end_session_endpoint` の無い IdP では famifo 自身の
+  セッションを終えるだけになる。Synology が将来この endpoint を広告すれば、
+  famifo はコードの変更なしにそれを使い始める
 - **個別セッションの失効**。署名付き Cookie を選んだ帰結
 - **famifo 自身の TLS 終端**。HTTPS は DSM のリバースプロキシに任せる
 - **`internal/synology` の改名**。前案では `dsmauth` を兄弟に並べるために
@@ -195,6 +200,10 @@ func (c *Client) AuthURL(state, nonce, pkceVerifier string) string
 // Exchange は callback で受けた code をトークンに交換し、ID トークンを検証して
 // 利用者を返す。nonce の一致もここで確かめる。
 func (c *Client) Exchange(ctx context.Context, code, pkceVerifier, nonce string) (Identity, error)
+
+// LogoutURL は RP-Initiated Logout の宛先を組み立てる。IdP が discovery で
+// end_session_endpoint を広告していなければ false を返す。
+func (c *Client) LogoutURL(postLogoutRedirectURI string) (string, bool)
 ```
 
 `New` は `oidc.NewProvider` で discovery を引く。起動時に1回だけ行い、IdP に届かなければ
@@ -286,10 +295,12 @@ IdP 側のセッションが生きている端末は、次にアクセスした�
 **有効期限は 30 日固定**。スライディングにすると毎リクエストで `Set-Cookie` を出すか、
 残り時間を見て再発行する分岐が要る。`defaultChunkSize` と同じく利用者が変える設定にはしない。
 
-**ログアウト**は `POST /logout` でセッション Cookie と一時 Cookie を消し、200 で自前の
-案内ページを返す。famifo からサインアウトしたこと、IdP 側のセッションは別に残っている
-ことがあり再度のサインインで何も聞かれない場合があること、IdP 側からのサインアウトは
-別の操作であることを述べ、`/login` へのリンクを置く。`/logout` は認証ミドルウェアの
+**ログアウト**は `POST /logout` でセッション Cookie と一時 Cookie を消す。そのあとの
+挙動は IdP が RP-Initiated Logout（後述）に対応しているかで分かれる。対応していれば
+そちらへリダイレクトし、していなければ 200 で自前の案内ページを返す。案内ページは
+famifo からサインアウトしたこと、IdP 側のセッションは別に残っていることがあり
+再度のサインインで何も聞かれない場合があること、IdP 側からのサインアウトは別の
+操作であることを述べ、`/login` へのリンクを置く。`/logout` は認証ミドルウェアの
 外側に登録してあるので、セッションが無くても届く。
 
 **`/` へリダイレクトしてはいけない。** 最初の実装は Cookie を消したあと `/` へ 302 して
@@ -298,16 +309,33 @@ IdP 側のセッションが生きている端末は、次にアクセスした�
 famifo より長生きすることが多く、まだ生きていれば利用者に何も聞かずそのまま
 callback へ差し戻し、新しいセッションを発行してしまう。結果として画面遷移が一度
 起きるだけでギャラリーに戻り、サインアウトが見た目上何もしていないように見える。
-共有端末では、次に触る人がサインインしたまま残ることになる。RP-initiated logout が
-無い（`end_session_endpoint` が discovery に無い）ことの帰結として、famifo 側から
-DSM 側のセッションを断ち切る手段は無い。案内ページで済ませているのはこのためである。
+共有端末では、次に触る人がサインインしたまま残ることになる。案内ページで済ませて
+いるのはこのためである。
 
-**追記（実機で確認）。** `prompt=login` と `max_age=0` を試したが、Synology SSO Server は
-どちらも無視してパスワードを求めずコードを返す。標準の手段は無い。それでも動作したのは、
-famifo 側のCookieを消したあと **IdP 自身のログアウトURLへブラウザを送る**という手順で、
-これを行うと次に famifo を開いたときパスワードを求められる。`-oidc-logout-url` に設定した
-ときは `/logout` がCookieを消したあとそのURLへリダイレクトし、案内ページの代わりにこの
-手順を自動で行う。設定しなければ従来どおり案内ページのままである。
+### RP-Initiated Logout
+
+OpenID Connect は標準のログアウト手順を定めている。IdP が discovery で
+`end_session_endpoint` を広告していれば、famifo はそこへ `post_logout_redirect_uri`
+（famifo 自身の `/signed-out`）と `client_id` を添えてリダイレクトする。IdP は自分の
+セッションを終え、利用者を `post_logout_redirect_uri` へ送り返す。1回の操作で両方の
+セッションが終わり、設定は要らない。`post_logout_redirect_uri` は `redirect_uri` と
+同じく、IdP 側にあらかじめ登録しておく必要があることが多い。
+
+`id_token_hint`（送ると IdP がより確実に `post_logout_redirect_uri` を尊重する、
+仕様上は RECOMMENDED のパラメータ）は載せない。famifo は ID トークンを検証した
+あと捨てており、これを渡すにはセッションへ生の ID トークンを持ち越す変更が要る。
+今回はそこまでしない。代わりに `client_id` を送る。
+
+**Synology SSO Server は `end_session_endpoint` を持たない**（実機で確認：discovery は
+13個のキーを持ち、この中に含まれない）。`prompt=login` と `max_age=0` も試したが、
+どちらも無視してパスワードを求めずコードを返した。したがってこの IdP では
+famifo 側の Cookie を消すところまでしかできず、`/logout` は案内ページを返す。
+Synology が将来この endpoint を広告すれば、famifo はコードの変更なしにそれを使い
+始める。
+
+当初は IdP 自身のログアウト URL を設定で渡す回避（`-oidc-logout-url`）を用意した。
+discovery もプロトコルも使わない、この IdP 専用の回避であり、値は運用側が調べて
+渡す必要があった。RP-Initiated Logout に置き換えたため、このフラグは削除した。
 
 ### 経路とミドルウェア
 
@@ -315,7 +343,8 @@ famifo 側のCookieを消したあと **IdP 自身のログアウトURLへブラ
 |---|---|
 | `GET /login` | `state`/`nonce`/verifier を作り、一時 Cookie を置いて IdP へリダイレクト |
 | `GET /auth/callback` | `state` を照合し、code を交換し、セッション Cookie を発行して `next` へ |
-| `POST /logout` | セッション Cookie を消す |
+| `POST /logout` | セッション Cookie と一時 Cookie を消し、IdP が対応していれば RP-Initiated Logout へ、していなければ案内ページへ |
+| `GET /signed-out` | 案内ページ。RP-Initiated Logout の戻り先でもある |
 
 未認証のときの応答は、要求されたものによって分ける。
 
@@ -323,7 +352,7 @@ famifo 側のCookieを消したあと **IdP 自身のログアウトURLへブラ
 |---|---|
 | `/`、`/item/{id}` | `/login?next=…` へリダイレクト |
 | `/tiles`、`/thumb/{id}`、`/file/{id}` | 401 |
-| `/login`、`/auth/callback`、`/static/` | 素通し |
+| `/login`、`/auth/callback`、`/signed-out`、`/static/` | 素通し |
 
 `/tiles` は `fetch` で取りに行く。ここで HTML を返すと JSON の解釈が壊れ、画面には
 何も出ないまま原因も読めない。401 を受けたクライアントはページを再読み込みし、
@@ -343,9 +372,10 @@ famifo 側のCookieを消したあと **IdP 自身のログアウトURLへブラ
 ```go
 // Auth は認証の手段をまとめる。nil を渡すと認証しない。
 type Auth struct {
-	OIDC   Provider // *oidcauth.Client が満たす。テストが偽物を渡せるようにする
-	Key    []byte   // 署名のマスター鍵。用途ごとの Codec は web が導出する
-	Secure bool     // Cookie に Secure を付けるか
+	OIDC        Provider // *oidcauth.Client が満たす。テストが偽物を渡せるようにする
+	Key         []byte   // 署名のマスター鍵。用途ごとの Codec は web が導出する
+	Secure      bool     // Cookie に Secure を付けるか
+	ExternalURL string   // RP-Initiated Logout の post_logout_redirect_uri の組み立てに使う
 }
 ```
 
@@ -432,8 +462,7 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
 |---|---|---|
 | `-oidc-issuer` | 空 | IdP の issuer。空なら認証しない。ポート番号を含める |
 | `-oidc-client-id` | 空 | IdP に登録したクライアント ID |
-| `-external-url` | 空 | famifo が外から見える URL。`redirect_uri` の組み立てに使う |
-| `-oidc-logout-url` | 空 | IdP 自身のログアウト URL（任意）。設定すると `/logout` が famifo の Cookie を消したあとそこへリダイレクトする。空のままなら famifo 自身のセッションしか終わらない。`-oidc-issuer` と組み合わせてのみ意味を持ち、単独で渡すと `Validate` が落とす。Synology SSO Server の例は `https://<host>:5001/webman/logout.cgi`（`<host>` は DSM のアドレス）。この値はコードが知っているものではなく、運用側が調べて渡す |
+| `-external-url` | 空 | famifo が外から見える URL。`redirect_uri` と、RP-Initiated Logout の `post_logout_redirect_uri` の組み立てに使う |
 
 クライアントシークレットはフラグで渡さない。コマンドライン引数は同じホストの誰からでも
 `/proc` で読める。環境変数 `FAMIFO_OIDC_CLIENT_SECRET` から読む。
@@ -461,7 +490,7 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
 - `internal/web/view.go` — `galleryView` に認証の有無を足す
 - `internal/web/templates/gallery.html` — ログアウトのボタン
 - `internal/config/config.go` — `OIDCIssuer`、`OIDCClientID`、`OIDCClientSecret`、
-  `ExternalURL`、`OIDCLogoutURL`、`SessionKeyPath()`、検証
+  `ExternalURL`、`SessionKeyPath()`、検証
 - `main.go` — フラグの追加と組み立て
 - `Dockerfile` — CA バンドルの取り込み
 
@@ -501,10 +530,12 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
 
 - **認可を持たない。** IdP にアカウントがある人は全員 famifo を見られる
 - **個別のセッションを失効できない。** 漏れた Cookie は期限が切れるまで有効である
-- **famifo からログアウトしても DSM のセッションは、`-oidc-logout-url` を設定しない
-  限り残る。** `end_session_endpoint` が discovery に無いため、プロトコルとしては
-  実現できない。設定すれば `/logout` がそこへブラウザを送り、同じブラウザは次の訪問で
-  パスワードを求められる。設定しなければ従来どおり即座に入り直せる
+- **famifo からログアウトしても、IdP が `end_session_endpoint` を広告していない
+  かぎり DSM のセッションは残る。** RP-Initiated Logout は標準の手段だが、
+  Synology SSO Server は discovery にこの endpoint を持たない。したがって
+  この IdP では famifo 自身のセッションが終わるだけで、同じブラウザは次の
+  訪問で即座に入り直せる。IdP が endpoint を広告するようになれば設定なしで
+  両方のセッションが終わるようになる
 - **運用の前提が増える。** LAN 内の DNS の上書き、IdP へのクライアント登録、
   DSM のリバースプロキシ、DDNS と証明書。前案はこれらを必要としない
 - **IdP が単一障害点になる。** SSO Server が壊れると新規のログインができない
@@ -532,7 +563,11 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
 - `web` — 未認証時のリダイレクトと 401 の出し分け、`next` の検証
   （`//evil.example` が `/` に落ちる）、`/auth/callback` が `state` 不一致を弾くこと、
   一時 Cookie が無いときにやり直させること、ログアウトで Cookie が消えること。
-  既存の `handlers_test` は `Auth` に nil を渡して今までどおり通る
+  IdP が `end_session_endpoint` を広告するときは `/logout` がそこへ
+  `post_logout_redirect_uri`（`/signed-out`）と `client_id` を添えてリダイレクトする
+  こと、広告しないときは従来どおり案内ページを返すこと、`GET /signed-out` が
+  セッション無しで描画できること。既存の `handlers_test` は `Auth` に nil を渡して
+  今までどおり通る
 - `browser_test` — 偽の IdP を立てて、リダイレクトからギャラリー表示までを1本
 - `main_test` — フラグの解析と `Validate` の分岐（シークレットの環境変数を含む）
 
@@ -543,7 +578,10 @@ DSM のリバースプロキシで HTTPS を終端する。famifo は HTTP の�
   LAN 内の名前解決（DNS Server パッケージのゾーンと、ホームゲートウェイのローカル
   ドメイン設定に DSM の IPv6 アドレスを入れること）、`--add-host`、DSM のリバース
   プロキシの設定、`session.key` を消して再起動すると全端末がログアウトすること、
-  IPv6 プレフィックスが変わったときの症状と確認場所。現行の
+  IPv6 プレフィックスが変わったときの症状と確認場所、RP-Initiated Logout を使うこと
+  （`post_logout_redirect_uri` も `redirect_uri` と同じく IdP 側への登録が要ることを
+  含む）、Synology SSO Server は今のところ `end_session_endpoint` を持たず famifo
+  自身のセッションしか終わらないこと。現行の
   「Neither authentication nor HTTPS is implemented」も直す
 - `docs/design.md`（日本語）— 「認証: なし」「通信: HTTPのみ」を書き換える
 

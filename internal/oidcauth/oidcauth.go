@@ -76,8 +76,9 @@ type Params struct {
 
 // Client はIdPと話す。New が discovery を引いた時点で不変になる。
 type Client struct {
-	oauth    *oauth2.Config
-	verifier *oidc.IDTokenVerifier
+	oauth              *oauth2.Config
+	verifier           *oidc.IDTokenVerifier
+	endSessionEndpoint string // RP-Initiated Logout の宛先。discoveryに無ければ空
 }
 
 // New は discovery を引いてClientを組み立てる。
@@ -91,6 +92,14 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: httpTimeout})
 	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
 	if err != nil {
+		return nil, fmt.Errorf("cannot read the OIDC discovery document: %w", err)
+	}
+	// go-oidcはend_session_endpointを型付きフィールドで公開していない。標準の
+	// discoveryに載るキーなので、生のdiscoveryドキュメントから自分で拾う。
+	var discovery struct {
+		EndSessionEndpoint string `json:"end_session_endpoint"`
+	}
+	if err := provider.Claims(&discovery); err != nil {
 		return nil, fmt.Errorf("cannot read the OIDC discovery document: %w", err)
 	}
 	endpoint := provider.Endpoint()
@@ -117,6 +126,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 			ClientID:             cfg.ClientID,
 			SupportedSigningAlgs: []string{oidc.RS256},
 		}),
+		endSessionEndpoint: discovery.EndSessionEndpoint,
 	}, nil
 }
 
@@ -192,6 +202,29 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 	return Identity{
 		Subject: idToken.Subject, Username: name, Email: claims.Email, Groups: claims.Groups,
 	}, nil
+}
+
+// LogoutURL はRP-Initiated Logoutの宛先を組み立てる。IdPが discovery で
+// end_session_endpoint を広告していなければ false を返す。呼び出し側は
+// これで「この IdP は対応している／していない」を文字列を見ずに判別できる。
+//
+// id_token_hint は載せない。仕様はRECOMMENDEDとしており、一部のIdPは
+// post_logout_redirect_uri を id_token_hint 無しでは尊重しないが、famifo は
+// 検証済みのIDトークンを検証後に捨てており、これを持たせるにはセッションへ
+// 生のIDトークンを持ち越す変更が要る。今回はそこまでしない。
+func (c *Client) LogoutURL(postLogoutRedirectURI string) (string, bool) {
+	if c.endSessionEndpoint == "" {
+		return "", false
+	}
+	u, err := url.Parse(c.endSessionEndpoint)
+	if err != nil {
+		return "", false
+	}
+	q := u.Query()
+	q.Set("post_logout_redirect_uri", postLogoutRedirectURI)
+	q.Set("client_id", c.oauth.ClientID)
+	u.RawQuery = q.Encode()
+	return u.String(), true
 }
 
 // sanitizeProviderBody はProviderErrorに載せる前にIdPの応答本文を安全にする。

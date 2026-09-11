@@ -27,6 +27,9 @@ type fakeProvider struct {
 	lastParams oidcauth.Params
 	identity   oidcauth.Identity
 	err        error
+	// endSessionEndpoint はRP-Initiated Logoutの宛先。空なら「対応していない」を
+	// 表し、LogoutURLはfalseを返す。実機のSynology SSO Serverはこちらにあたる。
+	endSessionEndpoint string
 }
 
 func (f *fakeProvider) AuthURL(p oidcauth.Params) string {
@@ -36,6 +39,16 @@ func (f *fakeProvider) AuthURL(p oidcauth.Params) string {
 
 func (f *fakeProvider) Exchange(_ context.Context, _ string, _ oidcauth.Params) (oidcauth.Identity, error) {
 	return f.identity, f.err
+}
+
+func (f *fakeProvider) LogoutURL(postLogoutRedirectURI string) (string, bool) {
+	if f.endSessionEndpoint == "" {
+		return "", false
+	}
+	v := url.Values{}
+	v.Set("post_logout_redirect_uri", postLogoutRedirectURI)
+	v.Set("client_id", "famifo")
+	return f.endSessionEndpoint + "?" + v.Encode(), true
 }
 
 type authFixture struct {
@@ -55,7 +68,9 @@ func newAuthFixture(t *testing.T) *authFixture {
 	key := make([]byte, session.KeyLen)
 
 	prov := &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}
-	srv, err := web.NewServer(st, thumbs, &web.Auth{OIDC: prov, Key: key}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	srv, err := web.NewServer(st, thumbs,
+		&web.Auth{OIDC: prov, Key: key, ExternalURL: "https://famifo.example.invalid"},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 	return &authFixture{h: srv.Handler(), prov: prov}
 }
@@ -270,20 +285,24 @@ func TestLogoutClearsTheSession(t *testing.T) {
 	require.Contains(t, bodyOf(t, resp), `href="/login"`, "the page must offer a way to sign in again")
 }
 
-// TestLogoutRedirectsToTheProviderWhenConfigured は、IdP のログアウトURLが
-// 設定されているとき、/logout がfamifo自身のCookieを消したうえでそちらへ
-// 302することを固定する。1回のボタン操作で両方のセッションが終わる。
-func TestLogoutRedirectsToTheProviderWhenConfigured(t *testing.T) {
+// TestLogoutRedirectsToTheProviderWhenSupported は、IdP が discovery で
+// end_session_endpoint を広告しているとき、/logout がfamifo自身のCookieを
+// 消したうえでそちらへ302することを固定する。post_logout_redirect_uriが
+// famifoの/signed-outを指し、client_idが載っていることまで確かめる。
+// リダイレクトが起きたことだけでは、宛先を取り違えても気づけない。
+func TestLogoutRedirectsToTheProviderWhenSupported(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(dir + "/famifo.db")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 	thumbs, err := thumb.NewProvider(dir + "/thumbs")
 	require.NoError(t, err)
-	prov := &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}
-	const logoutURL = "https://idp.example.invalid:5001/webman/logout.cgi"
+	prov := &fakeProvider{
+		identity:           oidcauth.Identity{Subject: "yendo", Username: "yendo"},
+		endSessionEndpoint: "https://idp.example.invalid:5001/webman/logout.cgi",
+	}
 	srv, err := web.NewServer(st, thumbs,
-		&web.Auth{OIDC: prov, Key: make([]byte, session.KeyLen), LogoutURL: logoutURL},
+		&web.Auth{OIDC: prov, Key: make([]byte, session.KeyLen), ExternalURL: "https://famifo.example.invalid"},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 	h := srv.Handler()
@@ -301,7 +320,12 @@ func TestLogoutRedirectsToTheProviderWhenConfigured(t *testing.T) {
 	resp := rec.Result()
 
 	require.Equal(t, http.StatusFound, resp.StatusCode)
-	require.Equal(t, logoutURL, resp.Header.Get("Location"))
+	loc, err := url.Parse(resp.Header.Get("Location"))
+	require.NoError(t, err)
+	require.Equal(t, "idp.example.invalid:5001", loc.Host)
+	require.Equal(t, "/webman/logout.cgi", loc.Path)
+	require.Equal(t, "https://famifo.example.invalid/signed-out", loc.Query().Get("post_logout_redirect_uri"))
+	require.Equal(t, "famifo", loc.Query().Get("client_id"))
 
 	cleared := cookieNamed(resp, "famifo_session")
 	require.NotNil(t, cleared)
@@ -310,6 +334,18 @@ func TestLogoutRedirectsToTheProviderWhenConfigured(t *testing.T) {
 	clearedFlow := cookieNamed(resp, "famifo_oidc")
 	require.NotNil(t, clearedFlow)
 	require.Less(t, clearedFlow.MaxAge, 0, "the flow cookie must be told to expire")
+}
+
+// TestSignedOutRendersWithoutASession は GET /signed-out がミドルウェアの
+// 外側にあり、セッションが無くても表示できることを固定する。RP-Initiated
+// Logoutでは、IdP側のセッションを終えたあとブラウザがここへ戻ってくるが、
+// その時点でfamifo自身のCookieはすでに/logoutが消している。
+func TestSignedOutRendersWithoutASession(t *testing.T) {
+	f := newAuthFixture(t)
+
+	resp := get(t, f.h, "/signed-out")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, bodyOf(t, resp), `href="/login"`)
 }
 
 func TestSecureAttributeFollowsTheSetting(t *testing.T) {

@@ -97,6 +97,9 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /login", s.handleLogin)
 		mux.HandleFunc("GET /auth/callback", s.handleCallback)
 		mux.HandleFunc("POST /logout", s.handleLogout)
+		// RP-Initiated LogoutでIdPが戻ってくる先。/logout自身がend_session_endpoint
+		// を持たないIdPのとき案内ページとして返すのもここ。
+		mux.HandleFunc("GET /signed-out", s.handleSignedOut)
 	}
 	return mux
 }

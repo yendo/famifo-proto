@@ -96,27 +96,6 @@ func TestParseArgsOverridesEveryFlag(t *testing.T) {
 	require.Equal(t, "https://famifo.example.invalid:8443", got.ExternalURL)
 }
 
-func TestParseArgsReadsTheLogoutURLFlag(t *testing.T) {
-	t.Setenv("FAMIFO_OIDC_CLIENT_SECRET", "s3cret")
-
-	got, _, err := parseArgs([]string{
-		"-dir", t.TempDir(), "-data", t.TempDir(),
-		"-oidc-issuer", "https://idp.example.invalid/sso",
-		"-oidc-client-id", "famifo",
-		"-external-url", "https://famifo.example.invalid:8443",
-		"-oidc-logout-url", "https://idp.example.invalid:5001/webman/logout.cgi",
-	}, io.Discard)
-
-	require.NoError(t, err)
-	require.Equal(t, "https://idp.example.invalid:5001/webman/logout.cgi", got.OIDCLogoutURL)
-}
-
-func TestParseArgsLeavesLogoutURLEmptyByDefault(t *testing.T) {
-	c, _, err := parseArgs([]string{"-dir", t.TempDir(), "-data", t.TempDir()}, io.Discard)
-	require.NoError(t, err)
-	require.Empty(t, c.OIDCLogoutURL)
-}
-
 func TestParseArgsReadsTheAuthFlags(t *testing.T) {
 	t.Setenv("FAMIFO_OIDC_CLIENT_SECRET", "s3cret")
 

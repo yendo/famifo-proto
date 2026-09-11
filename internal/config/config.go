@@ -33,14 +33,10 @@ type Config struct {
 	// フラグでは受け取らない。コマンドライン引数は同じホストの誰からでも
 	// /proc で読めるためである。
 	OIDCClientSecret string
-	// ExternalURL は famifo が外から見えるURL。redirect_uri の組み立てに使う。
-	// この scheme が https のとき Cookie に Secure を付ける。
+	// ExternalURL は famifo が外から見えるURL。redirect_uri と、RP-Initiated
+	// Logout の post_logout_redirect_uri の組み立てに使う。この scheme が
+	// https のとき Cookie に Secure を付ける。
 	ExternalURL string
-	// OIDCLogoutURL は IdP 自身のログアウトURL。空なら famifo は自分のCookieを
-	// 消すだけで、IdP側のセッションには触れない。設定すると /logout はそこへ
-	// リダイレクトし、1回の操作で両方のセッションを終わらせる。
-	// -oidc-issuer と組み合わせてのみ意味を持つ。
-	OIDCLogoutURL string
 }
 
 // Validate は設定の不備を報告する。ここでのエラーは起動を中止させる。
@@ -114,15 +110,6 @@ func (c Config) Validate() error {
 		if err := validateAbsoluteURL("-external-url", c.ExternalURL); err != nil {
 			return err
 		}
-		if c.OIDCLogoutURL != "" {
-			if err := validateAbsoluteURL("-oidc-logout-url", c.OIDCLogoutURL); err != nil {
-				return err
-			}
-		}
-	} else if c.OIDCLogoutURL != "" {
-		// -oidc-logout-url だけ渡されても、認証そのものが無いのでログアウトの
-		// 対象になるセッションが無い。渡し忘れではなく設定ミスとして落とす。
-		return errors.New("-oidc-issuer is required when -oidc-logout-url is given")
 	}
 	return nil
 }

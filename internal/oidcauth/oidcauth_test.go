@@ -39,6 +39,7 @@ type idp struct {
 	issuerOverride string                      // discoveryが名乗るissuer。空ならi.srv.URL
 	tokenErrStatus int                         // 0なら既定の400/invalid_grantを返す
 	tokenErrBody   []byte                      // tokenErrStatusとあわせて使う
+	endSession     string                      // discoveryに載せるend_session_endpoint。空なら載せない
 }
 
 func newIDP(t *testing.T) *idp {
@@ -53,12 +54,16 @@ func newIDP(t *testing.T) *idp {
 		if i.issuerOverride != "" {
 			issuer = i.issuerOverride
 		}
-		writeJSON(w, map[string]any{
+		doc := map[string]any{
 			"issuer":                 issuer,
 			"authorization_endpoint": i.srv.URL + "/authorize",
 			"token_endpoint":         i.srv.URL + "/token",
 			"jwks_uri":               i.srv.URL + "/jwks",
-		})
+		}
+		if i.endSession != "" {
+			doc["end_session_endpoint"] = i.endSession
+		}
+		writeJSON(w, doc)
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"keys": []any{map[string]any{
@@ -468,6 +473,39 @@ func TestNewParamsAreUnpredictable(t *testing.T) {
 	require.NotEqual(t, a.Nonce, b.Nonce)
 	require.NotEqual(t, a.Verifier, b.Verifier)
 	require.GreaterOrEqual(t, len(a.Verifier), 43, "PKCE requires at least 43 characters")
+}
+
+// TestLogoutURLReportsUnsupportedWithoutAnEndSessionEndpoint はdiscoveryに
+// end_session_endpointが無いIdP（実機ではSynology SSO Server）で、
+// LogoutURLがfalseを返すことを固定する。文字列を空にするだけでは、
+// 呼び出し側が「対応していない」のか「たまたま空文字が来た」のか区別できない。
+func TestLogoutURLReportsUnsupportedWithoutAnEndSessionEndpoint(t *testing.T) {
+	i := newIDP(t)
+	c := newClient(t, i)
+
+	u, ok := c.LogoutURL("https://famifo.example.invalid/signed-out")
+	require.False(t, ok)
+	require.Empty(t, u)
+}
+
+// TestLogoutURLBuildsTheExpectedURL はdiscoveryにend_session_endpointが
+// あるとき、post_logout_redirect_uriとclient_idを添えたURLを組み立てることを
+// 固定する。id_token_hintは載せない（famifoは検証後の生IDトークンを保持
+// しないため。詳細はspec参照）。
+func TestLogoutURLBuildsTheExpectedURL(t *testing.T) {
+	i := newIDP(t)
+	i.endSession = i.srv.URL + "/end-session"
+	c := newClient(t, i)
+
+	u, ok := c.LogoutURL("https://famifo.example.invalid/signed-out")
+	require.True(t, ok)
+
+	parsed, err := url.Parse(u)
+	require.NoError(t, err)
+	require.Equal(t, i.srv.URL+"/end-session", parsed.Scheme+"://"+parsed.Host+parsed.Path)
+	q := parsed.Query()
+	require.Equal(t, "https://famifo.example.invalid/signed-out", q.Get("post_logout_redirect_uri"))
+	require.Equal(t, "famifo", q.Get("client_id"))
 }
 
 func hmacSHA256(t *testing.T, key []byte, msg string) string {

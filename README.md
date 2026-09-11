@@ -124,8 +124,7 @@ docker run -d --restart unless-stopped -p 8080:8080 \
 |---|---|
 | `-oidc-issuer` | The provider's issuer, **including the port**. Empty turns authentication off |
 | `-oidc-client-id` | The client id registered with the provider |
-| `-external-url` | The URL famifo is reached at from outside. The redirect URI is this plus `/auth/callback` |
-| `-oidc-logout-url` | Optional. The provider's own logout URL. Set only alongside `-oidc-issuer`. See [Sessions](#sessions) |
+| `-external-url` | The URL famifo is reached at from outside. The redirect URI is this plus `/auth/callback`, and the RP-Initiated Logout `post_logout_redirect_uri` is this plus `/signed-out` |
 | `FAMIFO_OIDC_CLIENT_SECRET` | The client secret. Read from the environment, never from a flag — command-line arguments are readable by anyone on the host through `/proc` |
 
 famifo never sees a password. Two-factor authentication, lockouts and password
@@ -200,12 +199,20 @@ anything, confirmed on hardware by a fresh sign-in appearing in the log seconds 
 the restart. Real revocation lives at the provider — disable the account, or end its
 sessions there.
 
-Signing out of famifo does not sign you out of the provider by itself: the provider
-offers no logout endpoint, so the same browser can normally walk straight back in. Set
-`-oidc-logout-url` to change that: `/logout` then clears famifo's cookies and sends the
-browser to that URL, so one press of the button ends both sessions. Leave it unset and
-the button only ends famifo's own session, as above. For Synology SSO Server the value
-is `https://<host>:5001/webman/logout.cgi`.
+Signing out uses the standard OpenID Connect mechanism, RP-Initiated Logout: if the
+provider advertises `end_session_endpoint` in its discovery document, `/logout` clears
+famifo's cookies and redirects there with `post_logout_redirect_uri` pointing back at
+famifo's `/signed-out` page, so one press of the button ends both sessions. This needs
+no configuration — famifo uses it automatically whenever the provider supports it — but
+the `post_logout_redirect_uri` usually has to be registered with the provider ahead of
+time, the same way the sign-in redirect URI does.
+
+**Synology SSO Server does not advertise `end_session_endpoint` today** (confirmed
+against its discovery document, which carries 13 keys and this is not one of them). On
+it, `/logout` only ends famifo's own session, exactly as it did before this endpoint
+existed: the button clears famifo's cookies and shows a page saying so, but the
+provider's own session survives, so signing in again may not prompt for anything. If
+Synology adds the endpoint in a future release, famifo picks it up with no code change.
 
 ## Docker
 

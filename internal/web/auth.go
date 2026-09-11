@@ -34,6 +34,9 @@ const (
 type Provider interface {
 	AuthURL(oidcauth.Params) string
 	Exchange(ctx context.Context, code string, p oidcauth.Params) (oidcauth.Identity, error)
+	// LogoutURL はRP-Initiated Logoutの宛先を返す。IdPがdiscoveryで
+	// end_session_endpointを広告していなければfalseを返す。
+	LogoutURL(postLogoutRedirectURI string) (string, bool)
 }
 
 // Auth は認証の手段をまとめる。NewServer に nil を渡すと認証しない。
@@ -41,10 +44,9 @@ type Auth struct {
 	OIDC   Provider
 	Key    []byte // session.KeyLen バイト。webが用途ごとのCodecを導出する
 	Secure bool   // Cookie に Secure を付けるか。外部URLがhttpsのときだけ真
-	// LogoutURL はIdP自身のログアウトURL。空ならfamifoは自分のCookieを消す
-	// だけで、案内ページを返す。設定すると /logout はCookieを消したうえで
-	// そこへリダイレクトし、1回の操作でIdP側のセッションも終わらせる。
-	LogoutURL string
+	// ExternalURL はfamifoが外から見えるURL。RP-Initiated Logoutの
+	// post_logout_redirect_uriを組み立てるのに使う。
+	ExternalURL string
 }
 
 // flowState は認可の往復のあいだ持ち越す値。署名付きCookieに載せる。
@@ -185,17 +187,37 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 // していないように見え、共有端末では次の利用者がサインインしたままになる。
 // そのため /logout はミドルウェアの外側（認証不要な経路）で完結する自前の
 // ページを200で返す。
+//
+// IdPがRP-Initiated Logout（end_session_endpoint）に対応していれば、
+// Cookieを消したあとそちらへ送る。1回の操作でIdP側のセッションも終わる。
+// 対応していなければ（実機ではSynology SSO Serverがこれにあたる）、
+// famifo自身のセッションを終えたことを伝える案内ページを返す。
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.clearCookie(w, sessionCookie)
 	// ログインを始めて完了させなかった端末に往復用Cookieが残らないようにする。
 	s.clearCookie(w, flowCookie)
-	// IdP自身のログアウトURLが設定されていれば、Cookieを消したあとそこへ送る。
-	// famifoの案内ページだけではIdP側のセッションが残り、共有端末で次に触る
-	// 人がサインインしたまま残ってしまう。
-	if s.auth.LogoutURL != "" {
-		http.Redirect(w, r, s.auth.LogoutURL, http.StatusFound)
+	if u, ok := s.auth.OIDC.LogoutURL(s.signedOutURL()); ok {
+		http.Redirect(w, r, u, http.StatusFound)
 		return
 	}
+	s.renderSignedOut(w)
+}
+
+// handleSignedOut はRP-Initiated Logoutの戻り先、かつ /logout が
+// end_session_endpoint を持たないIdPのときに見せる案内ページ。
+// ミドルウェアの外側（認証不要な経路）に登録してあるので、セッションが
+// 無くても届く。
+func (s *Server) handleSignedOut(w http.ResponseWriter, r *http.Request) {
+	s.renderSignedOut(w)
+}
+
+// signedOutURL はRP-Initiated Logoutのpost_logout_redirect_uriに渡す、
+// famifo自身の絶対URL。IdPはここへブラウザを送り返す。
+func (s *Server) signedOutURL() string {
+	return strings.TrimSuffix(s.auth.ExternalURL, "/") + "/signed-out"
+}
+
+func (s *Server) renderSignedOut(w http.ResponseWriter) {
 	s.writeHTMLPage(w, http.StatusOK, "サインアウトしました", `<link rel="stylesheet" href="/static/app.css">`+
 		`<p>famifo からサインアウトしました。</p>`+
 		`<p>ログイン画面へのサインインは、これとは別に残っていることがあります。もう一度サインインしても`+

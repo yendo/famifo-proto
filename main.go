@@ -97,7 +97,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		auth = &web.Auth{OIDC: oidcClient, Key: key, Secure: cfg.CookieSecure(), LogoutURL: cfg.OIDCLogoutURL}
+		auth = &web.Auth{OIDC: oidcClient, Key: key, Secure: cfg.CookieSecure(), ExternalURL: cfg.ExternalURL}
 		log.Info("authentication is on", "issuer", cfg.OIDCIssuer, "redirect", cfg.RedirectURI())
 	} else {
 		log.Warn("authentication is off, anyone who can reach this address can see the photos")
@@ -213,8 +213,6 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	fs.StringVar(&c.OIDCClientID, "oidc-client-id", "", "client id registered with the OIDC provider")
 	fs.StringVar(&c.ExternalURL, "external-url", "",
 		"URL famifo is reached at from outside, used to build the redirect URI")
-	fs.StringVar(&c.OIDCLogoutURL, "oidc-logout-url", "",
-		"the provider's own logout URL; when set, /logout redirects there after clearing famifo's cookies")
 	showVersion := fs.Bool("version", false, "print the build version and exit")
 
 	if err := fs.Parse(args); err != nil {
