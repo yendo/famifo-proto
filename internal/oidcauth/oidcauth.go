@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -147,16 +148,12 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 		// 「何が悪かったのか」）ので、ここで区別できる形にして返す。
 		var rErr *oauth2.RetrieveError
 		if errors.As(err, &rErr) {
-			body := rErr.Body
-			if len(body) > maxProviderErrorBody {
-				body = body[:maxProviderErrorBody]
-			}
 			status := 0
 			if rErr.Response != nil {
 				status = rErr.Response.StatusCode
 			}
 			return Identity{}, fmt.Errorf("cannot exchange the authorization code: %w",
-				&ProviderError{StatusCode: status, Body: string(body)})
+				&ProviderError{StatusCode: status, Body: c.sanitizeProviderBody(rErr.Body)})
 		}
 		return Identity{}, fmt.Errorf("cannot exchange the authorization code: %w", err)
 	}
@@ -194,6 +191,28 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 	return Identity{
 		Subject: idToken.Subject, Username: name, Email: claims.Email, Groups: claims.Groups,
 	}, nil
+}
+
+// sanitizeProviderBody はProviderErrorに載せる前にIdPの応答本文を安全にする。
+//
+// client_secret_post を固定しているため（New内のコメントを見よ）、client secret は
+// すべての交換リクエストのPOSTボディに載っている。リクエストをそのまま読み返す
+// ような（珍しくない）IdPのエラー応答は、secretをそっくり含みうる。先に置換して
+// から切り詰める。順序を逆にすると、切り詰めの境目でsecretが分断され、
+// ReplaceAllが後半だけになった破片を見つけられずログに残ってしまう。
+//
+// 置換のあとに切り詰めるので、その時点でマルチバイト文字の途中を切ることがある。
+// string()は不正なUTF-8でも失敗しないが、slogはそれを出力時にU+FFFDへ置き換える
+// ため見た目が壊れる。strings.ToValidUTF8で有効な境界まで戻す。
+func (c *Client) sanitizeProviderBody(body []byte) string {
+	s := string(body)
+	if secret := c.oauth.ClientSecret; secret != "" {
+		s = strings.ReplaceAll(s, secret, "[redacted]")
+	}
+	if len(s) > maxProviderErrorBody {
+		s = strings.ToValidUTF8(s[:maxProviderErrorBody], "")
+	}
+	return s
 }
 
 func randomString() (string, error) {

@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/oidcauth"
@@ -368,6 +369,48 @@ func TestExchangeReportsAnUnreachableProvider(t *testing.T) {
 	require.NotErrorIs(t, err, oidcauth.ErrProviderRefused)
 	var perr *oidcauth.ProviderError
 	require.False(t, errors.As(err, &perr))
+}
+
+// TestExchangeTruncatesOnARuneBoundary は、1024バイト目がマルチバイト文字の
+// 途中に落ちるときでも、保存される本文が有効なUTF-8であることを固定する。
+// バイト単位で機械的に切り詰めると不正なUTF-8になり、slogが出力時にU+FFFDへ
+// 置き換えて見た目が壊れる。
+func TestExchangeTruncatesOnARuneBoundary(t *testing.T) {
+	i := newIDP(t)
+	i.tokenErrStatus = http.StatusInternalServerError
+	// "a" を1023バイト並べたあとに3バイトの"あ"を置くと、1024バイト目
+	// （0始まりでindex 1023）は"あ"の先頭バイトに落ちる。
+	body := append(bytes.Repeat([]byte("a"), 1023), []byte("あ")...)
+	body = append(body, bytes.Repeat([]byte("b"), 100)...)
+	i.tokenErrBody = body
+	c := newClient(t, i)
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+
+	_, err = c.Exchange(context.Background(), "wrong-code", p)
+	var perr *oidcauth.ProviderError
+	require.ErrorAs(t, err, &perr)
+	require.True(t, utf8.ValidString(perr.Body), "truncated body must be valid UTF-8")
+	require.LessOrEqual(t, len(perr.Body), 1024)
+}
+
+// TestExchangeRedactsTheClientSecretFromTheProviderBody は、IdPがリクエストを
+// そのまま読み返すエラー応答を返したときに、client secretがProviderErrorへ
+// そのまま流れ込まないことを固定する。client_secret_post を固定しているため、
+// secretはすべての交換リクエストのPOSTボディに載っている。
+func TestExchangeRedactsTheClientSecretFromTheProviderBody(t *testing.T) {
+	i := newIDP(t)
+	i.tokenErrStatus = http.StatusBadRequest
+	i.tokenErrBody = []byte(`{"error":"server_error","echo":"client_secret=s3cret&code=wrong-code"}`)
+	c := newClient(t, i) // newClientは ClientSecret: "s3cret" で組み立てる
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+
+	_, err = c.Exchange(context.Background(), "wrong-code", p)
+	var perr *oidcauth.ProviderError
+	require.ErrorAs(t, err, &perr)
+	require.NotContains(t, perr.Body, "s3cret")
+	require.Contains(t, perr.Body, "[redacted]")
 }
 
 func TestNewFailsWhenTheIssuerDoesNotMatch(t *testing.T) {
