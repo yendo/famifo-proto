@@ -345,7 +345,13 @@ func TestSignedOutRendersWithoutASession(t *testing.T) {
 
 	resp := get(t, f.h, "/signed-out")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Contains(t, bodyOf(t, resp), `href="/login"`)
+	body := bodyOf(t, resp)
+	require.Contains(t, body, `href="/login"`)
+	// ログイン画面側でもサインアウトが要る旨と、DSMを条件付きで名指しする
+	// 案内が消えないことを固定する。famifoは特定のIdPに依存しないので、
+	// DSMは「使っている場合」の条件としてのみ出てよい。
+	require.Contains(t, body, "最初にサインインしたログイン画面の側でもサインアウトしてください")
+	require.Contains(t, body, "DSM を使っている場合は DSM からサインアウトします")
 }
 
 func TestSecureAttributeFollowsTheSetting(t *testing.T) {

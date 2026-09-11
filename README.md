@@ -211,8 +211,10 @@ time, the same way the sign-in redirect URI does.
 against its discovery document, which carries 13 keys and this is not one of them). On
 it, `/logout` only ends famifo's own session, exactly as it did before this endpoint
 existed: the button clears famifo's cookies and shows a page saying so, but the
-provider's own session survives, so signing in again may not prompt for anything. If
-Synology adds the endpoint in a future release, famifo picks it up with no code change.
+provider's own session survives, so signing in again may not prompt for anything. The
+page famifo shows tells the visitor to sign out of DSM itself if they want to switch
+users or end both sessions. If Synology adds the endpoint in a future release, famifo
+picks it up with no code change.
 
 ## Docker
 
