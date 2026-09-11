@@ -218,13 +218,13 @@ func (s *Server) signedOutURL() string {
 }
 
 func (s *Server) renderSignedOut(w http.ResponseWriter) {
-	s.writeHTMLPage(w, http.StatusOK, "サインアウトしました", `<link rel="stylesheet" href="/static/app.css">`+
-		`<p>famifo からサインアウトしました。</p>`+
-		`<p>ログイン画面へのサインインは、これとは別に残っていることがあります。もう一度サインインしても`+
-		`何も聞かれないことがありますが、それはこのためです。</p>`+
-		`<p>別の人としてサインインしたいとき、または完全にサインアウトしたいときは、最初にサインインした`+
-		`ログイン画面の側でもサインアウトしてください（DSM を使っている場合は DSM からサインアウトします）。</p>`+
-		`<p><a href="/login">もう一度サインインする</a></p>`)
+	s.writeHTMLPage(w, http.StatusOK, "Signed out", `<link rel="stylesheet" href="/static/app.css">`+
+		`<p>You have been signed out of famifo.</p>`+
+		`<p>The sign-in at the login screen may still be open, separately from this. That's why signing in `+
+		`again may not ask you anything.</p>`+
+		`<p>To sign in as someone else, or to sign out completely, also sign out on the login screen you `+
+		`originally used (if that's DSM, sign out of DSM).</p>`+
+		`<p><a href="/login">Sign in again</a></p>`)
 }
 
 // safeNext は戻り先を自サイト内に限る。
