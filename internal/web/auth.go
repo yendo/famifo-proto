@@ -228,14 +228,26 @@ func (s *Server) renderSignedOut(w http.ResponseWriter) {
 }
 
 // safeNext は戻り先を自サイト内に限る。
-// "//evil.example" はプロトコル相対URLで、別サイトへのリダイレクトになる。
-// "\" を含むものも拒む。ブラウザはWHATWG URLの仕様に従って "\" を "/" に
-// 正規化するので、"/\evil.example" も別サイトへのリダイレクトになる。
+//
+// ブラウザはWHATWG URLの仕様に従い、パース前に文字を取り除いたり正規化したり
+// する（タブや改行は除去され、"\" は "/" になる）。そのため「一見パスに
+// 見えるが、ブラウザに渡ると別サイトへのリダイレクトになる文字列」を個別に
+// 列挙して拒むやり方は、列挙し漏れた文字がすり抜ける。ここでは逆に、「疑い
+// なく自サイト内の相対パスだと言えるものだけ」を通す。"\" と制御文字は
+// （除去や正規化を経て別サイトへの入り口になり得るため）種類ごと丸ごと拒み、
+// 残りは url.Parse に判定させて、scheme や host を持つものを拒む。
 func safeNext(next string) string {
 	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.Contains(next, `\`) {
 		return "/"
 	}
-	return next
+	if strings.ContainsFunc(next, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "/"
+	}
+	u, err := url.Parse(next)
+	if err != nil || u.Scheme != "" || u.Host != "" {
+		return "/"
+	}
+	return u.RequestURI()
 }
 
 // callbackError は失敗した /auth/callback を、/login へのリンク付きの小さな

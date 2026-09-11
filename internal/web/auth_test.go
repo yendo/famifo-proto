@@ -246,12 +246,25 @@ func TestNextMustBeALocalPath(t *testing.T) {
 	// "//evil.example" はプロトコル相対URLで、別サイトへのリダイレクトになる。
 	f := newAuthFixture(t)
 
-	for _, next := range []string{"//evil.example", "https://evil.example", "http://evil.example/x", `/\evil.example`, `/\/evil.example`} {
+	for _, next := range []string{"//evil.example", "https://evil.example", "http://evil.example/x", `/\evil.example`, `/\/evil.example`, "/\t/evil.example", "/\n/evil.example"} {
 		start := get(t, f.h, "/login?next="+url.QueryEscape(next))
 		flow := cookieNamed(start, "famifo_oidc")
 		resp := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
 		require.Equal(t, "/", resp.Header.Get("Location"), "next %q must be refused", next)
 	}
+}
+
+// TestNextKeepsALegitimatePath は正当なパスがそのまま戻り先として使われる
+// ことを固定する。拒否だけを確かめても、safeNextが過剰に締め付けて通常の
+// 遷移まで壊していないかは分からない。
+func TestNextKeepsALegitimatePath(t *testing.T) {
+	f := newAuthFixture(t)
+
+	next := "/item/abc123"
+	start := get(t, f.h, "/login?next="+url.QueryEscape(next))
+	flow := cookieNamed(start, "famifo_oidc")
+	resp := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
+	require.Equal(t, next, resp.Header.Get("Location"))
 }
 
 // TestLogoutClearsTheSession は /logout がセッションと往復用Cookieの両方を
