@@ -16,6 +16,11 @@ FROM scratch
 
 COPY --from=build /famifo /famifo
 
+# famifo は IdP の discovery・JWKS・トークンエンドポイントを HTTPS で叩く。
+# scratch には CA が無いので、ビルド段のものを持ち込まないと証明書を検証できず、
+# すべてのログインが x509 のエラーで落ちる。認証を使わない構成でも害はない。
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
 # 日付の切り出しは time.Local に依存する。タイムゾーンデータベースはバイナリに
 # 埋め込んであるが、TZ を渡さないと /etc/localtime を探しに行って失敗し、UTC に
 # 落ちる。そのまま初回インデックスを作ると全件が誤った日付で固定される。

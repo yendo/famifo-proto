@@ -200,11 +200,11 @@ func TestReadReturnsZeroWhenNothingIsReadable(t *testing.T) {
 		"creation_timeが0": append(ftyp("isom", "mp41"), bx("moov", mvhd(0))...),
 		"moovが無い":         ftyp("isom", "mp41"),
 		"mvhdが無い":         append(ftyp("isom", "mp41"), bx("moov")...),
-		"1970年より前":       append(ftyp("isom", "mp41"), bx("moov", mvhd(1))...),
+		"1970年より前":        append(ftyp("isom", "mp41"), bx("moov", mvhd(1))...),
 		"途中で切れている":        append(ftyp("isom", "mp41"), []byte{0, 0, 1, 0, 'm', 'o'}...),
-		"空":              {},
-		"箱ではない":          []byte("this is not a container at all"),
-		"サイズが過小":         append(ftyp("isom", "mp41"), []byte{0, 0, 0, 2, 'm', 'o', 'o', 'v'}...),
+		"空":               {},
+		"箱ではない":           []byte("this is not a container at all"),
+		"サイズが過小":          append(ftyp("isom", "mp41"), []byte{0, 0, 0, 2, 'm', 'o', 'o', 'v'}...),
 		"サイズが行き過ぎ":        append(ftyp("isom", "mp41"), []byte{0x7f, 0, 0, 0, 'm', 'o', 'o', 'v'}...),
 	}
 	for name, body := range tests {

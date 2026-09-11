@@ -42,7 +42,7 @@ func newWebFixture(t *testing.T, chunkSize int) *webFixture {
 	require.NoError(t, os.MkdirAll(photoDir, 0o755))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv, err := web.NewServer(st, thumbs, log)
+	srv, err := web.NewServer(st, thumbs, nil, log)
 	require.NoError(t, err)
 	srv.SetChunkSize(chunkSize)
 	return &webFixture{h: srv.Handler(), st: st, thumbs: thumbs, photoDir: photoDir}

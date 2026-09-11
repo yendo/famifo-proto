@@ -62,6 +62,26 @@ body.locked {
 	opacity: 0.6;
 }
 
+/* .topbar は flex row。margin-left: auto でログアウトを右端に押し出す。
+   指定しないとブラウザ既定の淡色ボタンが暗い上部バーの上で枚数表示に
+   ぶつかって浮く。 */
+.logout {
+	margin-left: auto;
+}
+.logout button {
+	border: 1px solid rgba(255, 255, 255, 0.3);
+	border-radius: 4px;
+	background: transparent;
+	color: var(--fg);
+	font: inherit;
+	font-size: 0.8rem;
+	padding: 4px 10px;
+	cursor: pointer;
+}
+.logout button:hover {
+	background: rgba(255, 255, 255, 0.1);
+}
+
 /* スクロール領域。高さは #spacer が決める */
 .gallery {
 	padding: var(--gap);

@@ -71,6 +71,7 @@ func (s *Server) renderGallery(w http.ResponseWriter, r *http.Request, openIndex
 	view := galleryView{
 		tilesView: tiles, Total: total, ChunkSize: s.chunkSize,
 		DayGroups: template.JS(raw), OpenIndex: openIndex,
+		AuthEnabled: s.auth != nil,
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "gallery", view); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。

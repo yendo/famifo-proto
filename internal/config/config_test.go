@@ -121,3 +121,90 @@ func TestValidateRejectsDataInsideAnyRoot(t *testing.T) {
 
 	require.Error(t, c.Validate(), "rejected inside the second root too")
 }
+
+func validConfig(t *testing.T) config.Config {
+	t.Helper()
+	dir := t.TempDir()
+	photos := filepath.Join(dir, "photos")
+	require.NoError(t, os.MkdirAll(photos, 0o755))
+	return config.Config{
+		PhotoDirs: []string{photos}, DataDir: filepath.Join(dir, "data"),
+		Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
+	}
+}
+
+func TestValidateAcceptsNoAuth(t *testing.T) {
+	c := validConfig(t)
+	require.NoError(t, c.Validate())
+}
+
+func TestValidateRequiresTheWholeAuthSet(t *testing.T) {
+	// 一部だけ渡された状態で黙って無認証にすると、認証したつもりの構成が
+	// 素通しで動いてしまう。落とす。
+	base := validConfig(t)
+	base.OIDCIssuer = "https://idp.example.invalid/sso"
+	base.OIDCClientID = "famifo"
+	base.OIDCClientSecret = "s3cret"
+	base.ExternalURL = "https://famifo.example.invalid:8443"
+	require.NoError(t, base.Validate())
+
+	for name, mutate := range map[string]func(*config.Config){
+		"no client id":     func(c *config.Config) { c.OIDCClientID = "" },
+		"no client secret": func(c *config.Config) { c.OIDCClientSecret = "" },
+		"no external url":  func(c *config.Config) { c.ExternalURL = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := base
+			mutate(&c)
+			require.Error(t, c.Validate())
+		})
+	}
+}
+
+func TestValidateRejectsABadExternalURL(t *testing.T) {
+	base := validConfig(t)
+	base.OIDCIssuer = "https://idp.example.invalid/sso"
+	base.OIDCClientID = "famifo"
+	base.OIDCClientSecret = "s3cret"
+
+	for _, u := range []string{"famifo.example.invalid", "ftp://famifo.example.invalid", "/relative"} {
+		c := base
+		c.ExternalURL = u
+		require.Error(t, c.Validate(), "must reject %q", u)
+	}
+}
+
+func TestSessionKeyPathSitsInTheDataDir(t *testing.T) {
+	c := validConfig(t)
+	require.Equal(t, filepath.Join(c.DataDir, "session.key"), c.SessionKeyPath())
+}
+
+func TestRedirectURIAppendsCallbackPath(t *testing.T) {
+	c := validConfig(t)
+	c.ExternalURL = "https://famifo.example.invalid:8443"
+	require.Equal(t, "https://famifo.example.invalid:8443/auth/callback", c.RedirectURI())
+}
+
+func TestRedirectURIDoesNotDoubleTheSlash(t *testing.T) {
+	c := validConfig(t)
+	c.ExternalURL = "https://famifo.example.invalid:8443/"
+	require.Equal(t, "https://famifo.example.invalid:8443/auth/callback", c.RedirectURI())
+}
+
+func TestCookieSecureIsTrueForHTTPS(t *testing.T) {
+	c := validConfig(t)
+	c.ExternalURL = "https://famifo.example.invalid:8443"
+	require.True(t, c.CookieSecure())
+}
+
+func TestCookieSecureIsFalseForHTTP(t *testing.T) {
+	c := validConfig(t)
+	c.ExternalURL = "http://famifo.example.invalid:8080"
+	require.False(t, c.CookieSecure())
+}
+
+func TestCookieSecureIsTrueForUppercaseScheme(t *testing.T) {
+	c := validConfig(t)
+	c.ExternalURL = "HTTPS://famifo.example.invalid:8443"
+	require.True(t, c.CookieSecure())
+}

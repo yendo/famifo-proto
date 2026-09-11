@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/yendo/famifo-proto/internal/session"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
@@ -34,11 +35,14 @@ const defaultChunkSize = 120
 
 // Server はギャラリーのHTTPハンドラ群を保持する。
 type Server struct {
-	st        *store.Store
-	tmpl      *template.Template
-	thumbs    *thumb.Provider
-	chunkSize int
-	log       *slog.Logger
+	st           *store.Store
+	tmpl         *template.Template
+	thumbs       *thumb.Provider
+	chunkSize    int
+	auth         *Auth // nil なら認証しない
+	sessionCodec *session.Codec
+	flowCodec    *session.Codec
+	log          *slog.Logger
 }
 
 // NewServer はテンプレートを読み込んでServerを作る。
@@ -46,12 +50,28 @@ type Server struct {
 //
 // thumbs は取り込み側と共有する。配信するファイルの選択はすべてそこが決めるので、
 // サーバーはサムネイルの置き場所を知らない。
-func NewServer(st *store.Store, thumbs *thumb.Provider, log *slog.Logger) (*Server, error) {
+//
+// auth に nil を渡すと認証しない。開発機やテストでIdPを立てずに動かせるようにするため
+// であり、既定の構成でもある。auth.Key からは用途ごとに別のCodecを導出する。
+// 同じCodecをセッションとログイン往復の両方に使うと、往復用のCookieがそのまま
+// セッションCookieとして通ってしまう。
+func NewServer(st *store.Store, thumbs *thumb.Provider, auth *Auth, log *slog.Logger) (*Server, error) {
 	tmpl, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("cannot load the templates: %w", err)
 	}
-	return &Server{st: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, log: log}, nil
+	srv := &Server{st: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, auth: auth, log: log}
+	if auth != nil {
+		srv.sessionCodec, err = session.NewCodec(auth.Key, "session")
+		if err != nil {
+			return nil, fmt.Errorf("cannot build the session codec: %w", err)
+		}
+		srv.flowCodec, err = session.NewCodec(auth.Key, "flow")
+		if err != nil {
+			return nil, fmt.Errorf("cannot build the login flow codec: %w", err)
+		}
+	}
+	return srv, nil
 }
 
 // Handler はルーティング済みのハンドラを返す。
@@ -62,12 +82,24 @@ func (s *Server) Handler() http.Handler {
 	if err != nil {
 		panic(err) // embedの内容は固定なので、ここで失敗するならビルドの不備
 	}
+	// 未認証でもCSSは当たるようにする。ログイン前の画面が崩れる意味がない。
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
-	mux.HandleFunc("GET /{$}", s.handleGallery)
-	mux.HandleFunc("GET /item/{id}", s.handleItem)
-	mux.HandleFunc("GET /tiles", s.handleTiles)
-	mux.HandleFunc("GET /thumb/{id}", s.handleThumb)
-	mux.HandleFunc("GET /file/{id}", s.handleFile)
+	protected := http.NewServeMux()
+	protected.HandleFunc("GET /{$}", s.handleGallery)
+	protected.HandleFunc("GET /item/{id}", s.handleItem)
+	protected.HandleFunc("GET /tiles", s.handleTiles)
+	protected.HandleFunc("GET /thumb/{id}", s.handleThumb)
+	protected.HandleFunc("GET /file/{id}", s.handleFile)
+	mux.Handle("/", s.authenticate(protected))
+
+	if s.auth != nil {
+		mux.HandleFunc("GET /login", s.handleLogin)
+		mux.HandleFunc("GET /auth/callback", s.handleCallback)
+		mux.HandleFunc("POST /logout", s.handleLogout)
+		// RP-Initiated LogoutでIdPが戻ってくる先。/logout自身がend_session_endpoint
+		// を持たないIdPのとき案内ページとして返すのもここ。
+		mux.HandleFunc("GET /signed-out", s.handleSignedOut)
+	}
 	return mux
 }
