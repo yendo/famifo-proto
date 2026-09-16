@@ -84,10 +84,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// 止める。認証すると宣言しておいて黙って無認証で配信するより、起動しないほうがよい。
 	var auth *web.Auth
 	if cfg.OIDCIssuer != "" {
-		key, err := session.LoadOrCreateKey(cfg.SessionKeyPath())
+		sessions, err := session.Open(cfg.SessionDBPath(), cfg.CookieSecure(), log)
 		if err != nil {
 			return err
 		}
+		defer sessions.Close()
 		oidcClient, err := oidcauth.New(ctx, oidcauth.Config{
 			Issuer:       cfg.OIDCIssuer,
 			ClientID:     cfg.OIDCClientID,
@@ -97,7 +98,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		auth = &web.Auth{OIDC: oidcClient, Key: key, Secure: cfg.CookieSecure(), ExternalURL: cfg.ExternalURL}
+		auth = &web.Auth{OIDC: oidcClient, Sessions: sessions.Manager(), ExternalURL: cfg.ExternalURL}
 		log.Info("authentication is on", "issuer", cfg.OIDCIssuer, "redirect", cfg.RedirectURI())
 	} else {
 		log.Warn("authentication is off, anyone who can reach this address can see the photos")

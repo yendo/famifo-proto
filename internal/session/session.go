@@ -1,115 +1,105 @@
-// Package session は署名付きCookieの組み立てと検証を担う。
+// Package session はログインセッションの保管を担う。
 //
-// OIDCもHTTPも知らない。鍵と時刻を渡されて、文字列に署名し、あとで
-// 取り出せるようにするだけである。何を載せるかは呼び出し側が決める。
+// OIDCもHTTPのルーティングも知らない。セッションの置き場（sessions.db）を開き、
+// scsのマネージャを組み立てて渡すだけである。何を載せるかは呼び出し側が決める。
 package session
 
 import (
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
+	"database/sql"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/alexedwards/scs/sqlite3store"
+	"github.com/alexedwards/scs/v2"
+	_ "modernc.org/sqlite" // pure Goのsqliteドライバ。cgo不要。
 )
 
-// KeyLen は署名鍵の長さ。HMAC-SHA256 のブロックに収まる大きさである。
-const KeyLen = 32
-
-// Codec は署名鍵を持ち、payloadに失効時刻を添えて署名する。
-type Codec struct{ key []byte }
-
-// NewCodec は署名鍵と用途からCodecを作る。用途ごとに別の鍵を導出するので、
-// ある用途で署名した値を別の用途のCookieとして送り返しても検証は通らない。
-func NewCodec(key []byte, purpose string) (*Codec, error) {
-	if len(key) != KeyLen {
-		return nil, fmt.Errorf("the signing key must be %d bytes, got %d", KeyLen, len(key))
-	}
-	if purpose == "" {
-		return nil, fmt.Errorf("the purpose must not be empty")
-	}
-	m := hmac.New(sha256.New, key)
-	m.Write([]byte(purpose))
-	return &Codec{key: m.Sum(nil)}, nil
-}
-
-// Sign はpayloadと失効時刻を1つの文字列にまとめて署名する。
-// 中身は誰でも読めるが、改竄はできない。秘密は載せないこと。
-func (c *Codec) Sign(payload string, expiry time.Time) string {
-	// 失効時刻を先に置く。payloadに改行が混ざっても最初の1つで切り出せる。
-	raw := strconv.FormatInt(expiry.Unix(), 10) + "\n" + payload
-	body := base64.RawURLEncoding.EncodeToString([]byte(raw))
-	return body + "." + base64.RawURLEncoding.EncodeToString(c.mac(body))
-}
-
-// Verify は署名と失効時刻を確かめてpayloadを返す。
-func (c *Codec) Verify(value string, now time.Time) (string, bool) {
-	body, sig, found := strings.Cut(value, ".")
-	if !found {
-		return "", false
-	}
-	got, err := base64.RawURLEncoding.DecodeString(sig)
-	if err != nil {
-		return "", false
-	}
-	// 一致する接頭辞の長さが実行時間に出ないよう、定数時間で比べる。
-	if !hmac.Equal(got, c.mac(body)) {
-		return "", false
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(body)
-	if err != nil {
-		return "", false
-	}
-	expStr, payload, found := strings.Cut(string(raw), "\n")
-	if !found {
-		return "", false
-	}
-	exp, err := strconv.ParseInt(expStr, 10, 64)
-	if err != nil {
-		return "", false
-	}
-	if !now.Before(time.Unix(exp, 0)) {
-		return "", false
-	}
-	return payload, true
-}
-
-func (c *Codec) mac(body string) []byte {
-	m := hmac.New(sha256.New, c.key)
-	m.Write([]byte(body))
-	return m.Sum(nil)
-}
-
-// LoadOrCreateKey は署名鍵を読む。無ければ作って書く。
+// Lifetime はログイン状態が続く長さ。
 //
-// このファイルがあるおかげで、famifoを再起動しても利用者はログインし直さずに済む。
-// 逆に、消して再起動すれば全端末が一斉にログアウトする。個別の失効ができない
-// 構えなので、これが唯一の一括失効手段である。
-func LoadOrCreateKey(path string) ([]byte, error) {
-	key, err := os.ReadFile(path)
-	if err == nil {
-		if len(key) != KeyLen {
-			return nil, fmt.Errorf("the signing key in %s must be %d bytes, got %d", path, KeyLen, len(key))
-		}
-		return key, nil
+// 使うたびに延ばすスライディング方式にすると、リクエストごとに Set-Cookie を出すか、
+// 残り時間を見て再発行する分岐が要る。家族が30日ごとに1回入れ直す程度なら固定で足りる。
+// 利用者が変えられる設定ではない。
+const Lifetime = 30 * 24 * time.Hour
+
+// CookieName はセッショントークンを載せるCookieの名前。
+const CookieName = "famifo_session"
+
+// schema はセッションの表。scs/sqlite3store が読み書きする形に合わせてある。
+// expiry は julianday の実数で、sqlite3store が自分で入れる。
+const schema = `
+CREATE TABLE IF NOT EXISTS sessions (
+    token  TEXT PRIMARY KEY,
+    data   BLOB NOT NULL,
+    expiry REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON sessions(expiry);
+`
+
+// Store はセッションのDBと、それを使うscsのマネージャを保持する。
+//
+// 写真のインデックス（famifo.db）とは別のファイルに置く。このリポジトリは
+// スキーマ移行を書かず、列を変えたらDBを消して作り直す運用なので、同居させると
+// インデックスを作り直すたびに全端末がログアウトすることになる。分けておけば、
+// 逆に「全端末を一斉に切る」はこのファイルを消すだけで済む。
+type Store struct {
+	db      *sql.DB
+	backing *sqlite3store.SQLite3Store
+	mgr     *scs.SessionManager
+}
+
+// Open はセッションDBを開き、scsのマネージャを組み立てる。親ディレクトリが
+// 無ければ作る。secure はCookieに Secure を付けるかで、外部URLがhttpsのときだけ真。
+func Open(dbPath string, secure bool, log *slog.Logger) (*Store, error) {
+	// SQLiteは親ディレクトリを作らない。無いまま開くと sql.Open は遅延接続なので
+	// 成功し、db.Ping() が "unable to open database file" で落ちる。
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return nil, fmt.Errorf("cannot create the session database directory: %w", err)
 	}
-	if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("cannot read the signing key: %w", err)
+	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open the session database: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("cannot create the directory for the signing key: %w", err)
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cannot connect to the session database: %w", err)
 	}
-	key = make([]byte, KeyLen)
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("cannot generate the signing key: %w", err)
+	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cannot create the session schema: %w", err)
 	}
-	// 0600。読めた者はセッションを偽造できる。
-	if err := os.WriteFile(path, key, 0o600); err != nil {
-		return nil, fmt.Errorf("cannot write the signing key: %w", err)
+
+	backing := sqlite3store.New(db)
+	mgr := scs.New()
+	mgr.Store = backing
+	mgr.Lifetime = Lifetime
+	// IdleTimeout は設定しない。スライディングにしないため。
+	mgr.Cookie.Name = CookieName
+	mgr.Cookie.Path = "/"
+	mgr.Cookie.HttpOnly = true
+	mgr.Cookie.SameSite = http.SameSiteLaxMode
+	mgr.Cookie.Secure = secure
+	// 既定のErrorFuncはGoの標準loggerに書く。famifoのログはslogに寄せてあるので、
+	// storeが落ちたときだけ別の経路に出ると調べにくい。
+	mgr.ErrorFunc = func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Error("cannot load or save the session", "err", err, "path", r.URL.Path)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
-	return key, nil
+	return &Store{db: db, backing: backing, mgr: mgr}, nil
+}
+
+// Manager はscsのマネージャを返す。呼び出し側が Put / PopString / RenewToken /
+// Destroy を直に呼ぶ。全部を包み直すファサードは意味がないので作らない。
+func (s *Store) Manager() *scs.SessionManager { return s.mgr }
+
+// Close は掃除ゴルーチンを止めてからDBを閉じる。
+// sqlite3store.New は5分ごとに期限切れを消すゴルーチンを起こす。止めないと
+// Storeがガベージコレクトされない。
+func (s *Store) Close() error {
+	s.backing.StopCleanup()
+	return s.db.Close()
 }

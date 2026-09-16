@@ -178,12 +178,12 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	_, err = indexAll(st, photoDir, thumbs)
 	require.NoError(t, err)
 
-	key := make([]byte, session.KeyLen)
-	_, err = rand.Read(key)
-	require.NoError(t, err)
-
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	webSrv, err := web.NewServer(st, thumbs, &web.Auth{OIDC: client, Key: key}, log)
+	sessions, err := session.Open(filepath.Join(dir, "sessions.db"), false, log)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sessions.Close() })
+
+	webSrv, err := web.NewServer(st, thumbs, &web.Auth{OIDC: client, Sessions: sessions.Manager()}, log)
 	require.NoError(t, err)
 
 	ts := httptest.NewUnstartedServer(webSrv.Handler())

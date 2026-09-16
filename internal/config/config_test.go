@@ -174,9 +174,9 @@ func TestValidateRejectsABadExternalURL(t *testing.T) {
 	}
 }
 
-func TestSessionKeyPathSitsInTheDataDir(t *testing.T) {
+func TestSessionDBPathSitsInTheDataDir(t *testing.T) {
 	c := validConfig(t)
-	require.Equal(t, filepath.Join(c.DataDir, "session.key"), c.SessionKeyPath())
+	require.Equal(t, filepath.Join(c.DataDir, "sessions.db"), c.SessionDBPath())
 }
 
 func TestRedirectURIAppendsCallbackPath(t *testing.T) {

@@ -3,6 +3,8 @@ module github.com/yendo/famifo-proto
 go 1.27.1
 
 require (
+	github.com/alexedwards/scs/sqlite3store v0.0.0-20251002162104-209de6e426de
+	github.com/alexedwards/scs/v2 v2.9.0
 	github.com/chromedp/cdproto v0.0.0-20260714215040-dc233986426f
 	github.com/chromedp/chromedp v0.16.0
 	github.com/coreos/go-oidc/v3 v3.21.0

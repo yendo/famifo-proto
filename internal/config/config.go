@@ -155,8 +155,9 @@ func (c Config) DBPath() string { return filepath.Join(c.DataDir, "famifo.db") }
 // ThumbDir は生成したサムネイルのルートを返す。
 func (c Config) ThumbDir() string { return filepath.Join(c.DataDir, "thumbs") }
 
-// SessionKeyPath はセッションの署名鍵の置き場を返す。
-func (c Config) SessionKeyPath() string { return filepath.Join(c.DataDir, "session.key") }
+// SessionDBPath はセッションDBの置き場を返す。写真のインデックス（famifo.db）
+// とは別のファイルにする。インデックスを作り直してもログインが残るようにするため。
+func (c Config) SessionDBPath() string { return filepath.Join(c.DataDir, "sessions.db") }
 
 // RedirectURI は IdP に登録する戻り先を組み立てる。
 // ここで組み立てた文字列と、IdP 側に登録した文字列は完全に一致していなければならない。

@@ -188,20 +188,28 @@ current IPv6 address.
 
 ### Sessions
 
-After a successful login famifo issues its own signed cookie and stops asking the
-provider. Sessions last 30 days and survive restarts, because the signing key lives in
-`<data>/session.key`.
+After a successful login famifo issues a session of its own and stops asking the
+provider. The cookie carries nothing but a token; the username lives in
+`<data>/sessions.db`. Sessions last 30 days and survive restarts, because that file
+does.
 
-Individual sessions cannot be revoked, and deleting `session.key` and restarting is not
-a substitute: it invalidates every famifo session, but any device whose provider session
-is still alive is signed straight back in on its next visit without being asked for
-anything, confirmed on hardware by a fresh sign-in appearing in the log seconds after
-the restart. Real revocation lives at the provider — disable the account, or end its
+Signing out ends the session on the server, so the cookie is useless afterwards even on
+a device that kept it. Deleting `sessions.db` signs every device out at once, and no
+restart is needed.
+
+Neither is a substitute for revoking access at the provider: a device whose provider
+session is still alive is signed straight back in on its next visit without being asked
+for anything, confirmed on hardware by a fresh sign-in appearing in the log seconds
+after a restart. Real revocation lives at the provider — disable the account, or end its
 sessions there.
+
+Upgrading from a version that used signed cookies signs everyone out once: the old
+cookies name no session on the server. `<data>/session.key` is no longer read and can be
+deleted.
 
 Signing out uses the standard OpenID Connect mechanism, RP-Initiated Logout: if the
 provider advertises `end_session_endpoint` in its discovery document, `/logout` clears
-famifo's cookies and redirects there with `post_logout_redirect_uri` pointing back at
+famifo's cookie and redirects there with `post_logout_redirect_uri` pointing back at
 famifo's `/signed-out` page, so one press of the button ends both sessions. This needs
 no configuration — famifo uses it automatically whenever the provider supports it — but
 the `post_logout_redirect_uri` usually has to be registered with the provider ahead of

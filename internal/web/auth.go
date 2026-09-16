@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -11,22 +10,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alexedwards/scs/v2"
 	"github.com/yendo/famifo-proto/internal/oidcauth"
 )
 
-// sessionTTL はログイン状態が続く長さ。
-//
-// 使うたびに延ばすスライディング方式にすると、リクエストごとに Set-Cookie を出すか、
-// 残り時間を見て再発行する分岐が要る。家族が30日ごとに1回入れ直す程度なら固定で足りる。
-// 利用者が変えられる設定ではない。
-const sessionTTL = 30 * 24 * time.Hour
-
 // flowTTL は認可の往復に許す時間。ログイン画面を開いたまま放置した場合の上限になる。
+//
+// scsの期限としてセッションに載せるので、放置されたログインの試みはこの時間で
+// 行ごと消える。ログイン状態そのものの長さ（30日）は internal/session が持つ。
 const flowTTL = 10 * time.Minute
 
+// セッションに載せるキー。userはログイン済みの利用者名、残りは認可の往復の
+// あいだだけ持ち越す値である。往復の値はcallbackでPopStringして取り出すので、
+// 済んだ往復の残骸がセッションに残らない。
 const (
-	sessionCookie = "famifo_session"
-	flowCookie    = "famifo_oidc"
+	keyUser     = "user"
+	keyState    = "state"
+	keyNonce    = "nonce"
+	keyVerifier = "verifier"
+	keyNext     = "next"
 )
 
 // Provider は認可の往復を担う。oidcauth.Client がこれを満たす。
@@ -41,22 +43,13 @@ type Provider interface {
 
 // Auth は認証の手段をまとめる。NewServer に nil を渡すと認証しない。
 type Auth struct {
-	OIDC   Provider
-	Key    []byte // session.KeyLen バイト。webが用途ごとのCodecを導出する
-	Secure bool   // Cookie に Secure を付けるか。外部URLがhttpsのときだけ真
+	OIDC Provider
+	// Sessions はセッションの保管と持ち回りを担う。Cookieの名前も属性も、
+	// 保管先のDBも internal/session が組み立てて設定してある。
+	Sessions *scs.SessionManager
 	// ExternalURL はfamifoが外から見えるURL。RP-Initiated Logoutの
 	// post_logout_redirect_uriを組み立てるのに使う。
 	ExternalURL string
-}
-
-// flowState は認可の往復のあいだ持ち越す値。署名付きCookieに載せる。
-// 秘密は含まない。stateとnonceに要るのは改竄されないことで、秘匿ではない。
-// PKCEのverifierも、読めるのは利用者本人なので差し支えない。
-type flowState struct {
-	State    string `json:"s"`
-	Nonce    string `json:"n"`
-	Verifier string `json:"v"`
-	Next     string `json:"x"`
 }
 
 // authenticate は認証を要求するミドルウェア。auth が nil なら素通しする。
@@ -81,17 +74,12 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 	})
 }
 
-// currentUser はセッションCookieから利用者名を取り出す。無ければ空を返す。
+// currentUser はセッションから利用者名を取り出す。無ければ空を返す。
+//
+// セッションが無い、期限切れ、ログアウト済み、知らないトークンは、どれもここでは
+// 「userが入っていない」に落ちる。サーバーから見ればすべて「その行が無い」である。
 func (s *Server) currentUser(r *http.Request) string {
-	c, err := r.Cookie(sessionCookie)
-	if err != nil {
-		return ""
-	}
-	user, ok := s.sessionCodec.Verify(c.Value, time.Now())
-	if !ok {
-		return ""
-	}
-	return user
+	return s.auth.Sessions.GetString(r.Context(), keyUser)
 }
 
 func isDataPath(p string) bool {
@@ -99,6 +87,10 @@ func isDataPath(p string) bool {
 }
 
 // handleLogin は認可の往復を始める。
+//
+// 先にDestroyするのは、ログインの開始が「今のセッションを捨てて入り直す」操作
+// だからである。すでにログイン済みの端末で /login を開いた場合も、古いセッションは
+// ここで破棄される。セッション固定への備えも兼ねる。
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	p, err := oidcauth.NewParams()
 	if err != nil {
@@ -106,51 +98,52 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	raw, err := json.Marshal(flowState{
-		State: p.State, Nonce: p.Nonce, Verifier: p.Verifier, Next: safeNext(r.URL.Query().Get("next")),
-	})
-	if err != nil {
+	ctx := r.Context()
+	if err := s.auth.Sessions.Destroy(ctx); err != nil {
+		s.log.Error("cannot start the login flow", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.setCookie(w, flowCookie, s.flowCodec.Sign(string(raw), time.Now().Add(flowTTL)), int(flowTTL.Seconds()))
+	s.auth.Sessions.Put(ctx, keyState, p.State)
+	s.auth.Sessions.Put(ctx, keyNonce, p.Nonce)
+	s.auth.Sessions.Put(ctx, keyVerifier, p.Verifier)
+	s.auth.Sessions.Put(ctx, keyNext, safeNext(r.URL.Query().Get("next")))
+	// 往復が終わるまでの短い期限にする。callbackのRenewTokenが30日に引き直すので、
+	// 放置されたログインの試みだけがここで期限切れになる。
+	s.auth.Sessions.SetDeadline(ctx, time.Now().Add(flowTTL))
 	http.Redirect(w, r, s.auth.OIDC.AuthURL(p), http.StatusFound)
 }
 
 // handleCallback は認可コードを受け取ってセッションを発行する。
 func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
-	c, err := r.Cookie(flowCookie)
-	if err != nil {
-		s.callbackError(w, "the login attempt has expired, please start again", http.StatusBadRequest)
-		return
-	}
-	raw, ok := s.flowCodec.Verify(c.Value, time.Now())
-	if !ok {
-		s.callbackError(w, "the login attempt has expired, please start again", http.StatusBadRequest)
-		return
-	}
-	var f flowState
-	if err := json.Unmarshal([]byte(raw), &f); err != nil {
-		s.callbackError(w, "the login attempt is unreadable, please start again", http.StatusBadRequest)
+	ctx := r.Context()
+	// Popで取り出す。往復に使った値は用済みなので、セッションに残さない。
+	state := s.auth.Sessions.PopString(ctx, keyState)
+	nonce := s.auth.Sessions.PopString(ctx, keyNonce)
+	verifier := s.auth.Sessions.PopString(ctx, keyVerifier)
+	next := s.auth.Sessions.PopString(ctx, keyNext)
+	// セッションが無い、期限切れ、すでに使い切った往復は、どれもstateが空になる。
+	if state == "" {
+		s.callbackError(w, r, "the login attempt has expired, please start again", http.StatusBadRequest)
 		return
 	}
 	// stateが合わないものを通すとCSRFになる。
-	if q := r.URL.Query().Get("state"); q == "" || q != f.State {
-		s.callbackError(w, "the login attempt does not match, please start again", http.StatusBadRequest)
+	if q := r.URL.Query().Get("state"); q != state {
+		s.callbackError(w, r, "the login attempt does not match, please start again", http.StatusBadRequest)
 		return
 	}
 	if e := r.URL.Query().Get("error"); e != "" {
 		s.log.Warn("the identity provider refused the login", "err", e)
-		s.callbackError(w, "the identity provider refused the login", http.StatusBadRequest)
+		s.callbackError(w, r, "the identity provider refused the login", http.StatusBadRequest)
 		return
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		s.callbackError(w, "the identity provider returned no code", http.StatusBadRequest)
+		s.callbackError(w, r, "the identity provider returned no code", http.StatusBadRequest)
 		return
 	}
 
-	id, err := s.auth.OIDC.Exchange(r.Context(), code, oidcauth.Params{State: f.State, Nonce: f.Nonce, Verifier: f.Verifier})
+	id, err := s.auth.OIDC.Exchange(ctx, code, oidcauth.Params{State: state, Nonce: nonce, Verifier: verifier})
 	if err != nil {
 		// 「IdPに届かない」と「IdPが応答したうえで拒んだ」は原因の調べ方が違う。
 		// 実機のインシデントでは両方が同じ「IdPに到達できない」に丸められ、
@@ -162,22 +155,29 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 			// もので、ここでは上流は普通に応答し、そのうえで拒んだだけである。
 			// 503は「今は無理だが、また試して良い」を表す。実際に効くことが
 			// 多い（インシデントはどれも再試行で通っている）。
-			s.callbackError(w, "the identity provider refused the sign-in, please try again", http.StatusServiceUnavailable)
+			s.callbackError(w, r, "the identity provider refused the sign-in, please try again", http.StatusServiceUnavailable)
 			return
 		}
 		// famifo は動いているがIdPに届かなかった、という区別を残す。
 		s.log.Error("cannot complete the login", "err", err)
-		s.callbackError(w, "cannot reach the identity provider", http.StatusBadGateway)
+		s.callbackError(w, r, "cannot reach the identity provider", http.StatusBadGateway)
 		return
 	}
-	s.clearCookie(w, flowCookie)
-	s.setCookie(w, sessionCookie, s.sessionCodec.Sign(id.Username, time.Now().Add(sessionTTL)), int(sessionTTL.Seconds()))
+	// トークンを振り直してからログイン済みにする。往復のあいだ使っていたトークンを
+	// そのまま昇格させない（セッション固定への備え）。期限もここで30日に戻る。
+	if err := s.auth.Sessions.RenewToken(ctx); err != nil {
+		s.log.Error("cannot issue the session", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.auth.Sessions.Put(ctx, keyUser, id.Username)
 	s.log.Info("signed in", "user", id.Username)
-	http.Redirect(w, r, safeNext(f.Next), http.StatusFound)
+	http.Redirect(w, r, safeNext(next), http.StatusFound)
 }
 
-// handleLogout はこの端末のセッションを捨てる。
-// 署名付きCookieを選んだ帰結として、他の端末のセッションは生き続ける。
+// handleLogout はこの端末のセッションを捨てる。Destroyがサーバー側の行を消すので、
+// 手元にCookieが残っていても送り直しては通らない。他の端末のセッションは別の行
+// なので残る。
 //
 // 消したあとに "/" へリダイレクトしてはいけない。ギャラリーはすべて認証の
 // 内側にあるので、"/" は未認証を検知して /login に送り、/login はIdPの
@@ -193,9 +193,11 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 // 対応していなければ（実機ではSynology SSO Serverがこれにあたる）、
 // famifo自身のセッションを終えたことを伝える案内ページを返す。
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	s.clearCookie(w, sessionCookie)
-	// ログインを始めて完了させなかった端末に往復用Cookieが残らないようにする。
-	s.clearCookie(w, flowCookie)
+	if err := s.auth.Sessions.Destroy(r.Context()); err != nil {
+		s.log.Error("cannot sign out", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	if u, ok := s.auth.OIDC.LogoutURL(s.signedOutURL()); ok {
 		http.Redirect(w, r, u, http.StatusFound)
 		return
@@ -252,11 +254,13 @@ func safeNext(next string) string {
 
 // callbackError は失敗した /auth/callback を、/login へのリンク付きの小さな
 // HTMLページで終える。素のtext/plainな400だとURLバーを手で書き換えるしか
-// 戻る手段がない。ここで一時Cookieも消す。消さないと、失敗した往復のあとも
-// famifo_oidc が最長flowTTLぶん残り、「やり直してください」が実際にはやり直し
-// にならない（別タブが一時Cookieを上書きしてここに来るのは日常的に起きる）。
-func (s *Server) callbackError(w http.ResponseWriter, message string, status int) {
-	s.clearCookie(w, flowCookie)
+// 戻る手段がない。ここでセッションも破棄する。残すと、失敗した往復のあとも
+// 中途半端な状態が最長flowTTLぶん生き、「やり直してください」が実際にはやり直し
+// にならない（別タブが往復を上書きしてここに来るのは日常的に起きる）。
+func (s *Server) callbackError(w http.ResponseWriter, r *http.Request, message string, status int) {
+	if err := s.auth.Sessions.Destroy(r.Context()); err != nil {
+		s.log.Error("cannot discard the failed login attempt", "err", err)
+	}
 	s.writeHTMLPage(w, status, "Sign-in failed",
 		fmt.Sprintf(`<p>%s</p><p><a href="/login">Try signing in again</a></p>`, html.EscapeString(message)))
 }
@@ -268,18 +272,4 @@ func (s *Server) writeHTMLPage(w http.ResponseWriter, status int, title, bodyHTM
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `<!doctype html><title>%s</title>%s`, html.EscapeString(title), bodyHTML)
-}
-
-func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{
-		Name: name, Value: value, Path: "/", MaxAge: maxAge,
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.auth.Secure,
-	})
-}
-
-func (s *Server) clearCookie(w http.ResponseWriter, name string) {
-	http.SetCookie(w, &http.Cookie{
-		Name: name, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.auth.Secure,
-	})
 }

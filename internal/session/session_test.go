@@ -1,147 +1,134 @@
 package session_test
 
-// 署名付きCookieの組み立てと検証を確かめる。鍵と時刻を注入するので、
-// 実時間にも実ファイルにも依存しない（鍵ファイルのテストだけは実ファイルを使う）。
+// scsのセッションがsessions.dbに保管され、Cookieのトークンで取り出せることを
+// 確かめる。sqlite3storeのSQLは "$1" 形式のプレースホルダを使っていて、これは
+// mattnドライバ前提の書き方である。cgo不要のmodernc.org/sqliteでも通ることを、
+// ここで最初に固定する。
 
 import (
-	"os"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/alexedwards/scs/v2"
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/session"
 )
 
-func newCodec(t *testing.T) *session.Codec {
+func openStore(t *testing.T) *session.Store {
 	t.Helper()
-	key := make([]byte, session.KeyLen)
-	for i := range key {
-		key[i] = byte(i)
-	}
-	c, err := session.NewCodec(key, "test")
+	// 親ディレクトリが無い場所を指す。Openが作ることもここで確かめる。
+	path := filepath.Join(t.TempDir(), "sub", "sessions.db")
+	st, err := session.Open(path, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
-	return c
+	t.Cleanup(func() { _ = st.Close() })
+	return st
 }
 
-func TestSignAndVerifyRoundTrip(t *testing.T) {
-	c := newCodec(t)
-	now := time.Unix(1_700_000_000, 0)
+// serve は1リクエストをLoadAndSaveに通し、応答を返す。cookiesを渡すとそれを載せる。
+func serve(t *testing.T, m *scs.SessionManager, h http.HandlerFunc, cookies ...*http.Cookie) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	m.LoadAndSave(h).ServeHTTP(rec, req)
+	return rec.Result()
+}
 
-	v := c.Sign("yendo", now.Add(time.Hour))
+func cookieNamed(resp *http.Response, name string) *http.Cookie {
+	for _, c := range resp.Cookies() {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
 
-	got, ok := c.Verify(v, now)
-	require.True(t, ok)
+func TestSessionDataSurvivesARoundTrip(t *testing.T) {
+	m := openStore(t).Manager()
+
+	put := serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
+		m.Put(r.Context(), "user", "yendo")
+	})
+	c := cookieNamed(put, session.CookieName)
+	require.NotNil(t, c, "a session cookie must be issued")
+	require.True(t, c.HttpOnly)
+	require.Equal(t, http.SameSiteLaxMode, c.SameSite)
+	require.False(t, c.Secure, "secure was false")
+
+	var got string
+	serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
+		got = m.GetString(r.Context(), "user")
+	}, c)
 	require.Equal(t, "yendo", got)
 }
 
-func TestVerifyRejectsExpired(t *testing.T) {
-	c := newCodec(t)
-	now := time.Unix(1_700_000_000, 0)
+func TestAnExpiredSessionIsNotFound(t *testing.T) {
+	m := openStore(t).Manager()
 
-	v := c.Sign("yendo", now.Add(time.Hour))
+	put := serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
+		m.Put(r.Context(), "user", "yendo")
+		m.SetDeadline(r.Context(), time.Now().Add(-time.Minute))
+	})
+	c := cookieNamed(put, session.CookieName)
+	require.NotNil(t, c)
 
-	_, ok := c.Verify(v, now.Add(2*time.Hour))
-	require.False(t, ok)
+	var got string
+	serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
+		got = m.GetString(r.Context(), "user")
+	}, c)
+	require.Empty(t, got, "an expired session must not be readable")
 }
 
-func TestVerifyRejectsTamperedPayload(t *testing.T) {
-	c := newCodec(t)
-	now := time.Unix(1_700_000_000, 0)
+func TestDestroyRemovesTheSession(t *testing.T) {
+	m := openStore(t).Manager()
 
-	v := c.Sign("yendo", now.Add(time.Hour))
-	// 本体の1バイトを変える。署名が合わなくなる。
-	tampered := []byte(v)
-	tampered[0] ^= 0x01
-	v = string(tampered)
+	put := serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
+		m.Put(r.Context(), "user", "yendo")
+	})
+	c := cookieNamed(put, session.CookieName)
+	require.NotNil(t, c)
 
-	_, ok := c.Verify(v, now)
-	require.False(t, ok)
+	serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
+		require.NoError(t, m.Destroy(r.Context()))
+	}, c)
+
+	var got string
+	serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
+		got = m.GetString(r.Context(), "user")
+	}, c)
+	require.Empty(t, got, "a destroyed session must not come back")
 }
 
-func TestVerifyRejectsAnotherKey(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	v := newCodec(t).Sign("yendo", now.Add(time.Hour))
-
-	other := make([]byte, session.KeyLen) // すべて0の別の鍵
-	oc, err := session.NewCodec(other, "test")
+func TestSecureFollowsTheArgument(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.db")
+	st, err := session.Open(path, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
 
-	_, ok := oc.Verify(v, now)
-	require.False(t, ok)
+	resp := serve(t, st.Manager(), func(_ http.ResponseWriter, r *http.Request) {
+		st.Manager().Put(r.Context(), "user", "yendo")
+	})
+	require.True(t, cookieNamed(resp, session.CookieName).Secure)
 }
 
-func TestVerifyRejectsAnotherPurpose(t *testing.T) {
-	// 用途ごとに鍵を分けるのは、ログインの往復用Cookieがそのままセッション
-	// Cookieとして通ってしまう事態を防ぐため。
-	key := make([]byte, session.KeyLen)
-	for i := range key {
-		key[i] = byte(i)
-	}
-	now := time.Unix(1_700_000_000, 0)
+func TestTheDatabaseCanBeReopened(t *testing.T) {
+	// 掃除ゴルーチンが止まっていることは公開APIからは観測できない。Closeが
+	// エラー無く戻り、同じファイルを開き直せることまでを固定する。
+	path := filepath.Join(t.TempDir(), "sessions.db")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	sessionCodec, err := session.NewCodec(key, "session")
+	first, err := session.Open(path, false, log)
 	require.NoError(t, err)
-	flowCodec, err := session.NewCodec(key, "flow")
+	require.NoError(t, first.Close())
+
+	second, err := session.Open(path, false, log)
 	require.NoError(t, err)
-
-	v := flowCodec.Sign("yendo", now.Add(time.Hour))
-	_, ok := sessionCodec.Verify(v, now)
-	require.False(t, ok, "a value signed for one purpose must not verify for another")
-}
-
-func TestVerifyRejectsMalformed(t *testing.T) {
-	c := newCodec(t)
-	now := time.Unix(1_700_000_000, 0)
-
-	for _, v := range []string{"", ".", "nodot", "not-base64.also-not", strings.Repeat("a", 100)} {
-		_, ok := c.Verify(v, now)
-		require.False(t, ok, "must reject %q", v)
-	}
-}
-
-func TestPayloadMayContainNewlines(t *testing.T) {
-	// 一時状態はJSONを載せる。将来改行が混ざっても壊れないことを固定する。
-	c := newCodec(t)
-	now := time.Unix(1_700_000_000, 0)
-	payload := "{\n  \"state\": \"x\"\n}"
-
-	got, ok := c.Verify(c.Sign(payload, now.Add(time.Hour)), now)
-	require.True(t, ok)
-	require.Equal(t, payload, got)
-}
-
-func TestNewCodecRejectsWrongKeyLength(t *testing.T) {
-	_, err := session.NewCodec([]byte("short"), "test")
-	require.Error(t, err)
-}
-
-func TestNewCodecRejectsEmptyPurpose(t *testing.T) {
-	_, err := session.NewCodec(make([]byte, session.KeyLen), "")
-	require.Error(t, err)
-}
-
-func TestLoadOrCreateKeyCreatesAndReuses(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "sub", "session.key")
-
-	first, err := session.LoadOrCreateKey(path)
-	require.NoError(t, err)
-	require.Len(t, first, session.KeyLen)
-
-	fi, err := os.Stat(path)
-	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
-
-	second, err := session.LoadOrCreateKey(path)
-	require.NoError(t, err)
-	require.Equal(t, first, second, "the key must survive a restart")
-}
-
-func TestLoadOrCreateKeyRejectsWrongSize(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "session.key")
-	require.NoError(t, os.WriteFile(path, []byte("too short"), 0o600))
-
-	_, err := session.LoadOrCreateKey(path)
-	require.Error(t, err)
+	require.NoError(t, second.Close())
 }
