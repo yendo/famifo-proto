@@ -179,6 +179,11 @@ func TestSessionKeyPathSitsInTheDataDir(t *testing.T) {
 	require.Equal(t, filepath.Join(c.DataDir, "session.key"), c.SessionKeyPath())
 }
 
+func TestSessionDBPathSitsInTheDataDir(t *testing.T) {
+	c := validConfig(t)
+	require.Equal(t, filepath.Join(c.DataDir, "sessions.db"), c.SessionDBPath())
+}
+
 func TestRedirectURIAppendsCallbackPath(t *testing.T) {
 	c := validConfig(t)
 	c.ExternalURL = "https://famifo.example.invalid:8443"
