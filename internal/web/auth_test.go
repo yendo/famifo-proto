@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/oidcauth"
@@ -58,6 +57,12 @@ type authFixture struct {
 
 func newAuthFixture(t *testing.T) *authFixture {
 	t.Helper()
+	return newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}, false)
+}
+
+// newAuthFixtureWith はIdPの偽物とSecureの設定を選べる版。
+func newAuthFixtureWith(t *testing.T, prov *fakeProvider, secure bool) *authFixture {
+	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(dir + "/famifo.db")
 	require.NoError(t, err)
@@ -65,12 +70,14 @@ func newAuthFixture(t *testing.T) *authFixture {
 	thumbs, err := thumb.NewProvider(dir + "/thumbs")
 	require.NoError(t, err)
 
-	key := make([]byte, session.KeyLen)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sessions, err := session.Open(dir+"/sessions.db", secure, log)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sessions.Close() })
 
-	prov := &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}
 	srv, err := web.NewServer(st, thumbs,
-		&web.Auth{OIDC: prov, Key: key, ExternalURL: "https://famifo.example.invalid"},
-		slog.New(slog.NewTextHandler(io.Discard, nil)))
+		&web.Auth{OIDC: prov, Sessions: sessions.Manager(), ExternalURL: "https://famifo.example.invalid"},
+		log)
 	require.NoError(t, err)
 	return &authFixture{h: srv.Handler(), prov: prov}
 }
@@ -126,31 +133,14 @@ func TestLoginRedirectsToTheProvider(t *testing.T) {
 	require.NotEmpty(t, f.prov.lastParams.State)
 	require.NotEmpty(t, f.prov.lastParams.Nonce)
 	require.NotEmpty(t, f.prov.lastParams.Verifier)
-	require.NotNil(t, cookieNamed(resp, "famifo_oidc"), "the flow state must be carried in a cookie")
-}
-
-// TestLoginFlowCookieDoesNotAuthenticate はログイン往復用Cookieをそのまま
-// セッションCookieとして送り返しても認証されないことを固定する。用途ごとに
-// 別のCodecを導出していないと、往復用の署名済み値がそのままセッションとして
-// 通ってしまう。
-func TestLoginFlowCookieDoesNotAuthenticate(t *testing.T) {
-	f := newAuthFixture(t)
-
-	start := get(t, f.h, "/login")
-	flow := cookieNamed(start, "famifo_oidc")
-	require.NotNil(t, flow)
-
-	forged := &http.Cookie{Name: "famifo_session", Value: flow.Value}
-	resp := get(t, f.h, "/", forged)
-	require.Equal(t, http.StatusFound, resp.StatusCode)
-	require.Contains(t, resp.Header.Get("Location"), "/login")
+	require.NotNil(t, cookieNamed(resp, "famifo_session"), "the login flow must be carried in a session")
 }
 
 func TestCallbackIssuesASessionAndReturnsToNext(t *testing.T) {
 	f := newAuthFixture(t)
 
 	start := get(t, f.h, "/login?next=/item/abc")
-	flow := cookieNamed(start, "famifo_oidc")
+	flow := cookieNamed(start, "famifo_session")
 	require.NotNil(t, flow)
 
 	resp := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
@@ -161,6 +151,7 @@ func TestCallbackIssuesASessionAndReturnsToNext(t *testing.T) {
 	require.NotNil(t, sess)
 	require.True(t, sess.HttpOnly)
 	require.Equal(t, http.SameSiteLaxMode, sess.SameSite)
+	require.NotEqual(t, flow.Value, sess.Value, "the token must be renewed when signing in")
 
 	// 発行されたセッションでギャラリーが開ける。
 	page := get(t, f.h, "/", sess)
@@ -170,14 +161,18 @@ func TestCallbackIssuesASessionAndReturnsToNext(t *testing.T) {
 func TestCallbackRejectsAStateMismatch(t *testing.T) {
 	f := newAuthFixture(t)
 	start := get(t, f.h, "/login")
-	flow := cookieNamed(start, "famifo_oidc")
+	flow := cookieNamed(start, "famifo_session")
 
 	resp := get(t, f.h, "/auth/callback?code=good&state=not-the-one", flow)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	require.Nil(t, cookieNamed(resp, "famifo_session"))
+	// セッションは発行されない。Cookieは出るが、失敗した往復を捨てるための
+	// 期限切れの指示である。
+	cleared := cookieNamed(resp, "famifo_session")
+	require.NotNil(t, cleared)
+	require.Less(t, cleared.MaxAge, 0, "no session may be issued on a state mismatch")
 }
 
-func TestCallbackRejectsAMissingFlowCookie(t *testing.T) {
+func TestCallbackRejectsAMissingSession(t *testing.T) {
 	f := newAuthFixture(t)
 	_ = get(t, f.h, "/login")
 
@@ -191,7 +186,7 @@ func TestCallbackReportsAnUnreachableProvider(t *testing.T) {
 	f := newAuthFixture(t)
 	f.prov.err = context.DeadlineExceeded
 	start := get(t, f.h, "/login")
-	flow := cookieNamed(start, "famifo_oidc")
+	flow := cookieNamed(start, "famifo_session")
 
 	resp := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
 	require.Equal(t, http.StatusBadGateway, resp.StatusCode)
@@ -207,7 +202,7 @@ func TestCallbackReportsAProviderRefusal(t *testing.T) {
 	f.prov.err = fmt.Errorf("cannot exchange the authorization code: %w",
 		&oidcauth.ProviderError{StatusCode: http.StatusBadRequest, Body: `{"error":"server_error"}`})
 	start := get(t, f.h, "/login")
-	flow := cookieNamed(start, "famifo_oidc")
+	flow := cookieNamed(start, "famifo_session")
 
 	resp := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
 	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
@@ -217,18 +212,23 @@ func TestCallbackReportsAProviderRefusal(t *testing.T) {
 	require.Contains(t, body, `href="/login"`)
 }
 
-// TestCallbackFailureClearsTheFlowCookie は失敗した往復のあとにやり直しても、
-// 古い一時Cookieがそのまま10分残らないことを固定する。残ると「やり直し」が
+// TestCallbackFailureDiscardsTheSession は失敗した往復のあとにやり直しても、
+// 中途半端な状態がそのまま10分残らないことを固定する。残ると「やり直し」が
 // 実際にはやり直しにならない。
-func TestCallbackFailureClearsTheFlowCookie(t *testing.T) {
+func TestCallbackFailureDiscardsTheSession(t *testing.T) {
 	f := newAuthFixture(t)
 	start := get(t, f.h, "/login")
-	flow := cookieNamed(start, "famifo_oidc")
+	flow := cookieNamed(start, "famifo_session")
 
 	resp := get(t, f.h, "/auth/callback?code=good&state=not-the-one", flow)
-	cleared := cookieNamed(resp, "famifo_oidc")
-	require.NotNil(t, cleared, "the flow cookie must be reset on failure")
-	require.Less(t, cleared.MaxAge, 0, "the flow cookie must be told to expire")
+	cleared := cookieNamed(resp, "famifo_session")
+	require.NotNil(t, cleared, "the session must be reset on failure")
+	require.Less(t, cleared.MaxAge, 0, "the session cookie must be told to expire")
+
+	// 捨てられたことをサーバー側でも確かめる。同じCookieでやり直しても、
+	// 往復の値はもう残っていない。
+	again := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
+	require.Equal(t, http.StatusBadRequest, again.StatusCode)
 }
 
 // TestCallbackFailureGivesAWayBack はエラー画面に /login への導線があることを
@@ -236,7 +236,7 @@ func TestCallbackFailureClearsTheFlowCookie(t *testing.T) {
 func TestCallbackFailureGivesAWayBack(t *testing.T) {
 	f := newAuthFixture(t)
 	start := get(t, f.h, "/login")
-	flow := cookieNamed(start, "famifo_oidc")
+	flow := cookieNamed(start, "famifo_session")
 
 	resp := get(t, f.h, "/auth/callback?code=good&state=not-the-one", flow)
 	require.Contains(t, bodyOf(t, resp), `href="/login"`)
@@ -248,7 +248,7 @@ func TestNextMustBeALocalPath(t *testing.T) {
 
 	for _, next := range []string{"//evil.example", "https://evil.example", "http://evil.example/x", `/\evil.example`, `/\/evil.example`, "/\t/evil.example", "/\n/evil.example"} {
 		start := get(t, f.h, "/login?next="+url.QueryEscape(next))
-		flow := cookieNamed(start, "famifo_oidc")
+		flow := cookieNamed(start, "famifo_session")
 		resp := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
 		require.Equal(t, "/", resp.Header.Get("Location"), "next %q must be refused", next)
 	}
@@ -262,7 +262,7 @@ func TestNextKeepsALegitimatePath(t *testing.T) {
 
 	next := "/item/abc123"
 	start := get(t, f.h, "/login?next="+url.QueryEscape(next))
-	flow := cookieNamed(start, "famifo_oidc")
+	flow := cookieNamed(start, "famifo_session")
 	resp := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
 	require.Equal(t, next, resp.Header.Get("Location"))
 }
@@ -274,13 +274,12 @@ func TestNextKeepsALegitimatePath(t *testing.T) {
 func TestLogoutClearsTheSession(t *testing.T) {
 	f := newAuthFixture(t)
 	start := get(t, f.h, "/login")
-	flow := cookieNamed(start, "famifo_oidc")
+	flow := cookieNamed(start, "famifo_session")
 	cb := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
 	sess := cookieNamed(cb, "famifo_session")
 
 	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	req.AddCookie(sess)
-	req.AddCookie(flow)
 	rec := httptest.NewRecorder()
 	f.h.ServeHTTP(rec, req)
 	resp := rec.Result()
@@ -291,10 +290,6 @@ func TestLogoutClearsTheSession(t *testing.T) {
 	require.NotNil(t, cleared)
 	require.Less(t, cleared.MaxAge, 0, "the session cookie must be told to expire")
 
-	clearedFlow := cookieNamed(resp, "famifo_oidc")
-	require.NotNil(t, clearedFlow)
-	require.Less(t, clearedFlow.MaxAge, 0, "the flow cookie must be told to expire")
-
 	require.Contains(t, bodyOf(t, resp), `href="/login"`, "the page must offer a way to sign in again")
 }
 
@@ -304,32 +299,21 @@ func TestLogoutClearsTheSession(t *testing.T) {
 // famifoの/signed-outを指し、client_idが載っていることまで確かめる。
 // リダイレクトが起きたことだけでは、宛先を取り違えても気づけない。
 func TestLogoutRedirectsToTheProviderWhenSupported(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.Open(dir + "/famifo.db")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close() })
-	thumbs, err := thumb.NewProvider(dir + "/thumbs")
-	require.NoError(t, err)
 	prov := &fakeProvider{
 		identity:           oidcauth.Identity{Subject: "yendo", Username: "yendo"},
 		endSessionEndpoint: "https://idp.example.invalid:5001/webman/logout.cgi",
 	}
-	srv, err := web.NewServer(st, thumbs,
-		&web.Auth{OIDC: prov, Key: make([]byte, session.KeyLen), ExternalURL: "https://famifo.example.invalid"},
-		slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.NoError(t, err)
-	h := srv.Handler()
+	f := newAuthFixtureWith(t, prov, false)
 
-	start := get(t, h, "/login")
-	flow := cookieNamed(start, "famifo_oidc")
-	cb := get(t, h, "/auth/callback?code=good&state="+url.QueryEscape(prov.lastParams.State), flow)
+	start := get(t, f.h, "/login")
+	flow := cookieNamed(start, "famifo_session")
+	cb := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(prov.lastParams.State), flow)
 	sess := cookieNamed(cb, "famifo_session")
 
 	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	req.AddCookie(sess)
-	req.AddCookie(flow)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
+	f.h.ServeHTTP(rec, req)
 	resp := rec.Result()
 
 	require.Equal(t, http.StatusFound, resp.StatusCode)
@@ -343,10 +327,6 @@ func TestLogoutRedirectsToTheProviderWhenSupported(t *testing.T) {
 	cleared := cookieNamed(resp, "famifo_session")
 	require.NotNil(t, cleared)
 	require.Less(t, cleared.MaxAge, 0, "the session cookie must be told to expire")
-
-	clearedFlow := cookieNamed(resp, "famifo_oidc")
-	require.NotNil(t, clearedFlow)
-	require.Less(t, clearedFlow.MaxAge, 0, "the flow cookie must be told to expire")
 }
 
 // TestSignedOutRendersWithoutASession は GET /signed-out がミドルウェアの
@@ -368,28 +348,18 @@ func TestSignedOutRendersWithoutASession(t *testing.T) {
 }
 
 func TestSecureAttributeFollowsTheSetting(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.Open(dir + "/famifo.db")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close() })
-	thumbs, err := thumb.NewProvider(dir + "/thumbs")
-	require.NoError(t, err)
-	prov := &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}
-	srv, err := web.NewServer(st, thumbs,
-		&web.Auth{OIDC: prov, Key: make([]byte, session.KeyLen), Secure: true},
-		slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.NoError(t, err)
-	h := srv.Handler()
+	f := newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}, true)
 
-	resp := get(t, h, "/login")
-	require.True(t, cookieNamed(resp, "famifo_oidc").Secure)
+	resp := get(t, f.h, "/login")
+	require.True(t, cookieNamed(resp, "famifo_session").Secure)
 }
 
-func TestAnExpiredSessionIsRefused(t *testing.T) {
+// TestAnUnknownTokenIsRefused はサーバー側に無いトークンを送っても認証されない
+// ことを固定する。期限切れも、消されたセッションも、偽造も、サーバーから見れば
+// すべて「その行が無い」に落ちる。
+func TestAnUnknownTokenIsRefused(t *testing.T) {
 	f := newAuthFixture(t)
-	codec, err := session.NewCodec(make([]byte, session.KeyLen), "session")
-	require.NoError(t, err)
-	stale := &http.Cookie{Name: "famifo_session", Value: codec.Sign("yendo", time.Now().Add(-time.Minute))}
+	stale := &http.Cookie{Name: "famifo_session", Value: "PTgYqBpEB4gGAWRpPfSLQYCFXQGm6vVX7ptHdOLh0kM"}
 
 	resp := get(t, f.h, "/", stale)
 	require.Equal(t, http.StatusFound, resp.StatusCode)
