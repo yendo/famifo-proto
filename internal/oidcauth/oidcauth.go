@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -85,6 +86,7 @@ type Client struct {
 	oauth              *oauth2.Config
 	verifier           *oidc.IDTokenVerifier
 	endSessionEndpoint string // RP-Initiated Logout の宛先。discoveryに無ければ空
+	log                *slog.Logger
 }
 
 // New は discovery を引いてClientを組み立てる。
@@ -92,7 +94,7 @@ type Client struct {
 // 起動時に1回だけ呼ぶ。IdPに届かなければエラーを返し、呼び出し側は起動を止める。
 // oidc.NewProvider は discovery が名乗る issuer と設定した issuer の一致も確かめるので、
 // その防御をこちらで書く必要はない。
-func New(ctx context.Context, cfg Config) (*Client, error) {
+func New(ctx context.Context, cfg Config, log *slog.Logger) (*Client, error) {
 	// 既定のクライアントは待ち時間の上限を持たない。落ちたIdPに繋ぎに行ったまま
 	// 起動が止まらないよう、明示する。
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: httpTimeout})
@@ -121,10 +123,19 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 			ClientSecret: cfg.ClientSecret,
 			RedirectURL:  cfg.RedirectURI,
 			Endpoint:     endpoint,
-			// profile は Synology SSO Server に無いので要求しない。email と groups は
-			// 今は使わないが、username claim がどのスコープに紐づくかが文書化されて
-			// いないため、提供される3つをすべて要求する。
-			Scopes: []string{oidc.ScopeOpenID, "email", "groups"},
+			// openid だけ要求する。Synology SSO Server が提供するのは他に email と
+			// groups だが、どちらもfamifoは読んでいない。要求すればIDトークンの
+			// ペイロードに載り、そのトークンはサインアウトのhintとしてセッションに
+			// 30日残るので、読まない claim を要求することはディスクに置くPIIを
+			// 増やすことと同じである。profile はそもそもSSO Serverに無い。
+			//
+			// username claim がどのスコープに紐づくかは文書化されていない
+			// （discovery は claims_supported に載せるが、scopes_supported は
+			// email / groups / openid の3つだけである）。openid だけで返らなく
+			// なった場合は Exchange が sub で代用し、そのとき警告を出す。
+			// この IdP では sub がユーザー名そのものなので、表示は変わらず
+			// ログだけが違いを伝える。
+			Scopes: []string{oidc.ScopeOpenID},
 		},
 		// 受け入れる署名アルゴリズムを discovery が広告する集合に委ねない。IdPが将来
 		// 弱いものを広告し始めても、こちらが受け入れる範囲は変わらないようにする。
@@ -133,6 +144,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 			SupportedSigningAlgs: []string{oidc.RS256},
 		}),
 		endSessionEndpoint: discovery.EndSessionEndpoint,
+		log:                log,
 	}, nil
 }
 
@@ -201,6 +213,12 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 	name := claims.Username
 	if name == "" {
 		// username は標準のclaimではない。別のIdPでは無いことがある。
+		//
+		// 黙って代用しない。この IdP では sub がユーザー名そのものなので、
+		// 代用が起きても表示は1文字も変わらず、ログだけが違いを伝える。
+		// 要求するスコープを削ったときに username まで落ちたことに気づく手立ては
+		// これしかない。
+		c.log.Warn("the id_token carries no username claim, falling back to sub")
 		name = idToken.Subject
 	}
 	return Identity{Username: name, IDToken: raw}, nil

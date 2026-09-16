@@ -220,13 +220,15 @@ ID トークンの検証は `provider.Verifier(&oidc.Config{ClientID: …})` が
 PKCE は `x/oauth2` の `GenerateVerifier` / `S256ChallengeOption` / `VerifierOption` を
 使う。`plain` は選ばない。
 
-要求するスコープは `openid email groups`。`profile` は SSO Server に無いので要求しない。
-`email` と `groups` は本案では使わないが、`username` claim がどのスコープに紐づくかは
-文書化されていない。提供される3つをすべて要求しておき、実機で通したあとに減らせるかを
-確かめる。減らせるなら `openid` だけにする。
+要求するスコープは `openid` だけ。`profile` は SSO Server に無いので要求しない。
+`email` と `groups` は提供されるが、どちらも famifo は読んでいない。要求すれば ID トークンの
+ペイロードに載り、そのトークンは `id_token_hint` のためセッションに30日残るので、読まない
+claim を要求することはディスクに置く PII を増やすことと同じである。
 
 `username` は標準の claim ではないので、`IDToken.Claims` に独自の構造体を渡して取り出す。
-IdP を差し替えたときにここが空になる可能性があるため、**空なら `sub` で代用する**。
+IdP を差し替えたときにここが空になる可能性があるため、**空なら `sub` で代用する**。代用した
+ことは `Warn` でログに出す。この IdP では `sub` がユーザー名そのものなので、代用が起きても
+表示は1文字も変わらず、ログだけが違いを伝える。
 
 > **注記（2026-09-16）:** 当初の `Identity` は `Subject` / `Email` / `Groups` も公開して
 > いたが、`internal/web` はどれも読んでいなかったので落とした。`sub` は
@@ -235,6 +237,20 @@ IdP を差し替えたときにここが空になる可能性があるため、*
 > 文書化されていない」ことであって、受け取った値を使うかどうかとは別だからである。
 > なお実機で `userinfo_endpoint` も引いてみたが、返るのは `sub` / `username` / `email` /
 > `groups` の4つだけで、ID トークンより少ない。氏名は取得できない。
+
+> **注記（2026-09-16、スコープ）:** 上の注記の直後に `openid` だけへ絞った。きっかけは、
+> `id_token_hint` のために ID トークンをセッションへ30日持ち越すようにしたことである。
+> 誰も読まない `email` と `groups` が、それまでは検証後に捨てられていたのに、以後は
+> `sessions.db` に載って残ることになった。要求しなければ最初から載らない。
+>
+> **`username` claim がこれで返り続けるかは未確認である。** discovery は
+> `claims_supported` に `username` を挙げる一方、`scopes_supported` は
+> `email` / `groups` / `openid` の3つだけで、どのスコープが `username` を運ぶかは
+> どこにも書かれていない。実機での確認が要るが、この IdP では `sub` がユーザー名
+> そのものなので、代用が起きても画面には同じ名前が出る。そのため `Exchange` に
+> 警告を足し、サインアウトして入り直したときのログだけで判別できるようにした。
+> 警告が出るなら `email` か `groups` のどちらかが `username` を運んでいたことになり、
+> 片方ずつ足して切り分ける。
 
 ### 認可コードフローの往復
 
