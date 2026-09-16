@@ -1,3 +1,7 @@
+// Package session はログインセッションの保管を担う。
+//
+// OIDCもHTTPのルーティングも知らない。セッションの置き場（sessions.db）を開き、
+// scsのマネージャを組み立てて渡すだけである。何を載せるかは呼び出し側が決める。
 package session
 
 import (
