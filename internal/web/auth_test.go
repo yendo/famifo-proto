@@ -40,13 +40,16 @@ func (f *fakeProvider) Exchange(_ context.Context, _ string, _ oidcauth.Params) 
 	return f.identity, f.err
 }
 
-func (f *fakeProvider) LogoutURL(postLogoutRedirectURI string) (string, bool) {
+func (f *fakeProvider) LogoutURL(postLogoutRedirectURI, idTokenHint string) (string, bool) {
 	if f.endSessionEndpoint == "" {
 		return "", false
 	}
 	v := url.Values{}
 	v.Set("post_logout_redirect_uri", postLogoutRedirectURI)
 	v.Set("client_id", "famifo")
+	if idTokenHint != "" {
+		v.Set("id_token_hint", idTokenHint)
+	}
 	return f.endSessionEndpoint + "?" + v.Encode(), true
 }
 
@@ -57,7 +60,7 @@ type authFixture struct {
 
 func newAuthFixture(t *testing.T) *authFixture {
 	t.Helper()
-	return newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}, false)
+	return newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Username: "yendo"}}, false)
 }
 
 // newAuthFixtureWith はIdPの偽物とSecureの設定を選べる版。
@@ -300,7 +303,7 @@ func TestLogoutClearsTheSession(t *testing.T) {
 // リダイレクトが起きたことだけでは、宛先を取り違えても気づけない。
 func TestLogoutRedirectsToTheProviderWhenSupported(t *testing.T) {
 	prov := &fakeProvider{
-		identity:           oidcauth.Identity{Subject: "yendo", Username: "yendo"},
+		identity:           oidcauth.Identity{Username: "yendo"},
 		endSessionEndpoint: "https://idp.example.invalid:5001/webman/logout.cgi",
 	}
 	f := newAuthFixtureWith(t, prov, false)
@@ -329,6 +332,39 @@ func TestLogoutRedirectsToTheProviderWhenSupported(t *testing.T) {
 	require.Less(t, cleared.MaxAge, 0, "the session cookie must be told to expire")
 }
 
+// TestLogoutCarriesTheIDTokenHint は、サインインしたときのIDトークンが
+// /logout のリダイレクト先に id_token_hint として載ることを固定する。
+//
+// セッションを破棄する前に取り出せているかの確認でもある。Destroyを先に走らせる
+// 実装ではここが空になって落ちる。仕様上、hintの無いログアウトではIdPは
+// post_logout_redirect_uri を尊重しなくてよいので、空で送ることは
+// 「サインアウトはできるが/signed-outに帰ってこない」を意味する。
+func TestLogoutCarriesTheIDTokenHint(t *testing.T) {
+	prov := &fakeProvider{
+		identity: oidcauth.Identity{
+			Username: "yendo", IDToken: "header.payload.signature",
+		},
+		endSessionEndpoint: "https://idp.example.invalid:5001/webman/logout.cgi",
+	}
+	f := newAuthFixtureWith(t, prov, false)
+
+	start := get(t, f.h, "/login")
+	flow := cookieNamed(start, "famifo_session")
+	cb := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(prov.lastParams.State), flow)
+	sess := cookieNamed(cb, "famifo_session")
+
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	req.AddCookie(sess)
+	rec := httptest.NewRecorder()
+	f.h.ServeHTTP(rec, req)
+	resp := rec.Result()
+
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	loc, err := url.Parse(resp.Header.Get("Location"))
+	require.NoError(t, err)
+	require.Equal(t, "header.payload.signature", loc.Query().Get("id_token_hint"))
+}
+
 // TestSignedOutRendersWithoutASession は GET /signed-out がミドルウェアの
 // 外側にあり、セッションが無くても表示できることを固定する。RP-Initiated
 // Logoutでは、IdP側のセッションを終えたあとブラウザがここへ戻ってくるが、
@@ -348,7 +384,7 @@ func TestSignedOutRendersWithoutASession(t *testing.T) {
 }
 
 func TestSecureAttributeFollowsTheSetting(t *testing.T) {
-	f := newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}, true)
+	f := newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Username: "yendo"}}, true)
 
 	resp := get(t, f.h, "/login")
 	require.True(t, cookieNamed(resp, "famifo_session").Secure)

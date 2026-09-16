@@ -40,6 +40,7 @@ type idp struct {
 	tokenErrStatus int                         // 0なら既定の400/invalid_grantを返す
 	tokenErrBody   []byte                      // tokenErrStatusとあわせて使う
 	endSession     string                      // discoveryに載せるend_session_endpoint。空なら載せない
+	lastIDToken    string                      // 直前に発行したIDトークン。生の文字列を突き合わせるのに使う
 }
 
 func newIDP(t *testing.T) *idp {
@@ -91,9 +92,10 @@ func newIDP(t *testing.T) *idp {
 		if u, _, ok := r.BasicAuth(); ok && u != "" {
 			id = u
 		}
+		i.lastIDToken = i.idToken(t, id)
 		writeJSON(w, map[string]any{
 			"access_token": "at", "token_type": "Bearer", "expires_in": 180,
-			"id_token": i.idToken(t, id),
+			"id_token": i.lastIDToken,
 		})
 	})
 	i.srv = httptest.NewServer(mux)
@@ -150,7 +152,7 @@ func newClient(t *testing.T, i *idp) *oidcauth.Client {
 	return c
 }
 
-func TestExchangeReturnsIdentity(t *testing.T) {
+func TestExchangeReturnsTheUsername(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
 	p, err := oidcauth.NewParams()
@@ -159,10 +161,23 @@ func TestExchangeReturnsIdentity(t *testing.T) {
 
 	id, err := c.Exchange(context.Background(), "good-code", p)
 	require.NoError(t, err)
-	require.Equal(t, "yendo", id.Subject)
 	require.Equal(t, "yendo", id.Username)
-	require.Equal(t, "yendo@example.invalid", id.Email)
-	require.Equal(t, []string{"users"}, id.Groups)
+}
+
+// TestExchangeReturnsTheRawIDToken は検証済みのIDトークンを生の文字列のまま
+// 返すことを固定する。RP-Initiated Logout の id_token_hint に渡すため、claimを
+// 読み終えたあとも捨てない。
+func TestExchangeReturnsTheRawIDToken(t *testing.T) {
+	i := newIDP(t)
+	c := newClient(t, i)
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+	i.claims["nonce"] = p.Nonce
+
+	id, err := c.Exchange(context.Background(), "good-code", p)
+	require.NoError(t, err)
+	require.NotEmpty(t, i.lastIDToken, "the fake IdP must have issued an id_token")
+	require.Equal(t, i.lastIDToken, id.IDToken)
 }
 
 func TestAuthURLCarriesTheFlowParameters(t *testing.T) {
@@ -483,21 +498,24 @@ func TestLogoutURLReportsUnsupportedWithoutAnEndSessionEndpoint(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
 
-	u, ok := c.LogoutURL("https://famifo.example.invalid/signed-out")
+	u, ok := c.LogoutURL("https://famifo.example.invalid/signed-out", "id.token.here")
 	require.False(t, ok)
 	require.Empty(t, u)
 }
 
 // TestLogoutURLBuildsTheExpectedURL はdiscoveryにend_session_endpointが
-// あるとき、post_logout_redirect_uriとclient_idを添えたURLを組み立てることを
-// 固定する。id_token_hintは載せない（famifoは検証後の生IDトークンを保持
-// しないため。詳細はspec参照）。
+// あるとき、post_logout_redirect_uri、client_id、id_token_hintを添えたURLを
+// 組み立てることを固定する。
+//
+// id_token_hint は省略できない。RP-Initiated Logout 1.0 は、これを伴わずに
+// post_logout_redirect_uri を送った場合、IdPは戻り先へリダイレクトしては
+// ならないと定めている。落とすと/signed-outに帰ってこなくなる。
 func TestLogoutURLBuildsTheExpectedURL(t *testing.T) {
 	i := newIDP(t)
 	i.endSession = i.srv.URL + "/end-session"
 	c := newClient(t, i)
 
-	u, ok := c.LogoutURL("https://famifo.example.invalid/signed-out")
+	u, ok := c.LogoutURL("https://famifo.example.invalid/signed-out", "header.payload.signature")
 	require.True(t, ok)
 
 	parsed, err := url.Parse(u)
@@ -506,6 +524,24 @@ func TestLogoutURLBuildsTheExpectedURL(t *testing.T) {
 	q := parsed.Query()
 	require.Equal(t, "https://famifo.example.invalid/signed-out", q.Get("post_logout_redirect_uri"))
 	require.Equal(t, "famifo", q.Get("client_id"))
+	require.Equal(t, "header.payload.signature", q.Get("id_token_hint"))
+}
+
+// TestLogoutURLOmitsTheHintWhenThereIsNone は、渡すIDトークンが無いときに
+// 空の id_token_hint を載せないことを固定する。セッションが古く（この項目を
+// 保存する前に発行された）トークンを持たない場合に起きる。空の値を送ると、
+// IdPによっては不正なリクエストとして扱われ、サインアウト自体が失敗する。
+func TestLogoutURLOmitsTheHintWhenThereIsNone(t *testing.T) {
+	i := newIDP(t)
+	i.endSession = i.srv.URL + "/end-session"
+	c := newClient(t, i)
+
+	u, ok := c.LogoutURL("https://famifo.example.invalid/signed-out", "")
+	require.True(t, ok)
+
+	parsed, err := url.Parse(u)
+	require.NoError(t, err)
+	require.NotContains(t, parsed.RawQuery, "id_token_hint")
 }
 
 func hmacSHA256(t *testing.T, key []byte, msg string) string {

@@ -210,7 +210,9 @@ deleted.
 Signing out uses the standard OpenID Connect mechanism, RP-Initiated Logout: if the
 provider advertises `end_session_endpoint` in its discovery document, `/logout` clears
 famifo's cookie and redirects there with `post_logout_redirect_uri` pointing back at
-famifo's `/signed-out` page, so one press of the button ends both sessions. This needs
+famifo's `/signed-out` page, so one press of the button ends both sessions. The ID token
+from signing in travels along as `id_token_hint`: without it a provider is not allowed to
+send the visitor back to `post_logout_redirect_uri` at all. This needs
 no configuration — famifo uses it automatically whenever the provider supports it — but
 the `post_logout_redirect_uri` usually has to be registered with the provider ahead of
 time, the same way the sign-in redirect URI does.
