@@ -152,7 +152,7 @@ func newClient(t *testing.T, i *idp) *oidcauth.Client {
 	return c
 }
 
-func TestExchangeReturnsIdentity(t *testing.T) {
+func TestExchangeReturnsTheUsername(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
 	p, err := oidcauth.NewParams()
@@ -161,10 +161,7 @@ func TestExchangeReturnsIdentity(t *testing.T) {
 
 	id, err := c.Exchange(context.Background(), "good-code", p)
 	require.NoError(t, err)
-	require.Equal(t, "yendo", id.Subject)
 	require.Equal(t, "yendo", id.Username)
-	require.Equal(t, "yendo@example.invalid", id.Email)
-	require.Equal(t, []string{"users"}, id.Groups)
 }
 
 // TestExchangeReturnsTheRawIDToken は検証済みのIDトークンを生の文字列のまま

@@ -60,11 +60,12 @@ type Config struct {
 }
 
 // Identity は認証できた利用者。
+//
+// 呼び出し側が実際に使う値だけを持つ。sub と email と groups も受け取っては
+// いるが、誰も読まないので外へは出さない。必要になったら足せばよい。
 type Identity struct {
-	Subject  string   // sub。IdPによっては不透明でなくユーザー名そのものである
-	Username string   // 表示とログに使う。空ならSubjectで代用する
-	Email    string   // 設定していないアカウントでは空になる
-	Groups   []string // 本案では使わない
+	// Username は表示とログに使う。空ならsubで代用する。
+	Username string
 	// IDToken は検証済みのIDトークンそのもの。RP-Initiated Logout の
 	// id_token_hint に渡すために保持する。仕様は、これを付けずに
 	// post_logout_redirect_uri だけを送った場合、IdPは戻り先へ
@@ -192,9 +193,7 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 		return Identity{}, fmt.Errorf("the id_token carries no subject")
 	}
 	var claims struct {
-		Username string   `json:"username"`
-		Email    string   `json:"email"`
-		Groups   []string `json:"groups"`
+		Username string `json:"username"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		return Identity{}, fmt.Errorf("cannot read the id_token claims: %w", err)
@@ -204,10 +203,7 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 		// username は標準のclaimではない。別のIdPでは無いことがある。
 		name = idToken.Subject
 	}
-	return Identity{
-		Subject: idToken.Subject, Username: name, Email: claims.Email, Groups: claims.Groups,
-		IDToken: raw,
-	}, nil
+	return Identity{Username: name, IDToken: raw}, nil
 }
 
 // LogoutURL はRP-Initiated Logoutの宛先を組み立てる。IdPが discovery で

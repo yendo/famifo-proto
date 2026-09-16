@@ -186,12 +186,10 @@ JWKS の `use`/`alg` による鍵の選別といった、レビューが「い�
 ### OIDC クライアント
 
 ```go
-// Identity は認証できた利用者。
+// Identity は認証できた利用者。呼び出し側が実際に使う値だけを持つ。
 type Identity struct {
-	Subject  string   // sub。この IdP ではユーザー名そのもので、不透明ではない
-	Username string   // username claim。表示とログに使う
-	Email    string   // 空のことがある
-	Groups   []string // 本案では使わない。記録のみ
+	Username string // username claim。表示とログに使う。空なら sub で代用する
+	IDToken  string // RP-Initiated Logout の id_token_hint に渡す
 }
 
 // AuthURL は IdP の認可エンドポイントへ送る URL を組み立てる。
@@ -229,6 +227,14 @@ PKCE は `x/oauth2` の `GenerateVerifier` / `S256ChallengeOption` / `VerifierOp
 
 `username` は標準の claim ではないので、`IDToken.Claims` に独自の構造体を渡して取り出す。
 IdP を差し替えたときにここが空になる可能性があるため、**空なら `sub` で代用する**。
+
+> **注記（2026-09-16）:** 当初の `Identity` は `Subject` / `Email` / `Groups` も公開して
+> いたが、`internal/web` はどれも読んでいなかったので落とした。`sub` は
+> `internal/oidcauth` の内部で使い続ける（`username` が空のときの代用と、空なら拒否する
+> 判定）。要求するスコープは変えていない。理由が「`username` がどのスコープに紐づくか
+> 文書化されていない」ことであって、受け取った値を使うかどうかとは別だからである。
+> なお実機で `userinfo_endpoint` も引いてみたが、返るのは `sub` / `username` / `email` /
+> `groups` の4つだけで、ID トークンより少ない。氏名は取得できない。
 
 ### 認可コードフローの往復
 

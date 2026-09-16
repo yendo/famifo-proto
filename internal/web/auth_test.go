@@ -60,7 +60,7 @@ type authFixture struct {
 
 func newAuthFixture(t *testing.T) *authFixture {
 	t.Helper()
-	return newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}, false)
+	return newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Username: "yendo"}}, false)
 }
 
 // newAuthFixtureWith はIdPの偽物とSecureの設定を選べる版。
@@ -303,7 +303,7 @@ func TestLogoutClearsTheSession(t *testing.T) {
 // リダイレクトが起きたことだけでは、宛先を取り違えても気づけない。
 func TestLogoutRedirectsToTheProviderWhenSupported(t *testing.T) {
 	prov := &fakeProvider{
-		identity:           oidcauth.Identity{Subject: "yendo", Username: "yendo"},
+		identity:           oidcauth.Identity{Username: "yendo"},
 		endSessionEndpoint: "https://idp.example.invalid:5001/webman/logout.cgi",
 	}
 	f := newAuthFixtureWith(t, prov, false)
@@ -342,7 +342,7 @@ func TestLogoutRedirectsToTheProviderWhenSupported(t *testing.T) {
 func TestLogoutCarriesTheIDTokenHint(t *testing.T) {
 	prov := &fakeProvider{
 		identity: oidcauth.Identity{
-			Subject: "yendo", Username: "yendo", IDToken: "header.payload.signature",
+			Username: "yendo", IDToken: "header.payload.signature",
 		},
 		endSessionEndpoint: "https://idp.example.invalid:5001/webman/logout.cgi",
 	}
@@ -384,7 +384,7 @@ func TestSignedOutRendersWithoutASession(t *testing.T) {
 }
 
 func TestSecureAttributeFollowsTheSetting(t *testing.T) {
-	f := newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Subject: "yendo", Username: "yendo"}}, true)
+	f := newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Username: "yendo"}}, true)
 
 	resp := get(t, f.h, "/login")
 	require.True(t, cookieNamed(resp, "famifo_session").Secure)
