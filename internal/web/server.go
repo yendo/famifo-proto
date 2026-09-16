@@ -32,6 +32,58 @@ var noPreview []byte
 // 利用者が変えられる設定ではない。表示の寸法を変えたときは測り直すこと。
 const defaultChunkSize = 120
 
+// contentSecurityPolicy はすべての応答に載せる方針。
+//
+// default-src を 'none' にして、必要なものだけを足す。ギャラリーが読むのは
+// /static/ のCSSとJS、/thumb/ と /file/ の画像と動画、それに /tiles の fetch
+// だけで、外部から取るものは1つも無い（idiomorph も同梱してある）。
+// connect-src が要るのは、仮想スクロールが /tiles を fetch するためである。
+//
+// script-src に 'unsafe-inline' は入れない。ここが厳しくあることが、この方針を
+// 入れる理由そのものである。gallery.html にインラインスクリプトは無く、
+// <script type="application/json" id="daygroups"> は実行されないデータブロック
+// なので、この制限に引っかからない。
+//
+// style-src だけ 'unsafe-inline' を許す。app.js が組み立てる日カードが
+// style 属性で grid-column と grid-template-columns を持っており（cardHTML を
+// 見よ）、マークアップ中の style 属性は style-src-attr の対象になるため、
+// 許さないと属性ごと無視されてレイアウトが崩れる。span の数だけクラスを
+// 用意すれば外せるが、XSSを止めるのは script-src のほうなので、レイアウトの
+// 中心を書き換えてまで得るものは少ない。
+// JSからの spacer.style.height のようなCSSOM経由の代入はCSPの対象外なので、
+// こちらは関係しない。
+//
+// frame-ancestors はクリックジャッキング対策。form-action と base-uri は、
+// 万一マークアップを注入されたときに、送信先やURLの解決先を外へ向けられない
+// ようにするためのもの。
+const contentSecurityPolicy = "default-src 'none'; " +
+	"script-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self'; " +
+	"media-src 'self'; " +
+	"connect-src 'self'; " +
+	"form-action 'self'; " +
+	"base-uri 'none'; " +
+	"frame-ancestors 'none'"
+
+// securityHeaders はすべての応答に同じ守りを載せる。
+//
+// nosniff が効くのは /thumb/ と /file/ である。どちらもディスク上のファイルの
+// 中身を、拡張子だけから決めたMIMEタイプで配る。写真のディレクトリにHTMLの
+// 中身を持つ .jpg が置かれても、いまのブラウザは image/* と宣言された応答を
+// HTMLへ格上げして解釈しないが、その挙動に頼らずに済ませる。
+//
+// 認証の内側と外側の両方に載せたいので、いちばん外側の mux を包む。/static/ も
+// 通る。
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Server はギャラリーのHTTPハンドラ群を保持する。
 type Server struct {
 	st        *store.Store
@@ -83,7 +135,7 @@ func (s *Server) Handler() http.Handler {
 	inner.Handle("/", s.authenticate(protected))
 	if s.auth == nil {
 		mux.Handle("/", inner)
-		return mux
+		return securityHeaders(mux)
 	}
 	inner.HandleFunc("GET /login", s.handleLogin)
 	inner.HandleFunc("GET /auth/callback", s.handleCallback)
@@ -92,5 +144,5 @@ func (s *Server) Handler() http.Handler {
 	// を持たないIdPのとき案内ページとして返すのもここ。
 	inner.HandleFunc("GET /signed-out", s.handleSignedOut)
 	mux.Handle("/", s.auth.Sessions.LoadAndSave(inner))
-	return mux
+	return securityHeaders(mux)
 }
