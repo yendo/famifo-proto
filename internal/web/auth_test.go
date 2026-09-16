@@ -399,3 +399,43 @@ func bodyOf(t *testing.T, resp *http.Response) string {
 	require.NoError(t, err)
 	return string(b)
 }
+
+// TestSignOutRevokesTheSessionOnTheServer はログアウトのあと、同じCookieを
+// 送り直しても入れないことを固定する。署名付きCookieだった頃はサーバーが
+// 発行済みの値を知らなかったので、これは書けなかった。
+func TestSignOutRevokesTheSessionOnTheServer(t *testing.T) {
+	f := newAuthFixture(t)
+
+	start := get(t, f.h, "/login")
+	flow := cookieNamed(start, "famifo_session")
+	cb := get(t, f.h, "/auth/callback?code=good&state="+url.QueryEscape(f.prov.lastParams.State), flow)
+	sess := cookieNamed(cb, "famifo_session")
+	require.NotNil(t, sess)
+	require.Equal(t, http.StatusOK, get(t, f.h, "/", sess).StatusCode)
+
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	req.AddCookie(sess)
+	rec := httptest.NewRecorder()
+	f.h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Result().StatusCode)
+
+	// 消えたCookieを手元に持っている端末が送り直しても通らない。
+	resp := get(t, f.h, "/", sess)
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Location"), "/login")
+}
+
+// TestAFlowSessionDoesNotAuthenticate はログインを始めただけのセッションでは
+// 保護された画面に入れないことを固定する。/login は匿名のセッションを作って
+// state と nonce と verifier を載せるが、その時点ではまだ誰でもない。
+func TestAFlowSessionDoesNotAuthenticate(t *testing.T) {
+	f := newAuthFixture(t)
+
+	start := get(t, f.h, "/login")
+	flow := cookieNamed(start, "famifo_session")
+	require.NotNil(t, flow)
+
+	resp := get(t, f.h, "/", flow)
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Location"), "/login")
+}
