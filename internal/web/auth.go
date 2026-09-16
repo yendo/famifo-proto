@@ -20,11 +20,13 @@ import (
 // 行ごと消える。ログイン状態そのものの長さ（30日）は internal/session が持つ。
 const flowTTL = 10 * time.Minute
 
-// セッションに載せるキー。userはログイン済みの利用者名、残りは認可の往復の
-// あいだだけ持ち越す値である。往復の値はcallbackでPopStringして取り出すので、
+// セッションに載せるキー。userはログイン済みの利用者名、id_tokenはサインアウト
+// するときにIdPへ渡すhintで、どちらもセッションが続くあいだ残る。残りは認可の
+// 往復のあいだだけ持ち越す値である。往復の値はcallbackでPopStringして取り出すので、
 // 済んだ往復の残骸がセッションに残らない。
 const (
 	keyUser     = "user"
+	keyIDToken  = "id_token"
 	keyState    = "state"
 	keyNonce    = "nonce"
 	keyVerifier = "verifier"
@@ -37,8 +39,10 @@ type Provider interface {
 	AuthURL(oidcauth.Params) string
 	Exchange(ctx context.Context, code string, p oidcauth.Params) (oidcauth.Identity, error)
 	// LogoutURL はRP-Initiated Logoutの宛先を返す。IdPがdiscoveryで
-	// end_session_endpointを広告していなければfalseを返す。
-	LogoutURL(postLogoutRedirectURI string) (string, bool)
+	// end_session_endpointを広告していなければfalseを返す。idTokenHintは
+	// サインインしたときのIDトークンで、これが無いとIdPは戻り先へ
+	// リダイレクトしなくてよいことになっている。
+	LogoutURL(postLogoutRedirectURI, idTokenHint string) (string, bool)
 }
 
 // Auth は認証の手段をまとめる。NewServer に nil を渡すと認証しない。
@@ -171,6 +175,9 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auth.Sessions.Put(ctx, keyUser, id.Username)
+	// サインアウトのときにIdPへ渡すhint。セッションはサーバー側（sessions.db）に
+	// あるので、1KB前後のトークンを載せてもCookieの大きさには効かない。
+	s.auth.Sessions.Put(ctx, keyIDToken, id.IDToken)
 	s.log.Info("signed in", "user", id.Username)
 	http.Redirect(w, r, safeNext(next), http.StatusFound)
 }
@@ -193,12 +200,15 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 // 対応していなければ（実機ではSynology SSO Serverがこれにあたる）、
 // famifo自身のセッションを終えたことを伝える案内ページを返す。
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// hintはDestroyより前に読む。あとからでは行が消えていて空になり、IdPは
+	// post_logout_redirect_uri を尊重しなくてよくなる（/signed-outに帰ってこない）。
+	hint := s.auth.Sessions.GetString(r.Context(), keyIDToken)
 	if err := s.auth.Sessions.Destroy(r.Context()); err != nil {
 		s.log.Error("cannot sign out", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if u, ok := s.auth.OIDC.LogoutURL(s.signedOutURL()); ok {
+	if u, ok := s.auth.OIDC.LogoutURL(s.signedOutURL(), hint); ok {
 		http.Redirect(w, r, u, http.StatusFound)
 		return
 	}

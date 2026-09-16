@@ -202,8 +202,9 @@ func (c *Client) AuthURL(state, nonce, pkceVerifier string) string
 func (c *Client) Exchange(ctx context.Context, code, pkceVerifier, nonce string) (Identity, error)
 
 // LogoutURL は RP-Initiated Logout の宛先を組み立てる。IdP が discovery で
-// end_session_endpoint を広告していなければ false を返す。
-func (c *Client) LogoutURL(postLogoutRedirectURI string) (string, bool)
+// end_session_endpoint を広告していなければ false を返す。idTokenHint は
+// サインインしたときの ID トークン。空なら id_token_hint を載せない。
+func (c *Client) LogoutURL(postLogoutRedirectURI, idTokenHint string) (string, bool)
 ```
 
 `New` は `oidc.NewProvider` で discovery を引く。起動時に1回だけ行い、IdP に届かなければ
@@ -326,10 +327,18 @@ OpenID Connect は標準のログアウト手順を定めている。IdP が dis
 セッションが終わり、設定は要らない。`post_logout_redirect_uri` は `redirect_uri` と
 同じく、IdP 側にあらかじめ登録しておく必要があることが多い。
 
-`id_token_hint`（送ると IdP がより確実に `post_logout_redirect_uri` を尊重する、
-仕様上は RECOMMENDED のパラメータ）は載せない。famifo は ID トークンを検証した
-あと捨てており、これを渡すにはセッションへ生の ID トークンを持ち越す変更が要る。
-今回はそこまでしない。代わりに `client_id` を送る。
+`id_token_hint` も載せる。仕様上の位置づけは RECOMMENDED だが、これを伴わずに
+`post_logout_redirect_uri` を送った場合、IdP は戻り先へリダイレクトしてはならないと
+定められている。つまり省略すると、サインアウトはできても `/signed-out` に帰ってこない。
+渡すのはサインインしたときの ID トークンそのもので、`handleCallback` がセッションに
+保存し、`handleLogout` が `Destroy` の前に読み出す。期限切れでも構わない（仕様は
+`aud` が指す RP にセッションがある・あった限り、`exp` を過ぎたものも受け入れるべきと
+している）。
+
+> **注記（2026-09-16）:** 当初はこれを載せていなかった。ID トークンを検証後に捨てて
+> おり、渡すにはセッションへ持ち越す変更が要ったためである。セッションが署名付き
+> Cookie からサーバー側（`sessions.db`）に移り、1KB 前後のトークンを載せても
+> Cookie の大きさに効かなくなったので実装した。
 
 **Synology SSO Server は `end_session_endpoint` を持たない**（実機で確認：discovery は
 13個のキーを持ち、この中に含まれない）。`prompt=login` と `max_age=0` も試したが、

@@ -65,6 +65,11 @@ type Identity struct {
 	Username string   // 表示とログに使う。空ならSubjectで代用する
 	Email    string   // 設定していないアカウントでは空になる
 	Groups   []string // 本案では使わない
+	// IDToken は検証済みのIDトークンそのもの。RP-Initiated Logout の
+	// id_token_hint に渡すために保持する。仕様は、これを付けずに
+	// post_logout_redirect_uri だけを送った場合、IdPは戻り先へ
+	// リダイレクトしてはならないと定めている。
+	IDToken string
 }
 
 // Params は認可の往復のあいだ保持する値。callbackまで持ち越す。
@@ -201,6 +206,7 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 	}
 	return Identity{
 		Subject: idToken.Subject, Username: name, Email: claims.Email, Groups: claims.Groups,
+		IDToken: raw,
 	}, nil
 }
 
@@ -208,11 +214,17 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 // end_session_endpoint を広告していなければ false を返す。呼び出し側は
 // これで「この IdP は対応している／していない」を文字列を見ずに判別できる。
 //
-// id_token_hint は載せない。仕様はRECOMMENDEDとしており、一部のIdPは
-// post_logout_redirect_uri を id_token_hint 無しでは尊重しないが、famifo は
-// 検証済みのIDトークンを検証後に捨てており、これを持たせるにはセッションへ
-// 生のIDトークンを持ち越す変更が要る。今回はそこまでしない。
-func (c *Client) LogoutURL(postLogoutRedirectURI string) (string, bool) {
+// idTokenHint はサインインしたときに受け取ったIDトークンそのもの。仕様上の
+// 位置づけはRECOMMENDEDだが、これを伴わずに post_logout_redirect_uri を
+// 送った場合、IdPは戻り先へリダイレクトしてはならないと定められている。
+// つまり省略すると、サインアウトはできても/signed-outに帰ってこない。
+//
+// 期限切れでも構わない。仕様は、aud が指すRPにセッションがある（あった）
+// 限り、expを過ぎたIDトークンも受け入れるべきだとしている。famifoの
+// セッションは30日あり、IDトークンはとうに切れているのが普通である。
+//
+// 空なら載せない。この項目を保存する前に発行された古いセッションが該当する。
+func (c *Client) LogoutURL(postLogoutRedirectURI, idTokenHint string) (string, bool) {
 	if c.endSessionEndpoint == "" {
 		return "", false
 	}
@@ -223,6 +235,9 @@ func (c *Client) LogoutURL(postLogoutRedirectURI string) (string, bool) {
 	q := u.Query()
 	q.Set("post_logout_redirect_uri", postLogoutRedirectURI)
 	q.Set("client_id", c.oauth.ClientID)
+	if idTokenHint != "" {
+		q.Set("id_token_hint", idTokenHint)
+	}
 	u.RawQuery = q.Encode()
 	return u.String(), true
 }
