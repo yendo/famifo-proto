@@ -67,11 +67,32 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) error {
 	if !imagefmt.IsSupported(path) {
 		return nil
 	}
-	fi, err := os.Stat(path)
+	// Lstat で見る。Stat はリンクを追うので、写真ディレクトリに置かれた
+	// シンボリックリンクを、その先にあるファイルとして取り込んでしまう。
+	fi, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("cannot stat the file: %w", err)
 	}
 	if fi.IsDir() {
+		return nil
+	}
+	// シンボリックリンクは載せない。
+	//
+	// 載せると配信できてしまう。自前でサムネイルを作る形式（.jpg など）は
+	// デコードに失敗して indexFile がエラーで終わるので載らないが、
+	// .heic や .mp4 は「自前では作らない」形式なので Prepare が何もせずに
+	// 成功し、行が入る。すると /file/{id} は借りるものが無いぶん原本の
+	// パス――つまりリンクそのもの――を ServeFile に渡し、リンクを追った
+	// 先の中身がブラウザへ出ていく。-data が -dir の外にあることは
+	// config.Validate が確かめているが、リンクの先までは縛れないため、
+	// 写真の共有フォルダに1本置くだけで sessions.db が読めることになる。
+	//
+	// ディレクトリへのリンクは、この判定が無くても降りられない。走査も監視も
+	// filepath.WalkDir を使っており、WalkDir はリンクを追わないためである。
+	// 通常ファイル以外をまとめて落とさないのは、FIFOやデバイスファイルが
+	// 同じ危険を持たないからである。指す先が無いので、読めるのはそのファイル
+	// 自身でしかない。
+	if fi.Mode()&os.ModeSymlink != 0 {
 		return nil
 	}
 

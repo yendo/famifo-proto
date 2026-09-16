@@ -42,6 +42,63 @@ func TestScanIgnoresNonPhotos(t *testing.T) {
 	require.Equal(t, 0, stats.Skipped, "an unsupported extension is not counted as skipped")
 }
 
+// TestScanIgnoresSymlinks は写真ディレクトリに置かれたシンボリックリンクを
+// 取り込まないことを固定する。
+//
+// 載せると配信できてしまう。.heic や .mp4 はfamifoが自前でサムネイルを作らない
+// 形式なので Prepare が何もせずに成功し、行が入る。そのあと /file/{id} は借りる
+// ものが無いぶん原本のパス――リンクそのもの――を ServeFile に渡すので、リンクを
+// 追った先の中身が認証済みの利用者へ出ていく。-data が -dir の外にあることは
+// config.Validate が確かめているが、リンクの先までは縛れない。写真の共有
+// フォルダに1本置くだけで sessions.db が読めることになり、中身はセッション
+// トークンなので全利用者へのなりすましになる。
+//
+// .mp4 と .heic で試すのは、この経路が成立するのがその2つだからである。.jpg は
+// デコードに失敗して indexFile がエラーで終わるため、ガードが無くても載らない。
+// そちらで書くと、ガードを外してもテストが通ってしまう。
+func TestScanIgnoresSymlinks(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+
+	// ルートの外にある、famifo自身のデータのつもりのファイル。
+	secret := filepath.Join(t.TempDir(), "sessions.db")
+	require.NoError(t, os.WriteFile(secret, []byte("session tokens"), 0o600))
+	for _, name := range []string{"video.mp4", "photo.heic"} {
+		require.NoError(t, os.Symlink(secret, filepath.Join(f.root, name)))
+	}
+
+	stats, err := f.ix.Scan(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Indexed, "only the real photo is taken in")
+	require.Equal(t, 0, stats.Skipped, "a symlink is ignored, not counted as broken")
+	n, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+}
+
+// TestScanIgnoresASymlinkedDirectory は、ディレクトリへのリンクの先を走査しない
+// ことを固定する。中身は本物の通常ファイルなので、上のガードは届かない。降りない
+// のは走査も監視も filepath.WalkDir を使っているからで、これはガードではなく
+// WalkDirがリンクを追わないという性質に依存している。依存していること自体を
+// ここに残す。
+func TestScanIgnoresASymlinkedDirectory(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	outside := t.TempDir()
+	writeTestJPEG(t, outside, "elsewhere.jpg", 40, 20)
+	require.NoError(t, os.Symlink(outside, filepath.Join(f.root, "album")))
+
+	stats, err := f.ix.Scan(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 0, stats.Indexed)
+	n, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, n)
+}
+
 // Synologyは動画の隣に SYNOPHOTO_FILM_H.mp4（H.264への変換版）を置く。拡張子は
 // 対応形式そのものなので、@eaDir を降りないガードが無ければ動画1本につき偽物が
 // 1件並ぶ。動画対応で初めて実害の出る箇所なので固定する。
