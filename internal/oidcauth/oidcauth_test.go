@@ -16,6 +16,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -144,10 +146,16 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func newClient(t *testing.T, i *idp) *oidcauth.Client {
 	t.Helper()
+	return newClientWithLog(t, i, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// newClientWithLog はログの行き先を選べる版。警告を出すこと自体を見るテストが使う。
+func newClientWithLog(t *testing.T, i *idp, log *slog.Logger) *oidcauth.Client {
+	t.Helper()
 	c, err := oidcauth.New(context.Background(), oidcauth.Config{
 		Issuer: i.srv.URL, ClientID: "famifo", ClientSecret: "s3cret",
 		RedirectURI: "https://famifo.example.invalid/auth/callback",
-	})
+	}, log)
 	require.NoError(t, err)
 	return c
 }
@@ -190,7 +198,8 @@ func TestAuthURLCarriesTheFlowParameters(t *testing.T) {
 	q := u.Query()
 	require.Equal(t, "famifo", q.Get("client_id"))
 	require.Equal(t, "code", q.Get("response_type"))
-	require.Equal(t, "openid email groups", q.Get("scope"))
+	require.Equal(t, "openid", q.Get("scope"),
+		"email and groups are never read; requesting them only puts more PII in the id_token, which the session keeps for 30 days")
 	require.Equal(t, "st", q.Get("state"))
 	require.Equal(t, "no", q.Get("nonce"))
 	require.Equal(t, "S256", q.Get("code_challenge_method"))
@@ -326,6 +335,42 @@ func TestExchangeFallsBackToSubWhenUsernameIsAbsent(t *testing.T) {
 	require.Equal(t, "yendo", id.Username)
 }
 
+// TestExchangeWarnsWhenTheUsernameClaimIsAbsent は、sub で代用したことが
+// 必ずログに出ることを固定する。
+//
+// 要求するスコープは openid だけで、username claim がそれで返ってくるかは
+// 文書化されていない。この IdP では sub がユーザー名そのものなので、落ちても
+// 表示は1文字も変わらない。黙って代用すると、スコープを削ったせいで username が
+// 消えたことに気づく手立てが無くなる。
+func TestExchangeWarnsWhenTheUsernameClaimIsAbsent(t *testing.T) {
+	var logged bytes.Buffer
+	i := newIDP(t)
+	c := newClientWithLog(t, i, slog.New(slog.NewTextHandler(&logged, nil)))
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+	i.claims["nonce"] = p.Nonce
+	i.claims["username"] = nil
+
+	_, err = c.Exchange(context.Background(), "good-code", p)
+	require.NoError(t, err)
+	require.Contains(t, logged.String(), "no username claim")
+}
+
+// TestExchangeStaysQuietWhenTheUsernameClaimIsThere は、代用が起きていない
+// ときに警告を出さないことを固定する。毎回出るなら知らせにならない。
+func TestExchangeStaysQuietWhenTheUsernameClaimIsThere(t *testing.T) {
+	var logged bytes.Buffer
+	i := newIDP(t)
+	c := newClientWithLog(t, i, slog.New(slog.NewTextHandler(&logged, nil)))
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+	i.claims["nonce"] = p.Nonce
+
+	_, err = c.Exchange(context.Background(), "good-code", p)
+	require.NoError(t, err)
+	require.NotContains(t, logged.String(), "no username claim")
+}
+
 func TestExchangeReportsATokenEndpointError(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
@@ -447,7 +492,7 @@ func TestExchangeRedactsAURLEncodedClientSecret(t *testing.T) {
 	c, err := oidcauth.New(context.Background(), oidcauth.Config{
 		Issuer: i.srv.URL, ClientID: "famifo", ClientSecret: secret,
 		RedirectURI: "https://famifo.example.invalid/auth/callback",
-	})
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 	p, err := oidcauth.NewParams()
 	require.NoError(t, err)
@@ -466,7 +511,7 @@ func TestNewFailsWhenTheIssuerDoesNotMatch(t *testing.T) {
 	_, err := oidcauth.New(context.Background(), oidcauth.Config{
 		Issuer: i.srv.URL, ClientID: "famifo", ClientSecret: "s",
 		RedirectURI: "https://famifo.example.invalid/auth/callback",
-	})
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.ErrorContains(t, err, "did not match the issuer URL returned by provider")
 }
 
@@ -475,7 +520,7 @@ func TestNewFailsWhenDiscoveryIsUnreachable(t *testing.T) {
 	_, err := oidcauth.New(context.Background(), oidcauth.Config{
 		Issuer: i.srv.URL + "/elsewhere", ClientID: "famifo", ClientSecret: "s",
 		RedirectURI: "https://famifo.example.invalid/auth/callback",
-	})
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.Error(t, err)
 }
 

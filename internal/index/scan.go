@@ -170,6 +170,13 @@ func (s *scanner) walk(ctx context.Context, root string) error {
 		if !imagefmt.IsSupported(path) {
 			return nil
 		}
+		// シンボリックリンクは写真として数えない。取り込みは indexFile が
+		// 断るので、ここで落とさなくても行は入らないが、数えると「見つけた
+		// のに入らなかった」ぶんが Indexed に混ざり、空のルートを判定する
+		// foundByRoot も嵩上げされる。
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
 		s.foundByRoot[root]++
 
 		fi, err := d.Info()

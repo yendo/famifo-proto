@@ -256,5 +256,11 @@ func TestReadNeverReturnsABareUTCLocation(t *testing.T) {
 	got := videometa.Read(path).TakenAt
 
 	require.True(t, got.Equal(time.Date(2026, 9, 9, 9, 39, 6, 0, time.UTC)), "got %v", got)
-	require.NotEqual(t, time.UTC, got.Location(), "media.resolveTakenAt would shift a bare UTC value")
+	// ポインタで比べる。require.NotEqual は reflect.DeepEqual に落ちて
+	// *time.Location の中身まで読みに行くが、time.Local の中身は最初に
+	// Local を要求した誰かが sync.Once の中で書き込む。読む側はその Once を
+	// 通らないので、並行するテストが time.Date(..., time.Local) で初期化を
+	// 走らせていると競合になる（-race で実際に落ちた）。
+	// 知りたいのは「time.UTC そのものか」であって中身の一致ではない。
+	require.NotSame(t, time.UTC, got.Location(), "media.resolveTakenAt would shift a bare UTC value")
 }

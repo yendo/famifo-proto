@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -261,4 +262,49 @@ func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String(),
 		"a format that displays as it is gets the original at full resolution; borrowing is only for what cannot be shown")
+}
+
+// TestResponsesCarryTheSecurityHeaders は、どの経路の応答にも方針とnosniffが
+// 載ることを固定する。認証の内側（/、/tiles）と、認証もセッションも通らない
+// /static/ の両方を見る。ミドルウェアの掛け場所を内側に動かすと /static/ だけ
+// 素の応答に戻るが、画面は何も変わらないので気づけない。
+func TestResponsesCarryTheSecurityHeaders(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+
+	for _, target := range []string{"/", "/tiles", "/static/app.css", "/thumb/" + p.ID(), "/file/" + p.ID()} {
+		t.Run(target, func(t *testing.T) {
+			rec := doGet(t, f.h, target)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+			require.NotEmpty(t, rec.Header().Get("Content-Security-Policy"))
+		})
+	}
+}
+
+// TestTheContentSecurityPolicyKeepsScriptsStrict は script-src に 'unsafe-inline'
+// が混ざらないことを固定する。方針を入れる理由そのものがここであり、ゆるめても
+// 画面は正常に動き続けるため、テストでしか守れない。
+//
+// style-src のほうは 'unsafe-inline' を許してある。app.js の cardHTML が
+// style 属性を持つ日カードを組み立てており、外すとレイアウトが崩れる。
+// 取り違えて script 側に足されるのを防ぐため、両者を別々に見る。
+func TestTheContentSecurityPolicyKeepsScriptsStrict(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+
+	policy := doGet(t, f.h, "/").Header().Get("Content-Security-Policy")
+
+	directives := make(map[string]string)
+	for _, d := range strings.Split(policy, ";") {
+		name, value, _ := strings.Cut(strings.TrimSpace(d), " ")
+		directives[name] = value
+	}
+	require.Equal(t, "'self'", directives["script-src"])
+	require.Contains(t, directives["style-src"], "'unsafe-inline'",
+		"the day cards carry style attributes; see cardHTML in app.js")
+	require.Equal(t, "'none'", directives["default-src"],
+		"anything not listed must stay blocked, so a new kind of resource fails loudly")
 }

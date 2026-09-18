@@ -159,10 +159,12 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	require.NoError(t, err)
 	famifoURL = "http://" + l.Addr().String()
 
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
 	client, err := oidcauth.New(context.Background(), oidcauth.Config{
 		Issuer: idp.srv.URL, ClientID: "famifo", ClientSecret: "s3cret",
 		RedirectURI: famifoURL + "/auth/callback",
-	})
+	}, log)
 	require.NoError(t, err)
 
 	dir := t.TempDir()
@@ -178,7 +180,6 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	_, err = indexAll(st, photoDir, thumbs)
 	require.NoError(t, err)
 
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	sessions, err := session.Open(filepath.Join(dir, "sessions.db"), false, log)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sessions.Close() })

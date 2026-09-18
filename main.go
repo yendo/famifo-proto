@@ -94,7 +94,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			ClientID:     cfg.OIDCClientID,
 			ClientSecret: cfg.OIDCClientSecret,
 			RedirectURI:  cfg.RedirectURI(),
-		})
+		}, log)
 		if err != nil {
 			return err
 		}
