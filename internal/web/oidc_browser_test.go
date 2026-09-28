@@ -184,7 +184,7 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sessions.Close() })
 
-	gallery, err := web.NewGallery(st, thumbs, &web.Auth{OIDC: client, Sessions: sessions.Manager()}, log)
+	gallery, err := web.NewGallery(st, thumbs, web.NewAuth(client, sessions.Manager(), "", log), log)
 	require.NoError(t, err)
 
 	ts := httptest.NewUnstartedServer(gallery.Handler())

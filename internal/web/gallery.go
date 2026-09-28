@@ -85,7 +85,7 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 // Gallery はギャラリーのHTTPハンドラが使う依存をまとめる。ハンドラはこの型の
-// メソッドとして handlers.go と auth.go にある。
+// メソッドとして handlers.go にある。認証の経路は Auth が持つ。
 type Gallery struct {
 	st        *store.Store
 	tmpl      *template.Template
@@ -133,17 +133,18 @@ func (g *Gallery) Handler() http.Handler {
 	protected.HandleFunc("GET /file/{id}", g.handleFile)
 
 	inner := http.NewServeMux()
-	inner.Handle("/", g.authenticate(protected))
 	if g.auth == nil {
+		inner.Handle("/", protected)
 		mux.Handle("/", inner)
 		return securityHeaders(mux)
 	}
-	inner.HandleFunc("GET /login", g.handleLogin)
-	inner.HandleFunc("GET /auth/callback", g.handleCallback)
-	inner.HandleFunc("POST /logout", g.handleLogout)
+	inner.Handle("/", g.auth.authenticate(protected))
+	inner.HandleFunc("GET /login", g.auth.handleLogin)
+	inner.HandleFunc("GET /auth/callback", g.auth.handleCallback)
+	inner.HandleFunc("POST /logout", g.auth.handleLogout)
 	// RP-Initiated LogoutでIdPが戻ってくる先。/logout自身がend_session_endpoint
 	// を持たないIdPのとき案内ページとして返すのもここ。
-	inner.HandleFunc("GET /signed-out", g.handleSignedOut)
-	mux.Handle("/", g.auth.Sessions.LoadAndSave(inner))
+	inner.HandleFunc("GET /signed-out", g.auth.handleSignedOut)
+	mux.Handle("/", g.auth.sessions.LoadAndSave(inner))
 	return securityHeaders(mux)
 }

@@ -98,7 +98,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		auth = &web.Auth{OIDC: oidcClient, Sessions: sessions.Manager(), ExternalURL: cfg.ExternalURL}
+		auth = web.NewAuth(oidcClient, sessions.Manager(), cfg.ExternalURL, log)
 		log.Info("authentication is on", "issuer", cfg.OIDCIssuer, "redirect", cfg.RedirectURI())
 	} else {
 		log.Warn("authentication is off, anyone who can reach this address can see the media")

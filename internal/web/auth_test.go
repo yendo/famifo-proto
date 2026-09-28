@@ -79,7 +79,7 @@ func newAuthFixtureWith(t *testing.T, prov *fakeProvider, secure bool) *authFixt
 	t.Cleanup(func() { _ = sessions.Close() })
 
 	gallery, err := web.NewGallery(st, thumbs,
-		&web.Auth{OIDC: prov, Sessions: sessions.Manager(), ExternalURL: "https://famifo.example.invalid"},
+		web.NewAuth(prov, sessions.Manager(), "https://famifo.example.invalid", log),
 		log)
 	require.NoError(t, err)
 	return &authFixture{h: gallery.Handler(), prov: prov}
