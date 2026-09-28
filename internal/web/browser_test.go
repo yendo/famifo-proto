@@ -350,9 +350,9 @@ func writeTestPhoto(path string, i int, takenAt time.Time) error {
 // indexAll は本番と同じ取り込み経路でコーパスをインデックスに載せる。
 // 手でMediaを組むと、Mediaの構造が変わるたびにブラウザテストが巻き添えになる。
 func indexAll(st *store.Store, mediaDir string, thumbs *thumb.Provider) (index.Stats, error) {
-	ix := index.New([]string{mediaDir}, st, thumbs, 4,
-		slog.New(slog.NewTextHandler(io.Discard, nil)))
-	return ix.Scan(context.Background())
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ix := index.New([]string{mediaDir}, st, thumbs, 4, log)
+	return index.NewScanner(ix, time.Hour, nil, log).Scan(context.Background())
 }
 
 // writeTestJPEG はi番目の写真用に、色だけが違う小さな正方形JPEGを作る。

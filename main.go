@@ -161,10 +161,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	// スキャンは間隔をおいて繰り返す。1回目は起動直後に走り、止まっていた間の
 	// 変更を取り戻す。2回目以降は監視の取りこぼしを回復する。
+	scanner := index.NewScanner(ix, cfg.ScanInterval, watcher.ScanRequests(), log)
 	indexers.Add(1)
 	go func() {
 		defer indexers.Done()
-		ix.RunScanLoop(ctx, cfg.ScanInterval, watcher.ScanRequests())
+		scanner.Run(ctx)
 	}()
 
 	// ListenAndServeの失敗はcancel()経由でctx.Done()も閉じるため、どちらが

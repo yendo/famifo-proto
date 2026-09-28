@@ -21,6 +21,7 @@ import (
 
 type fixture struct {
 	ix       *index.Indexer
+	sc       *index.Scanner
 	st       *store.Store
 	thumbs   *thumb.Provider
 	root     string
@@ -81,7 +82,8 @@ func newFixtureWorkers(t *testing.T, workers int) *fixture {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ix := index.New([]string{root}, st, thumbs, workers, log)
 
-	return &fixture{ix: ix, st: st, thumbs: thumbs, root: root, thumbDir: thumbDir, log: log}
+	return &fixture{ix: ix, sc: index.NewScanner(ix, time.Hour, nil, log),
+		st: st, thumbs: thumbs, root: root, thumbDir: thumbDir, log: log}
 }
 
 // newFixtureRoots は複数のルートを持つ fixture を作る。roots[0] が f.root。
@@ -106,7 +108,8 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ix := index.New(roots, st, thumbs, 4, log)
 
-	return &fixture{ix: ix, st: st, thumbs: thumbs, root: roots[0], thumbDir: thumbDir, log: log}, roots
+	return &fixture{ix: ix, sc: index.NewScanner(ix, time.Hour, nil, log),
+		st: st, thumbs: thumbs, root: roots[0], thumbDir: thumbDir, log: log}, roots
 }
 
 func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {

@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"io/fs"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,34 +21,48 @@ type Stats struct {
 	Skipped   int // 破損・権限エラーで飛ばした枚数
 }
 
-// RunScanLoop は interval ごとにスキャンを繰り返す。ctx がキャンセルされるまで戻らない。
+// Scanner は Indexer に全体の突き合わせを繰り返させる。取り込みそのものは
+// Indexer が担い、Scanner はそれを起こす2つの経路のうちの1つである
+// （もう1つが Watcher）。
 //
 // fsnotify は取りこぼす。キューが溢れたことは ErrEventOverflow で分かるが、
 // max_user_watches を使い切って監視を張れなかったディレクトリのように、
 // 取りこぼしたことを知る手立てが無い経路もある。繰り返し突き合わせ直せば、
 // 検知できたかどうかによらず整合性が戻る。
-//
-// kicks は待ちを切り上げる要求である。スキャンの本数は増えず、次の1回が早まる
-// だけになる。ループが逐次なのでスキャンが重なることはなく、「今走っているか」を
-// 記録する必要もない。nil を渡せば時間だけで回る。
+type Scanner struct {
+	ix       *Indexer
+	interval time.Duration
+	// kicks は待ちを切り上げる要求である。スキャンの本数は増えず、次の1回が
+	// 早まるだけになる。ループが逐次なのでスキャンが重なることはなく、「今
+	// 走っているか」を記録する必要もない。nil なら時間だけで回る。
+	kicks <-chan struct{}
+	log   *slog.Logger
+}
+
+// NewScanner はScannerを作る。interval は1回が終わってから次を始めるまでの間隔。
+func NewScanner(ix *Indexer, interval time.Duration, kicks <-chan struct{}, log *slog.Logger) *Scanner {
+	return &Scanner{ix: ix, interval: interval, kicks: kicks, log: log}
+}
+
+// Run はスキャンを繰り返す。ctx がキャンセルされるまで戻らない。
 //
 // 待たずに始める。アプリが止まっていた間の変更も fsnotify は検知できないため、
 // 起動直後の1回目こそ必要になる。1回目を特別扱いせず、同じループの最初の回として
 // 走らせる。
-func (ix *Indexer) RunScanLoop(ctx context.Context, interval time.Duration, kicks <-chan struct{}) {
+func (sc *Scanner) Run(ctx context.Context) {
 	for {
 		// 大量の写真では1回目に時間がかかる。開始も残さないと、走査中なのか
 		// 止まっているのかがログから読めない。
-		ix.log.Info("scan started", "dirs", ix.roots)
+		sc.log.Info("scan started", "dirs", sc.ix.roots)
 		start := time.Now()
-		stats, err := ix.Scan(ctx)
+		stats, err := sc.Scan(ctx)
 		if ctx.Err() != nil {
 			return
 		}
 		if err != nil {
-			ix.log.Warn("scan failed", "err", err)
+			sc.log.Warn("scan failed", "err", err)
 		} else {
-			ix.log.Info("scan finished",
+			sc.log.Info("scan finished",
 				"elapsed", time.Since(start).Round(time.Millisecond),
 				"indexed", stats.Indexed, "unchanged", stats.Unchanged,
 				"removed", stats.Removed, "skipped", stats.Skipped)
@@ -56,24 +71,26 @@ func (ix *Indexer) RunScanLoop(ctx context.Context, interval time.Duration, kick
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(interval):
-		case <-kicks:
+		case <-time.After(sc.interval):
+		case <-sc.kicks:
 		}
 	}
 }
 
-// Scan はルートディレクトリを走査してインデックスをディスクの実態に合わせる。
+// Scan はルートディレクトリを1回走査してインデックスをディスクの実態に合わせる。
 //
 // fsnotifyはアプリが停止していた間の変更を検知できないため、起動のたびにこれを
 // 実行して整合性を取り直す。個々のファイルのエラーは記録して走査を続け、
 // コンテキストのキャンセルだけが全体を中断させる。
-func (ix *Indexer) Scan(ctx context.Context) (Stats, error) {
+func (sc *Scanner) Scan(ctx context.Context) (Stats, error) {
+	ix := sc.ix
 	known, err := ix.st.AllPaths(ctx)
 	if err != nil {
 		return Stats{}, err
 	}
-	s := &scanner{
+	s := &scanPass{
 		ix:          ix,
+		log:         sc.log,
 		jobs:        ix.executor.newJobs(),
 		known:       known,
 		foundByRoot: make(map[string]int, len(ix.roots)),
@@ -92,12 +109,13 @@ func (ix *Indexer) Scan(ctx context.Context) (Stats, error) {
 	return s.stats, nil
 }
 
-// scanner は1回のスキャンが持ち回る帳簿。走査・集計・削除の3フェーズが同じ
+// scanPass は1回のスキャンが持ち回る帳簿。走査・集計・削除の3フェーズが同じ
 // マップを見るため、フェーズをメソッドに割ってもこれらが共有され続ける。
 //
 // 1回のスキャンごとに作って捨てる。Scan の外には出ない。
-type scanner struct {
-	ix *Indexer
+type scanPass struct {
+	ix  *Indexer
+	log *slog.Logger
 	// jobs はこのスキャンが出した取り込みの集まり。監視が同時に走るため、
 	// 完了を待つ相手を自分が出したぶんに限る。
 	jobs *jobs
@@ -122,7 +140,7 @@ type scanner struct {
 //
 // 戻る前に、中断であってもワーカーの完了まで待つ。待たずに戻ると、まだ動いて
 // いるワーカーが indexed を書いている最中の値を呼び出し側が読むことになる。
-func (s *scanner) walkAll(ctx context.Context) error {
+func (s *scanPass) walkAll(ctx context.Context) error {
 	defer s.jobs.wait()
 
 	for _, root := range s.ix.roots {
@@ -134,7 +152,7 @@ func (s *scanner) walkAll(ctx context.Context) error {
 			// 外れただけで走査全体を止めると、生きているルートの更新まで
 			// 反映されなくなる。このルートは foundByRoot が0のままなので、配下の
 			// 削除は purge のガードが自動的に見送る。
-			s.ix.log.Warn("skipped an unreadable root", "root", root, "err", err)
+			s.log.Warn("skipped an unreadable root", "root", root, "err", err)
 		}
 	}
 	return nil
@@ -145,7 +163,7 @@ func (s *scanner) walkAll(ctx context.Context) error {
 // 走査自体は直列のままにする。known の消し込みも foundByRoot の計上も、共有する
 // マップの上での帳簿づけであり、並行にしても速くならないのに壊れる余地だけが
 // 増える。時間を食う1枚の取り込みだけを submit でワーカーに出す。
-func (s *scanner) walk(ctx context.Context, root string) error {
+func (s *scanPass) walk(ctx context.Context, root string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -157,7 +175,7 @@ func (s *scanner) walk(ctx context.Context, root string) error {
 				return err
 			}
 			// 読めないディレクトリやファイルは飛ばす（権限エラーなど）
-			s.ix.log.Warn("skipped while walking", "path", path, "err", err)
+			s.log.Warn("skipped while walking", "path", path, "err", err)
 			s.stats.Skipped++
 			return nil
 		}
@@ -181,7 +199,7 @@ func (s *scanner) walk(ctx context.Context, root string) error {
 
 		fi, err := d.Info()
 		if err != nil {
-			s.ix.log.Warn("skipped, cannot stat the file", "path", path, "err", err)
+			s.log.Warn("skipped, cannot stat the file", "path", path, "err", err)
 			s.stats.Skipped++
 			return nil
 		}
@@ -206,7 +224,7 @@ func (s *scanner) walk(ctx context.Context, root string) error {
 //
 // 持ち場が埋まっていればここで待つ。走査だけが先に走って数千件のパスを
 // 溜め込むことがない。
-func (s *scanner) submit(ctx context.Context, path string) {
+func (s *scanPass) submit(ctx context.Context, path string) {
 	s.jobs.submit(ctx, path, func(err error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -217,14 +235,14 @@ func (s *scanner) submit(ctx context.Context, path string) {
 			// 中断で落ちたぶんを破損として数えない。Ctrl-Cのたびに身に
 			// 覚えのないスキップ件数が出ることになるため、記録もしない。
 		default:
-			s.ix.log.Warn("skipped indexing", "path", path, "err", err)
+			s.log.Warn("skipped indexing", "path", path, "err", err)
 			s.failed++
 		}
 	})
 }
 
 // purge は走査で見つからなかった写真をインデックスから消す。
-func (s *scanner) purge(ctx context.Context) {
+func (s *scanPass) purge(ctx context.Context) {
 	empty := s.emptyRoots()
 
 	guarded := 0
@@ -234,13 +252,13 @@ func (s *scanner) purge(ctx context.Context) {
 			continue
 		}
 		if err := s.ix.removeFile(ctx, path); err != nil {
-			s.ix.log.Warn("failed to apply a deletion", "path", path, "err", err)
+			s.log.Warn("failed to apply a deletion", "path", path, "err", err)
 			continue
 		}
 		s.stats.Removed++
 	}
 	if guarded > 0 {
-		s.ix.log.Warn("skipped deletions because a root scanned empty",
+		s.log.Warn("skipped deletions because a root scanned empty",
 			"roots", empty, "remaining", guarded)
 	}
 }
@@ -249,7 +267,7 @@ func (s *scanner) purge(ctx context.Context) {
 //
 // そのルートは、ドライブが未マウントで「たまたま空に見える」のか、本当に全部
 // 消されたのかを区別できない。安全側に倒して、配下の削除を見送るために使う。
-func (s *scanner) emptyRoots() []string {
+func (s *scanPass) emptyRoots() []string {
 	var empty []string
 	for _, root := range s.ix.roots {
 		if s.foundByRoot[root] == 0 {
