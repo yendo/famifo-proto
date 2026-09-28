@@ -78,10 +78,10 @@ every one of them.
 
 | Flag | Default | Description |
 |---|---|---|
-| `-dir` | (required) | Directories to collect photos from, `:`-separated |
+| `-dir` | (required) | Directories to collect photos and videos from, `:`-separated |
 | `-data` | `./famifo-data` | Where the database and generated thumbnails are stored |
 | `-addr` | `:8080` | HTTP listen address |
-| `-scan-workers` | half the CPUs | How many photos are taken in at once, both by the scan and by the watcher |
+| `-scan-workers` | half the CPUs | How many files are taken in at once, both by the scan and by the watcher |
 | `-version` | | Print the build version and exit |
 
 The version comes from the build itself: a tagged build reports the tag, any
@@ -90,10 +90,10 @@ changes add `+dirty`.
 
 ### Timezone
 
-Photos are grouped by the day they were taken, which depends on the machine's local timezone.
+Photos and videos are grouped by the day they were taken, which depends on the machine's local timezone.
 The binary embeds the IANA database, so setting `TZ` is enough even where the filesystem has no
 zoneinfo — a bare container, for instance. Without it the process falls back to UTC and files
-those photos under the wrong day. The startup log prints the zone it resolved:
+those days wrong. The startup log prints the zone it resolved:
 
 ```
 msg=starting version="v0.1.0" timezone=JST+09:00 dirs=[/photos] ...
@@ -104,7 +104,7 @@ Check that line before letting a first index run to completion; rebuilding one c
 ## Authentication
 
 Off by default: without `-oidc-issuer`, anyone who can reach the address sees the
-photos. Pass it and famifo hands the visitor to an OpenID Connect provider and shows
+whole gallery. Pass it and famifo hands the visitor to an OpenID Connect provider and shows
 nothing until they come back identified. Everyone the provider accepts gets in —
 famifo keeps no user list of its own, so who may look is decided where the accounts
 already live.
@@ -247,7 +247,7 @@ docker run -d --restart unless-stopped -p 8080:8080 \
   famifo
 ```
 
-Photo directories are mounted read-only. `:ro` is enforced by the kernel, so even a
+Media directories are mounted read-only. `:ro` is enforced by the kernel, so even a
 root process inside the container cannot delete them.
 
 To index several separate locations, mount each one and name it as a root:
@@ -263,7 +263,7 @@ docker run -d --restart unless-stopped -p 8080:8080 \
 Split them by what can disappear independently. The per-root guard described under
 Limitations only helps when a root is its own root: with the default single `-dir
 /photos`, one mount going missing does not make `/photos` look empty, so nothing stops
-its photos being dropped from the index. Splitting a single mount into several roots
+its files being dropped from the index. Splitting a single mount into several roots
 buys nothing, since they come and go together.
 
 ### The `/data` mount is not optional
@@ -301,7 +301,7 @@ so the directory has to be writable by that id beforehand. Named volumes behave
 differently — they inherit ownership from the image — but a bind mount keeps the data
 directory visible on the NAS, where deleting it to force a rebuild is a file-manager
 operation rather than a shell one. Losing it costs only rebuild time; it holds nothing
-that is not derived from the photos.
+that is not derived from the files it indexed.
 
 ### Timezone in a container
 
@@ -315,10 +315,10 @@ docker logs <container> | head -1
 
 ## Using the gallery
 
-- Photos are grouped by capture date. A day that fits on one row sits alongside its neighbours
+- Tiles are grouped by capture date. A day that fits on one row sits alongside its neighbours
 - The scrollbar spans the whole date range, so any position is one drag away
 - Dragging the scrubber at the right edge moves through the library with the year and month shown
-- Tap a tile to enlarge it. Swipe left/right to move between photos, swipe down to close
+- Tap a tile to enlarge it. Swipe left/right to move between tiles, swipe down to close
 
 ## Browser tests
 
@@ -359,7 +359,7 @@ skipping.
   opening a port.
 - **A root that scans empty loses nothing.** Starting up while an external drive is unmounted
   produces an empty scan of that root, which looks exactly like "everything under it was
-  deleted". `Scan` therefore judges each root separately: a root that turns up no photos
+  deleted". `Scan` therefore judges each root separately: a root that turns up no files
   keeps its existing entries, even when the other roots are healthy, and logs a
   `skipped deletions because a root scanned empty` warning. A root it cannot read at all is
   skipped the same way, with `skipped an unreadable root`, rather than aborting the scan and
@@ -367,8 +367,8 @@ skipping.
   and thumbnails stay behind and the warning repeats on every startup. To recover, delete the
   data directory (`-data`, default `./famifo-data`) and start again — the database and the
   thumbnails are rebuilt.
-- **Dropping a root from `-dir` deletes its photos from the index.** The index follows what you
-  currently point it at. Photos under a path that is no longer a root are removed, thumbnails
+- **Dropping a root from `-dir` deletes its entries from the index.** The index follows what you
+  currently point it at. Files under a path that is no longer a root are removed, thumbnails
   included, and getting them back means reindexing. This is the one case the guard above does
   not cover, because the root is absent rather than empty.
 
