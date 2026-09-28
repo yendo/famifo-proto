@@ -223,9 +223,7 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	return c, *showVersion, nil
 }
 
-// dirList は -dir を繰り返し指定で集める。1つの文字列を区切り文字で割らないのは、
-// ':' がUnixのパスに使える文字であり、それを含むディレクトリを渡すと意図しない
-// 位置で切れるためである。flag は同じフラグが現れるたびに Set を呼ぶ。
+// dirList は -dir を繰り返し指定で集める。flag は同じフラグが現れるたびに Set を呼ぶ。
 type dirList []string
 
 func (d *dirList) String() string { return strings.Join(*d, ", ") }
