@@ -20,7 +20,7 @@ type Stats struct {
 	Skipped   int // 破損・権限エラーで飛ばした枚数
 }
 
-// RunScans は interval ごとにスキャンを繰り返す。ctx がキャンセルされるまで戻らない。
+// RunScanLoop は interval ごとにスキャンを繰り返す。ctx がキャンセルされるまで戻らない。
 //
 // fsnotify は取りこぼす。キューが溢れたことは ErrEventOverflow で分かるが、
 // max_user_watches を使い切って監視を張れなかったディレクトリのように、
@@ -34,7 +34,7 @@ type Stats struct {
 // 待たずに始める。アプリが止まっていた間の変更も fsnotify は検知できないため、
 // 起動直後の1回目こそ必要になる。1回目を特別扱いせず、同じループの最初の回として
 // 走らせる。
-func (ix *Indexer) RunScans(ctx context.Context, interval time.Duration, kicks <-chan struct{}) {
+func (ix *Indexer) RunScanLoop(ctx context.Context, interval time.Duration, kicks <-chan struct{}) {
 	for {
 		// 大量の写真では1回目に時間がかかる。開始も残さないと、走査中なのか
 		// 止まっているのかがログから読めない。

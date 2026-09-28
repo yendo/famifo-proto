@@ -431,7 +431,7 @@ func TestScanDoesNotWaitForTheWatchersIndexing(t *testing.T) {
 	}
 }
 
-func TestRunScansKeepsReconcilingOnItsInterval(t *testing.T) {
+func TestRunScanLoopKeepsReconcilingOnItsInterval(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
@@ -440,7 +440,7 @@ func TestRunScansKeepsReconcilingOnItsInterval(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		f.ix.RunScans(ctx, 50*time.Millisecond, nil)
+		f.ix.RunScanLoop(ctx, 50*time.Millisecond, nil)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -490,11 +490,11 @@ func TestGhostRowFromAScanIsReclaimedByTheNextScan(t *testing.T) {
 
 	// スキャンのループを始める。1回目は起動直後に走るので、幽霊行はそこで
 	// 回収される。要求による前倒しそのものは
-	// TestRunScansIsBroughtForwardByARequest で見る。
+	// TestRunScanLoopIsBroughtForwardByARequest で見る。
 	loopDone := make(chan struct{})
 	go func() {
 		defer close(loopDone)
-		f.ix.RunScans(ctx, time.Hour, w.ScanRequests())
+		f.ix.RunScanLoop(ctx, time.Hour, w.ScanRequests())
 	}()
 	t.Cleanup(func() { cancel(); <-loopDone })
 
@@ -503,7 +503,7 @@ func TestGhostRowFromAScanIsReclaimedByTheNextScan(t *testing.T) {
 
 // kicks はスキャンを前倒しする要求である。interval を1時間にしてあるので、
 // 時間で回るのを待っていては2枚目を拾えない。要求が効いていることだけを見る。
-func TestRunScansIsBroughtForwardByARequest(t *testing.T) {
+func TestRunScanLoopIsBroughtForwardByARequest(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
@@ -513,7 +513,7 @@ func TestRunScansIsBroughtForwardByARequest(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		f.ix.RunScans(ctx, time.Hour, kicks)
+		f.ix.RunScanLoop(ctx, time.Hour, kicks)
 	}()
 	t.Cleanup(func() {
 		cancel()

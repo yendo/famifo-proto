@@ -164,7 +164,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	indexers.Add(1)
 	go func() {
 		defer indexers.Done()
-		ix.RunScans(ctx, cfg.ScanInterval, watcher.ScanRequests())
+		ix.RunScanLoop(ctx, cfg.ScanInterval, watcher.ScanRequests())
 	}()
 
 	// ListenAndServeの失敗はcancel()経由でctx.Done()も閉じるため、どちらが
