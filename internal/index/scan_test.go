@@ -12,7 +12,7 @@ import (
 	"github.com/yendo/famifo-proto/internal/index"
 )
 
-func TestScanIndexesNestedPhotos(t *testing.T) {
+func TestScanIndexesNestedMedia(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
@@ -28,7 +28,7 @@ func TestScanIndexesNestedPhotos(t *testing.T) {
 	require.Equal(t, 3, n)
 }
 
-func TestScanIgnoresNonPhotos(t *testing.T) {
+func TestScanIgnoresNonMedia(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
@@ -64,14 +64,14 @@ func TestScanIgnoresSymlinks(t *testing.T) {
 	// ルートの外にある、famifo自身のデータのつもりのファイル。
 	secret := filepath.Join(t.TempDir(), "sessions.db")
 	require.NoError(t, os.WriteFile(secret, []byte("session tokens"), 0o600))
-	for _, name := range []string{"video.mp4", "photo.heic"} {
+	for _, name := range []string{"video.mp4", "item.heic"} {
 		require.NoError(t, os.Symlink(secret, filepath.Join(f.root, name)))
 	}
 
 	stats, err := f.ix.Scan(context.Background())
 
 	require.NoError(t, err)
-	require.Equal(t, 1, stats.Indexed, "only the real photo is taken in")
+	require.Equal(t, 1, stats.Indexed, "only the real item is taken in")
 	require.Equal(t, 0, stats.Skipped, "a symlink is ignored, not counted as broken")
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestScanReindexesModifiedFiles(t *testing.T) {
 	require.Equal(t, 0, stats.Unchanged)
 }
 
-func TestScanRemovesDeletedPhotos(t *testing.T) {
+func TestScanRemovesDeletedMedia(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
@@ -271,7 +271,7 @@ func TestScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 0, stats.Removed,
-		"photos under a root that looks empty are kept, even with bob's photos still there")
+		"items under a root that looks empty are kept, even with bob's items still there")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
@@ -280,7 +280,7 @@ func TestScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
 
 // 引数からルートが外れたら、その配下の写真はインデックスから消す。
 // インデックスは「いま指定されているもの」に従う。
-func TestScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
+func TestScanRemovesMediaOutsideEveryRoot(t *testing.T) {
 	t.Parallel()
 	f, roots := newFixtureRoots(t, "alice", "bob")
 	ctx := context.Background()
@@ -295,7 +295,7 @@ func TestScanRemovesPhotosOutsideEveryRoot(t *testing.T) {
 	stats, err := f2.Scan(ctx)
 
 	require.NoError(t, err)
-	require.Equal(t, 1, stats.Removed, "photos under no root are removed")
+	require.Equal(t, 1, stats.Removed, "items under no root are removed")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
@@ -322,8 +322,8 @@ func TestScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
 	stats, err := f.ix.Scan(ctx)
 
 	require.NoError(t, err, "an unreadable root does not fail the whole scan")
-	require.Equal(t, 1, stats.Indexed, "new photos under a healthy root are taken in")
-	require.Equal(t, 0, stats.Removed, "photos under an unreadable root are kept")
+	require.Equal(t, 1, stats.Indexed, "new items under a healthy root are taken in")
+	require.Equal(t, 0, stats.Removed, "items under an unreadable root are kept")
 	require.Len(t, f.generatedThumbs(t), 3)
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
@@ -346,7 +346,7 @@ func TestScanSkipsSynologyMetadataDirs(t *testing.T) {
 	stats, err := f.ix.Scan(context.Background())
 
 	require.NoError(t, err)
-	require.Equal(t, 1, stats.Indexed, "only the one real photo is taken in")
+	require.Equal(t, 1, stats.Indexed, "only the one real item is taken in")
 	require.Equal(t, 0, stats.Skipped, "an exclusion is not counted as skipped")
 
 	paths, err := f.st.AllPaths(context.Background())
@@ -359,7 +359,7 @@ func TestScanSkipsSynologyMetadataDirs(t *testing.T) {
 // 並行してサムネイルを作っても取りこぼしが出ないことを確かめる。ワーカーの完了を
 // 待たずに走査を終えると Indexed が実際より少なくなり、Stats の更新の競合は
 // -race で現れる。1枚ずつでは同時に走る窓が開かないので、まとまった枚数を置く。
-func TestScanIndexesEveryPhotoWithConcurrentWorkers(t *testing.T) {
+func TestScanIndexesEveryFileWithConcurrentWorkers(t *testing.T) {
 	t.Parallel()
 	f := newFixtureWorkers(t, 8)
 	const n = 64
@@ -400,7 +400,7 @@ func TestScanDoesNotWaitForTheWatchersIndexing(t *testing.T) {
 	startWatcher(t, f)
 
 	// 監視の側に終わらない取り込みを1件持たせる。
-	stuck := mkfifoPhoto(t, f.root, "stuck.heic")
+	stuck := mkfifoMedia(t, f.root, "stuck.heic")
 	w := waitForIndexing(t, stuck)
 	// 取り込みを解く係を先に登録する。HEICは自前でサムネイルを作らないので、
 	// 書き手を閉じてEOFを返すだけで取り込みは進む。ここで登録しておかないと、
@@ -461,7 +461,7 @@ func TestGhostRowFromAScanIsReclaimedByTheNextScan(t *testing.T) {
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
 	album := filepath.Join(f.root, "album")
 	require.NoError(t, os.MkdirAll(album, 0o755))
-	src := mkfifoPhoto(t, album, "a.heic")
+	src := mkfifoMedia(t, album, "a.heic")
 
 	// 監視の前から在るファイルにはCreateのイベントが飛ばない。
 	// この2枚を取り込むのはスキャンだけである。

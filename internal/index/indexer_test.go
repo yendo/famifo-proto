@@ -68,7 +68,7 @@ func newFixture(t *testing.T) *fixture { return newFixtureWorkers(t, 4) }
 func newFixtureWorkers(t *testing.T, workers int) *fixture {
 	t.Helper()
 	base := t.TempDir()
-	root := filepath.Join(base, "photos")
+	root := filepath.Join(base, "items")
 	require.NoError(t, os.MkdirAll(root, 0o755))
 
 	st, err := store.Open(filepath.Join(base, "test.db"))

@@ -11,11 +11,11 @@ import (
 
 func TestIDForIsStableAndDistinct(t *testing.T) {
 	t.Parallel()
-	a := media.IDFor("/photos/a.jpg")
+	a := media.IDFor("/items/a.jpg")
 
 	require.Len(t, a, 32)
-	require.Equal(t, a, media.IDFor("/photos/a.jpg"))
-	require.NotEqual(t, a, media.IDFor("/photos/b.jpg"))
+	require.Equal(t, a, media.IDFor("/items/a.jpg"))
+	require.NotEqual(t, a, media.IDFor("/items/b.jpg"))
 }
 
 // fakeFileInfo は New が読む ModTime だけを持つ fs.FileInfo。
@@ -31,7 +31,7 @@ var testModTime = time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
 
 func TestNewFillsTheFieldsFromThePathAndFileInfo(t *testing.T) {
 	t.Parallel()
-	const path = "/photos/A.JPG"
+	const path = "/items/A.JPG"
 
 	p := media.New(path, fakeFileInfo{modTime: testModTime}, time.Time{})
 

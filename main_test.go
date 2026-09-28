@@ -224,11 +224,11 @@ func runArgs(t *testing.T, addr string) []string {
 	t.Helper()
 
 	root := t.TempDir()
-	photos := filepath.Join(root, "photos")
-	require.NoError(t, os.Mkdir(photos, 0o755))
+	items := filepath.Join(root, "items")
+	require.NoError(t, os.Mkdir(items, 0o755))
 
 	return []string{
-		"-dir", photos,
+		"-dir", items,
 		"-data", filepath.Join(root, "data"),
 		"-addr", addr,
 	}

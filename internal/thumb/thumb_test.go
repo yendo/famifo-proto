@@ -17,9 +17,9 @@ import (
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
 
-// photoOf はディスク上の src から、インデックスに載る1枚を組み立てる。
+// mediaOf はディスク上の src から、インデックスに載る1枚を組み立てる。
 // 本番と同じく ModTime が原本の版になる。
-func photoOf(t *testing.T, src string) media.Media {
+func mediaOf(t *testing.T, src string) media.Media {
 	t.Helper()
 	fi, err := os.Stat(src)
 	require.NoError(t, err)
@@ -30,7 +30,7 @@ func photoOf(t *testing.T, src string) media.Media {
 // srcから導かれるので、テスト側も同じ規則で引き当てる。
 func thumbPathFor(t *testing.T, pv *thumb.Provider, src string) string {
 	t.Helper()
-	return pv.GeneratedPath(photoOf(t, src))
+	return pv.GeneratedPath(mediaOf(t, src))
 }
 
 func writeImage(t *testing.T, dir, name string, w, h int) string {
@@ -62,7 +62,7 @@ func newTestProvider(t *testing.T) *thumb.Provider {
 // @eaDir が無いので、断りがなければ必ず自前で生成する枝に入る。
 func provide(t *testing.T, pv *thumb.Provider, srcPath string, orientation uint16) error {
 	t.Helper()
-	return pv.Prepare(photoOf(t, srcPath), orientation)
+	return pv.Prepare(mediaOf(t, srcPath), orientation)
 }
 
 // writeSynoThumb は srcPath の隣に、Synologyが作った体のサムネイルを置く。

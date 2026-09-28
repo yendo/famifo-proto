@@ -17,7 +17,7 @@ import (
 
 type pathFixture struct {
 	pv       *thumb.Provider
-	photoDir string
+	mediaDir string
 }
 
 func newPathFixture(t *testing.T) *pathFixture {
@@ -25,18 +25,18 @@ func newPathFixture(t *testing.T) *pathFixture {
 	base := t.TempDir()
 	pv, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
 	require.NoError(t, err)
-	photoDir := filepath.Join(base, "photos")
-	require.NoError(t, os.MkdirAll(photoDir, 0o755))
-	return &pathFixture{pv: pv, photoDir: photoDir}
+	mediaDir := filepath.Join(base, "items")
+	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
+	return &pathFixture{pv: pv, mediaDir: mediaDir}
 }
 
-// addPhoto は原本を1つ置いて、その1枚を返す。
+// addMedia は原本を1つ置いて、その1枚を返す。
 // どのテストも中身は見ないので、画像として妥当である必要はない。
-func (f *pathFixture) addPhoto(t *testing.T, name string) media.Media {
+func (f *pathFixture) addMedia(t *testing.T, name string) media.Media {
 	t.Helper()
-	path := filepath.Join(f.photoDir, name)
+	path := filepath.Join(f.mediaDir, name)
 	require.NoError(t, os.WriteFile(path, []byte("original"), 0o644))
-	return photoOf(t, path)
+	return mediaOf(t, path)
 }
 
 // borrowable は Synologyが作った体のMとXLを写真の隣に置く。
@@ -63,7 +63,7 @@ func writeFileAt(t *testing.T, path, body string) {
 func TestSmallPathPrefersTheBorrowedThumb(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addPhoto(t, "a.jpg")
+	p := f.addMedia(t, "a.jpg")
 	own := f.generated(t, p)
 	f.borrowable(t, p)
 
@@ -71,7 +71,7 @@ func TestSmallPathPrefersTheBorrowedThumb(t *testing.T) {
 
 	require.True(t, ok)
 	require.Equal(t, synology.ThumbMPath(p.Path()), got,
-		"in a real library nearly every photo has @eaDir, so it is looked at first")
+		"in a real library nearly every item has @eaDir, so it is looked at first")
 	require.NotEqual(t, own, got)
 	require.Equal(t, "image/jpeg", contentType)
 }
@@ -79,7 +79,7 @@ func TestSmallPathPrefersTheBorrowedThumb(t *testing.T) {
 func TestSmallPathUsesTheGeneratedThumbWhenNothingToBorrow(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addPhoto(t, "a.jpg")
+	p := f.addMedia(t, "a.jpg")
 	own := f.generated(t, p)
 
 	got, contentType, ok := f.pv.SmallPath(p)
@@ -93,7 +93,7 @@ func TestSmallPathUsesTheGeneratedThumbWhenNothingToBorrow(t *testing.T) {
 func TestSmallPathFallsBackToTheOriginal(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addPhoto(t, "a.jpg")
+	p := f.addMedia(t, "a.jpg")
 
 	got, contentType, ok := f.pv.SmallPath(p)
 
@@ -107,7 +107,7 @@ func TestSmallPathFallsBackToTheOriginal(t *testing.T) {
 func TestSmallPathHasNothingToShowForAnUnborrowedHEIC(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addPhoto(t, "a.heic")
+	p := f.addMedia(t, "a.heic")
 
 	got, contentType, ok := f.pv.SmallPath(p)
 
@@ -121,7 +121,7 @@ func TestSmallPathHasNothingToShowForAnUnborrowedHEIC(t *testing.T) {
 func TestSmallPathSeesAThumbThatAppearsAfterIndexing(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addPhoto(t, "a.heic")
+	p := f.addMedia(t, "a.heic")
 	_, _, ok := f.pv.SmallPath(p)
 	require.False(t, ok, "there is nothing to serve yet")
 
@@ -137,7 +137,7 @@ func TestSmallPathSeesAThumbThatAppearsAfterIndexing(t *testing.T) {
 func TestSmallPathIgnoresAThumbFromAnotherVersion(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addPhoto(t, "a.jpg")
+	p := f.addMedia(t, "a.jpg")
 	stale := media.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour))
 	writeFileAt(t, f.pv.GeneratedPath(stale), "a thumbnail of an older version")
 
@@ -151,7 +151,7 @@ func TestSmallPathIgnoresAThumbFromAnotherVersion(t *testing.T) {
 func TestGeneratedPathShardsByTheFirstTwoCharsOfTheID(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addPhoto(t, "a.jpg")
+	p := f.addMedia(t, "a.jpg")
 
 	got := f.pv.GeneratedPath(p)
 
@@ -164,7 +164,7 @@ func TestGeneratedPathShardsByTheFirstTwoCharsOfTheID(t *testing.T) {
 func TestGeneratedPathVariesWithTheSourceVersion(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addPhoto(t, "a.jpg")
+	p := f.addMedia(t, "a.jpg")
 	older := media.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour))
 
 	require.NotEqual(t, f.pv.GeneratedPath(p), f.pv.GeneratedPath(older),
@@ -194,7 +194,7 @@ func TestLargePathSwapsInTheXLOnlyForBorrowedOpaquePhotos(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newPathFixture(t)
-			p := f.addPhoto(t, tt.file)
+			p := f.addMedia(t, tt.file)
 			if tt.borrowed {
 				f.borrowable(t, p)
 			}
@@ -216,7 +216,7 @@ func TestLargePathSwapsInTheXLOnlyForBorrowedOpaquePhotos(t *testing.T) {
 func TestLargePathBorrowsTheTranscodedVideo(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	m := f.addPhoto(t, "clip.mp4")
+	m := f.addMedia(t, "clip.mp4")
 	film := synology.FilmPath(m.Path())
 	writeFileAt(t, film, "h264 transcode")
 
@@ -230,7 +230,7 @@ func TestLargePathBorrowsTheTranscodedVideo(t *testing.T) {
 func TestLargePathFallsBackToTheOriginalVideo(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	m := f.addPhoto(t, "clip.mov")
+	m := f.addMedia(t, "clip.mov")
 
 	path, ct := f.pv.LargePath(m)
 
@@ -244,7 +244,7 @@ func TestLargePathFallsBackToTheOriginalVideo(t *testing.T) {
 func TestLargePathDoesNotBorrowTheXLForAVideo(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	m := f.addPhoto(t, "clip.mp4")
+	m := f.addMedia(t, "clip.mp4")
 	f.borrowable(t, m)
 
 	path, ct := f.pv.LargePath(m)
@@ -257,7 +257,7 @@ func TestLargePathDoesNotBorrowTheXLForAVideo(t *testing.T) {
 func TestSmallPathBorrowsTheVideoThumbnail(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	m := f.addPhoto(t, "clip.mp4")
+	m := f.addMedia(t, "clip.mp4")
 	f.borrowable(t, m)
 
 	path, ct, ok := f.pv.SmallPath(m)
@@ -272,7 +272,7 @@ func TestSmallPathBorrowsTheVideoThumbnail(t *testing.T) {
 func TestSmallPathHasNothingForAVideoWithoutABorrowedThumbnail(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	m := f.addPhoto(t, "clip.mp4")
+	m := f.addMedia(t, "clip.mp4")
 
 	_, _, ok := f.pv.SmallPath(m)
 

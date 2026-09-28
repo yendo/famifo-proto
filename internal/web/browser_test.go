@@ -75,8 +75,8 @@ var testDayCounts = []int{
 	20,
 }
 
-// testPhotoCount は testDayCounts の合計(200枚)。
-var testPhotoCount = func() int {
+// testMediaCount は testDayCounts の合計(200枚)。
+var testMediaCount = func() int {
 	n := 0
 	for _, c := range testDayCounts {
 		n += c
@@ -84,8 +84,8 @@ var testPhotoCount = func() int {
 	return n
 }()
 
-// dayOfPhoto は通し番号iの写真が属する日を "2006-01-02" で返す。
-func dayOfPhoto(i int) string {
+// dayOfMedia は通し番号iの写真が属する日を "2006-01-02" で返す。
+func dayOfMedia(i int) string {
 	seen := 0
 	for d, c := range testDayCounts {
 		if i < seen+c {
@@ -105,12 +105,12 @@ func dayStartIndex(d int) int {
 	return n
 }
 
-// newestDay は最も新しい日。prepareTestPhotos と上記2つが共有する。
+// newestDay は最も新しい日。prepareTestMedia と上記2つが共有する。
 var newestDay = time.Date(2026, 1, 1, 12, 0, 0, 0, time.Local)
 
 // テスト写真の用意自体が壊れると、他のブラウザテストが理由不明で落ちる。先に押さえる。
-func TestPhotosHaveMixedDaySizes(t *testing.T) {
-	require.Equal(t, 200, testPhotoCount)
+func TestMediaHaveMixedDaySizes(t *testing.T) {
+	require.Equal(t, 200, testMediaCount)
 	small, big, single := 0, 0, 0
 	for _, c := range testDayCounts {
 		switch {
@@ -122,13 +122,13 @@ func TestPhotosHaveMixedDaySizes(t *testing.T) {
 			big++
 		}
 	}
-	require.Greater(t, single, 2, "a day with a single photo is needed, to check side-by-side days")
-	require.Greater(t, small, 2, "a day with a few photos is needed")
-	require.Greater(t, big, 2, "a day with more photos than columns is needed, to check a day taking a whole row")
+	require.Greater(t, single, 2, "a day with a single item is needed, to check side-by-side days")
+	require.Greater(t, small, 2, "a day with a few items is needed")
+	require.Greater(t, big, 2, "a day with more items than columns is needed, to check a day taking a whole row")
 	require.Equal(t, 0, dayStartIndex(0))
 	require.Equal(t, testDayCounts[0], dayStartIndex(1))
-	require.Equal(t, dayOfPhoto(0), dayOfPhoto(testDayCounts[0]-1), "falls on the same day")
-	require.NotEqual(t, dayOfPhoto(0), dayOfPhoto(testDayCounts[0]), "the next one is another day")
+	require.Equal(t, dayOfMedia(0), dayOfMedia(testDayCounts[0]-1), "falls on the same day")
+	require.NotEqual(t, dayOfMedia(0), dayOfMedia(testDayCounts[0]), "the next one is another day")
 }
 
 // allocCtx はコンテナ内Chromeに接続したchromedpのアロケータcontext。
@@ -139,9 +139,9 @@ var allocCtx context.Context
 // baseURL はテスト用に起動したアプリのURL（例: http://127.0.0.1:54321）。
 var baseURL string
 
-// testPhotoDir は prepareTestPhotos が写真を書いたディレクトリ。
+// testMediaDir は prepareTestMedia が写真を書いたディレクトリ。
 // 期待される写真の並びを再現するために使う。
-var testPhotoDir string
+var testMediaDir string
 
 // browserReady はブラウザ環境（Docker上のheadless-shellとテスト用アプリ）を
 // 用意できたか。TestMain が設定し、requireBrowser が読む。
@@ -279,9 +279,9 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 		return "", nil, nil, err
 	}
 
-	photoDir := filepath.Join(tempDir, "photos")
-	testPhotoDir = photoDir
-	if err := os.MkdirAll(photoDir, 0o755); err != nil {
+	mediaDir := filepath.Join(tempDir, "items")
+	testMediaDir = mediaDir
+	if err := os.MkdirAll(mediaDir, 0o755); err != nil {
 		return tempDir, nil, nil, err
 	}
 	thumbs, err := thumb.NewProvider(filepath.Join(tempDir, "thumbs"))
@@ -294,7 +294,7 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 		return tempDir, nil, nil, err
 	}
 
-	if err := prepareTestPhotos(st, photoDir, thumbs); err != nil {
+	if err := prepareTestMedia(st, mediaDir, thumbs); err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
 	}
@@ -311,16 +311,16 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	return tempDir, srv, func() { st.Close() }, nil
 }
 
-// prepareTestPhotos は testDayCounts のとおりに実画像ファイルを生成して登録する。
+// prepareTestMedia は testDayCounts のとおりに実画像ファイルを生成して登録する。
 // ユーザーの実ライブラリを読むと実行環境ごとに結果が変わりCIで再現できない
 // ため、写真は常にこの場で作る。1日の中では撮影時刻を1分ずつ古くするので、
 // 通し番号iがそのままギャラリー上の並び順(新しい順)に対応する。
-func prepareTestPhotos(st *store.Store, photoDir string, thumbs *thumb.Provider) error {
+func prepareTestMedia(st *store.Store, mediaDir string, thumbs *thumb.Provider) error {
 	i := 0
 	for d, count := range testDayCounts {
 		for k := 0; k < count; k++ {
 			name := fmt.Sprintf("p%04d.jpg", i)
-			path := filepath.Join(photoDir, name)
+			path := filepath.Join(mediaDir, name)
 			// 分単位で戻す。最大30枚なので日をまたがない。
 			takenAt := newestDay.AddDate(0, 0, -d).Add(-time.Duration(k) * time.Minute)
 			if err := writeTestPhoto(path, i, takenAt); err != nil {
@@ -329,7 +329,7 @@ func prepareTestPhotos(st *store.Store, photoDir string, thumbs *thumb.Provider)
 			i++
 		}
 	}
-	if _, err := indexAll(st, photoDir, thumbs); err != nil {
+	if _, err := indexAll(st, mediaDir, thumbs); err != nil {
 		return err
 	}
 	return nil
@@ -348,9 +348,9 @@ func writeTestPhoto(path string, i int, takenAt time.Time) error {
 }
 
 // indexAll は本番と同じ取り込み経路でコーパスをインデックスに載せる。
-// 手でPhotoを組むと、Photoの構造が変わるたびにブラウザテストが巻き添えになる。
-func indexAll(st *store.Store, photoDir string, thumbs *thumb.Provider) (index.Stats, error) {
-	ix := index.New([]string{photoDir}, st, thumbs, 4,
+// 手でMediaを組むと、Mediaの構造が変わるたびにブラウザテストが巻き添えになる。
+func indexAll(st *store.Store, mediaDir string, thumbs *thumb.Provider) (index.Stats, error) {
+	ix := index.New([]string{mediaDir}, st, thumbs, 4,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return ix.Scan(context.Background())
 }
@@ -388,31 +388,31 @@ func waitForTiles(timeout time.Duration) chromedp.Action {
 		chromedp.WithPollingTimeout(timeout))
 }
 
-// scrollToPhotoJS は写真indexが可視範囲の先頭に来るまでスクロールするJS式を返す。
+// scrollToIndexJS は写真indexが可視範囲の先頭に来るまでスクロールするJS式を返す。
 //
 // 以前はタイルの実測高から行を逆算していたが、行の高さが日ごとに変わるため
 // 成立しない。実装が公開している「通し番号 → y」をそのまま呼ぶ。テストが
 // レイアウト規則を写経すると、実装と一緒に間違えても気づけない。
 // yForIndex が返すのはレイアウト座標なので、toDocY で文書座標に戻す。
-func scrollToPhotoJS(index int) string {
+func scrollToIndexJS(index int) string {
 	return fmt.Sprintf(`(() => {
 		const L = famifo.current();
 		famifo.scroller.scrollTop = famifo.toDocY(famifo.yForIndex(L, %d));
 	})()`, index)
 }
 
-// expectedPhotoURLs はギャラリーの並び順どおりの原寸URLをn件返す。
+// expectedMediaURLs はギャラリーの並び順どおりの原寸URLをn件返す。
 //
-// prepareTestPhotos は p0000.jpg から順に、testDayCounts のとおり日をまたぎながら
+// prepareTestMedia は p0000.jpg から順に、testDayCounts のとおり日をまたぎながら
 // takenAt を古くしていく（同じ日の中では1分ずつ）。日をまたぐタイミングは
 // 一定ではないが、通し番号の順序自体は常に撮影時刻の新しい順と一致するので、
 // 通し番号がそのまま並び順になる。サーバの ListRange を呼ばずにここで
 // 組み立てるのは、クライアント側のオフセット計算をサーバと独立に検証する
 // ため。両方が同じ計算を共有すると、ずれが打ち消し合って見えなくなる。
-func expectedPhotoURLs(n int) []string {
+func expectedMediaURLs(n int) []string {
 	out := make([]string, n)
 	for i := 0; i < n; i++ {
-		path := filepath.Join(testPhotoDir, fmt.Sprintf("p%04d.jpg", i))
+		path := filepath.Join(testMediaDir, fmt.Sprintf("p%04d.jpg", i))
 		out[i] = "/file/" + media.IDFor(path)
 	}
 	return out
@@ -555,7 +555,7 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
 		waitForTiles(10*time.Second),
-		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
+		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
 		chromedp.Poll(`famifo.pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
@@ -672,7 +672,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
 		waitForTiles(10*time.Second),
-		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
+		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
 		chromedp.Poll(`famifo.pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
@@ -729,7 +729,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 		diff = -diff
 	}
 	require.LessOrEqual(t, diff, maxCols,
-		"the index of the photo at the top of the screen moved by more than a row across the resize: before=%d(cols=%d) after=%d(cols=%d)",
+		"the index of the item at the top of the screen moved by more than a row across the resize: before=%d(cols=%d) after=%d(cols=%d)",
 		before.TopIndex, before.Cols, after.TopIndex, after.Cols)
 }
 
@@ -815,7 +815,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 		waitForTiles(10*time.Second),
 		chromedp.Evaluate(installObserverJS, nil),
 		// 塊境界を2つ跨ぐところまでスクロールする。
-		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
+		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
 		chromedp.Poll(rangeSettledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
@@ -981,7 +981,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
 		waitForTiles(10*time.Second),
-		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
+		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
 		chromedp.Poll(rangeSettledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
 		chromedp.Evaluate(markJS, &marked),
 	)
@@ -998,19 +998,19 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 	)
 	require.NoError(t, err)
 	t.Logf("PROBE: marked tiles=%d tiles after the scroll=%d "+
-		"of which photos still in view=%d elements kept=%d",
+		"of which items still in view=%d elements kept=%d",
 		marked, got.Total, got.Common, got.Reused)
 
 	// 前提の確認。1行進んだだけなら大半の写真は見えたままのはず。ここが0なら
 	// 貼り付け範囲が丸ごと入れ替わっており、使い回しの有無を問う場面に
 	// 到達していない。
 	require.Greater(t, got.Common, 0,
-		"a one-row scroll left no photo still in view, so the premise of this test does not hold")
+		"a one-row scroll left no item still in view, so the premise of this test does not hold")
 
 	require.Equalf(t, got.Common, got.Reused,
-		"of the %d photos still in view only %d kept their DOM element. "+
+		"of the %d items still in view only %d kept their DOM element. "+
 			"render() looks like it rebuilds the DOM for the visible range, "+
-			"which is what makes the photos flash black on WebKit",
+			"which is what makes the items flash black on WebKit",
 		got.Common, got.Reused)
 }
 
@@ -1051,7 +1051,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 
 	// 塊の境界を2回（testChunkSize番目・testChunkSize*2番目）跨ぐのに十分な回数。
 	steps := testChunkSize*2 + 10
-	want := expectedPhotoURLs(steps + 1)
+	want := expectedMediaURLs(steps + 1)
 
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
@@ -1076,7 +1076,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Evaluate(srcAttrJS, &got))
 	require.NoError(t, err)
 	require.Equalf(t, want[0], got,
-		"the first photo opened is not the first one (index 0): got=%s want=%s", got, want[0])
+		"the first item opened is not the first one (index 0): got=%s want=%s", got, want[0])
 
 	prev := got
 	for i := 1; i <= steps; i++ {
@@ -1087,10 +1087,10 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 			chromedp.Evaluate(srcAttrJS, &got),
 		)
 		require.NoErrorf(t, err,
-			"src did not change at photo %d; it looks stuck at the chunk boundary of %d: prev=%s",
+			"src did not change at item %d; it looks stuck at the chunk boundary of %d: prev=%s",
 			i, testChunkSize, prev)
 		require.Equalf(t, want[i], got,
-			"photo %d is not the expected one; the seam at the chunk boundary of %d looks off: got=%s want=%s",
+			"item %d is not the expected one; the seam at the chunk boundary of %d looks off: got=%s want=%s",
 			i, testChunkSize, got, want[i])
 		prev = got
 	}
@@ -1135,7 +1135,7 @@ func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	want := expectedPhotoURLs(2)
+	want := expectedMediaURLs(2)
 
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(800, 1000),
@@ -1153,7 +1153,7 @@ func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Evaluate(srcAttrJS, &got))
 	require.NoError(t, err)
 	require.Equalf(t, want[0], got,
-		"the first photo opened is not the first one (index 0): got=%s want=%s", got, want[0])
+		"the first item opened is not the first one (index 0): got=%s want=%s", got, want[0])
 
 	// 左スワイプ = 次の写真。
 	swipeTo := func(t *testing.T, fromX, fromY, toX, toY float64, msg string) {
@@ -1167,15 +1167,15 @@ func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
 		require.NoError(t, chromedp.Run(rctx, chromedp.Evaluate(srcAttrJS, &got)))
 	}
 
-	swipeTo(t, 400, 500, 200, 500, "a swipe left did not move to the next photo")
+	swipeTo(t, 400, 500, 200, 500, "a swipe left did not move to the next item")
 	require.Equalf(t, want[1], got,
-		"a swipe left did not land on the next photo: got=%s want=%s", got, want[1])
+		"a swipe left did not land on the next item: got=%s want=%s", got, want[1])
 
 	// 右スワイプ = 前の写真。往復して元の写真に戻ることまで見る。
 	// 送りと戻りで別々の分岐を通るので、片方だけ壊れていても気づける。
-	swipeTo(t, 200, 500, 400, 500, "a swipe right did not move back to the previous photo")
+	swipeTo(t, 200, 500, 400, 500, "a swipe right did not move back to the previous item")
 	require.Equalf(t, want[0], got,
-		"a swipe right did not land back on the original photo: got=%s want=%s", got, want[0])
+		"a swipe right did not land back on the original item: got=%s want=%s", got, want[0])
 
 	// 下スワイプ = 閉じる。閉じるのは hidden 属性なので、srcではなくそちらを見る。
 	require.NoError(t, chromedp.Run(rctx, swipeActions(400, 300, 400, 500)...))
@@ -1451,7 +1451,7 @@ func TestLayoutPacksDaysThatFitOneRow(t *testing.T) {
 	require.Equal(t, float64(0), got.Entries[0].Y)
 	require.Equal(t, 0, got.Entries[0].Start)
 
-	require.Equal(t, 1, got.Entries[1].Col, "sits to the right of the single-photo day")
+	require.Equal(t, 1, got.Entries[1].Col, "sits to the right of the single-item day")
 	require.Equal(t, 4, got.Entries[1].Span)
 	require.Equal(t, float64(0), got.Entries[1].Y, "the same stripe, so the y matches")
 	require.Equal(t, 1, got.Entries[1].Start)
@@ -1475,7 +1475,7 @@ func TestLayoutGivesWholeRowsToBigDays(t *testing.T) {
 	got := evalLayout(t, ctx, `[{d:"2026-02-08",n:13},{d:"2026-02-03",n:2}]`, 6)
 
 	require.Len(t, got.Entries, 2)
-	require.Equal(t, 6, got.Entries[0].Span, "a day with more photos than columns takes the whole row")
+	require.Equal(t, 6, got.Entries[0].Span, "a day with more items than columns takes the whole row")
 	require.Equal(t, 3, got.Entries[0].Rows)
 	// h = 20 + 4 + 3*100 + 2*4 = 332
 	require.Equal(t, float64(332), got.Entries[0].H)
@@ -1640,7 +1640,7 @@ func TestSmallDaysSitSideBySide(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Greater(t, sharedRows, 0,
-		"days that fit on one row are not sitting side by side; check that the test photos include days of one and of a few photos")
+		"days that fit on one row are not sitting side by side; check that the test items include days of one and of a few items")
 }
 
 // 列数を超える日が行を占有し、ラベルがその日を指すこと。
@@ -1672,18 +1672,18 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	require.Equal(t, 7, res.Span, "1600px is 7 columns, and a day of 20 photos takes all of them")
+	require.Equal(t, 7, res.Span, "1600px is 7 columns, and a day of 20 items takes all of them")
 	require.True(t, res.Full, "a day that takes the row spans the full width of the grid")
 
 	// ラベルはタイルの data-date から作る。テスト写真の先頭の日と一致すること。
-	day := dayOfPhoto(0) // "2026-01-01"
+	day := dayOfMedia(0) // "2026-01-01"
 	parts := strings.Split(day, "-")
 	wantMonth, wantDay := strings.TrimLeft(parts[1], "0"), strings.TrimLeft(parts[2], "0")
 	require.Contains(t, res.Label, wantMonth+"月"+wantDay+"日",
-		"the label does not match the date of the first photo")
+		"the label does not match the date of the first item")
 }
 
-// --- Task: TestScrubberLabelMatchesTheTopPhoto ---
+// --- Task: TestScrubberLabelMatchesTheTopItem ---
 //
 // TestScrubberReachesBothEnds はフラクション0と1、つまり座標系の誤りが
 // 打ち消し合う特異点でしかスクラバーを検証していない。実際にこのブランチの
@@ -1700,7 +1700,7 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 // 正しさは検出できない。月単位で比べており、このテスト写真の月境界は文書の
 // 先頭にしか無いため、48px程度のずれでは答えが変わらない（実測で確認済み）。
 // 座標変換そのものは TestScrollMapsIntoLayoutSpace が押さえている。
-func TestScrubberLabelMatchesTheTopPhoto(t *testing.T) {
+func TestScrubberLabelMatchesTheTopItem(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	rctx, cancel := context.WithTimeout(ctx, 45*time.Second)
@@ -1788,13 +1788,13 @@ func TestScrubberLabelMatchesTheTopPhoto(t *testing.T) {
 	require.False(t, res.Hidden, "the label should be visible while dragging")
 	require.NotEqual(t, -1, res.TopI, "no first tile found in the viewport")
 
-	day := dayOfPhoto(res.TopI)
+	day := dayOfMedia(res.TopI)
 	require.NotEmpty(t, day, "cannot tell which day the first tile (i=%d) belongs to", res.TopI)
 	parts := strings.Split(day, "-")
 	wantMonth := strings.TrimLeft(parts[1], "0")
 	t.Logf("PROBE: label=%q topI=%d day=%s wantMonth=%s", res.Label, res.TopI, day, wantMonth)
 	require.Containsf(t, res.Label, wantMonth+"月",
-		"the month on the scrubber label (%q) does not match the month of the first photo in view (i=%d, day=%s)",
+		"the month on the scrubber label (%q) does not match the month of the first item in view (i=%d, day=%s)",
 		res.Label, res.TopI, day)
 }
 
@@ -1817,7 +1817,7 @@ func TestScrollMapsIntoLayoutSpace(t *testing.T) {
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
 		waitForTiles(10*time.Second),
-		chromedp.Evaluate(scrollToPhotoJS(deepScrollIndex), nil),
+		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
 		chromedp.Evaluate(fmt.Sprintf(`(() => {
 			const L = famifo.current();
 			const spacer = document.querySelector('#spacer');
@@ -1834,17 +1834,17 @@ func TestScrollMapsIntoLayoutSpace(t *testing.T) {
 		"with #spacer at the very top of the document this conversion converts nothing, "+
 			"which makes the test meaningless. Check that the top bar takes up space")
 	require.InDelta(t, got.Expected, got.Converted, 1.0,
-		"the scroll position converted to layout coordinates does not match the top of that photo's row")
+		"the scroll position converted to layout coordinates does not match the top of that item's row")
 }
 
 // --- Task: TestLongScrollDoesNotStallOnSlowServer ---
 
 // 長いスクロールの再現に使う写真。共有の200枚は塊が4つしかなく、
 // 「通り過ぎた塊の取得が滞留する」状況そのものを作れないため別に用意する。
-// 塊の数(= manyPhotoCount / stallChunkSize = 60)が、下まで降りる間に
+// 塊の数(= manyMediaCount / stallChunkSize = 60)が、下まで降りる間に
 // 積み上がる取得要求の上限になる。
 const (
-	manyPhotoCount = 1200
+	manyMediaCount = 1200
 	manyPerDay     = 20
 	stallChunkSize = 20
 
@@ -1860,23 +1860,23 @@ const (
 	stallCatchUp = 4 * time.Second
 )
 
-// prepareManyTestPhotos は manyPhotoCount 枚を manyPerDay 枚ずつの日に分けて登録する。
-func prepareManyTestPhotos(st *store.Store, photoDir string, thumbs *thumb.Provider) error {
-	for i := 0; i < manyPhotoCount; i++ {
-		path := filepath.Join(photoDir, fmt.Sprintf("s%05d.jpg", i))
+// prepareManyTestMedia は manyMediaCount 枚を manyPerDay 枚ずつの日に分けて登録する。
+func prepareManyTestMedia(st *store.Store, mediaDir string, thumbs *thumb.Provider) error {
+	for i := 0; i < manyMediaCount; i++ {
+		path := filepath.Join(mediaDir, fmt.Sprintf("s%05d.jpg", i))
 		takenAt := newestDay.AddDate(0, 0, -(i / manyPerDay)).
 			Add(-time.Duration(i%manyPerDay) * time.Minute)
 		if err := writeTestPhoto(path, i, takenAt); err != nil {
 			return err
 		}
 	}
-	stats, err := indexAll(st, photoDir, thumbs)
+	stats, err := indexAll(st, mediaDir, thumbs)
 	if err != nil {
 		return err
 	}
 	// 滞留の再現には全件が載っている必要がある。1枚でも欠けると本数が変わる。
-	if stats.Indexed != manyPhotoCount {
-		return fmt.Errorf("too few photos were indexed: %d/%d", stats.Indexed, manyPhotoCount)
+	if stats.Indexed != manyMediaCount {
+		return fmt.Errorf("too few items were indexed: %d/%d", stats.Indexed, manyMediaCount)
 	}
 	return nil
 }
@@ -1889,8 +1889,8 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 	t.Helper()
 
 	tempDir := t.TempDir()
-	photoDir := filepath.Join(tempDir, "photos")
-	require.NoError(t, os.MkdirAll(photoDir, 0o755))
+	mediaDir := filepath.Join(tempDir, "items")
+	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
 	thumbs, err := thumb.NewProvider(filepath.Join(tempDir, "thumbs"))
 	require.NoError(t, err)
 
@@ -1898,7 +1898,7 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	require.NoError(t, prepareManyTestPhotos(st, photoDir, thumbs))
+	require.NoError(t, prepareManyTestMedia(st, mediaDir, thumbs))
 
 	webSrv, err := web.NewServer(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
@@ -1965,7 +1965,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 	duringScroll := atomic.LoadInt64(itemsSeen)
 
 	// 手を止めてから、一番古い写真が実際に貼られるまでを測る。
-	wantFrom := manyPhotoCount - stallChunkSize*3
+	wantFrom := manyMediaCount - stallChunkSize*3
 	start := time.Now()
 	pollErr := chromedp.Run(rctx, chromedp.Poll(
 		fmt.Sprintf(`famifo.pastedRange().from >= %d`, wantFrom),
@@ -1980,17 +1980,17 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 
 	t.Logf("caught up in %v: %d /items requests during the scroll, %d in total (%d of them dropped by the browser, %d chunks in all) pasted=%d..%d",
 		elapsed.Round(time.Millisecond), duringScroll, atomic.LoadInt64(itemsSeen),
-		atomic.LoadInt64(itemsDropped), manyPhotoCount/stallChunkSize, pasted.From, pasted.To)
+		atomic.LoadInt64(itemsDropped), manyMediaCount/stallChunkSize, pasted.From, pasted.To)
 
 	require.NoErrorf(t, pollErr,
-		"it ended with the oldest photo never pasted: pasted=%d..%d (want from>=%d) /items requests=%d",
+		"it ended with the oldest item never pasted: pasted=%d..%d (want from>=%d) /items requests=%d",
 		pasted.From, pasted.To, wantFrom, atomic.LoadInt64(itemsSeen))
 	require.Lessf(t, elapsed, stallCatchUp,
 		"the screen took %v to catch up after the scrolling stopped (allowed %v). "+
 			"Requests for the chunks scrolled past are not being aborted, so the chunk where it stopped queues up behind them. "+
 			"%d /items requests during the scroll, %d in total by the time it caught up (%d chunks in all)",
 		elapsed.Round(time.Millisecond), stallCatchUp,
-		duringScroll, atomic.LoadInt64(itemsSeen), manyPhotoCount/stallChunkSize)
+		duringScroll, atomic.LoadInt64(itemsSeen), manyMediaCount/stallChunkSize)
 }
 
 // --- Task: TestLightboxFetchSurvivesAGridRender ---
@@ -2037,7 +2037,7 @@ func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 	))
 
 	require.Equalf(t, "resolved", got,
-		"could not resolve the URL of the oldest photo (%s); repainting the gallery is aborting the lightbox's fetch as well",
+		"could not resolve the URL of the oldest item (%s); repainting the gallery is aborting the lightbox's fetch as well",
 		got)
 }
 
@@ -2046,14 +2046,14 @@ func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 // 共有されたURLを直接開くと、その写真でライトボックスが開くこと。先頭の塊の
 // 外にある写真を選ぶ。サーバーが埋めた通し番号から仮想スクロールが任意の位置へ
 // 飛べていなければ、ここで別の写真が出るか、そもそも開かない。
-func TestPhotoURLOpensTheLightbox(t *testing.T) {
+func TestItemURLOpensTheLightbox(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	const target = testChunkSize + 40 // 初回HTMLに埋まっていない位置
-	want := expectedPhotoURLs(target + 1)[target]
+	want := expectedMediaURLs(target + 1)[target]
 	id := strings.TrimPrefix(want, "/file/")
 
 	err := chromedp.Run(rctx,
@@ -2062,13 +2062,13 @@ func TestPhotoURLOpensTheLightbox(t *testing.T) {
 		waitForTiles(10*time.Second),
 		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
-	require.NoError(t, err, "the lightbox never opened from the photo URL")
+	require.NoError(t, err, "the lightbox never opened from the item URL")
 
 	var got string
 	err = chromedp.Run(rctx, chromedp.Evaluate(
 		`document.querySelector('#lightbox img').getAttribute('src')`, &got))
 	require.NoError(t, err)
-	require.Equal(t, want, got, "the photo URL opened a different photo")
+	require.Equal(t, want, got, "the item URL opened a different item")
 }
 
 // タイルから開いたときもURLが写真のものになり、戻るボタンで閉じてギャラリーへ
@@ -2080,7 +2080,7 @@ func TestBackClosesTheLightbox(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	want := expectedPhotoURLs(1)[0]
+	want := expectedMediaURLs(1)[0]
 	id := strings.TrimPrefix(want, "/file/")
 
 	var path string
@@ -2096,7 +2096,7 @@ func TestBackClosesTheLightbox(t *testing.T) {
 		chromedp.Evaluate(`window.__noReload === true`, &survived),
 	)
 	require.NoError(t, err, "the lightbox never opened from a tile")
-	require.Equal(t, "/item/"+id, path, "the URL does not name the open photo")
+	require.Equal(t, "/item/"+id, path, "the URL does not name the open item")
 	require.True(t, survived, "the page reloaded instead of only pushing history")
 
 	err = chromedp.Run(rctx,
@@ -2116,7 +2116,7 @@ func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	urls := expectedPhotoURLs(4)
+	urls := expectedMediaURLs(4)
 	third := strings.TrimPrefix(urls[3], "/file/")
 
 	var path string
@@ -2136,7 +2136,7 @@ func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
 			chromedp.Poll(fmt.Sprintf(`location.pathname === %s`, strconv.Quote(want)), nil,
 				chromedp.WithPollingTimeout(10*time.Second)),
 		)
-		require.NoErrorf(t, err, "the URL did not follow the swipe to photo %d", i)
+		require.NoErrorf(t, err, "the URL did not follow the swipe to item %d", i)
 	}
 
 	err = chromedp.Run(rctx, chromedp.Evaluate(`location.pathname`, &path))
@@ -2179,8 +2179,8 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 	videoPath := filepath.Join(mediaDir, "clip.mp4")
 	require.NoError(t, os.WriteFile(videoPath, []byte("not a real container"), 0o644))
 
-	photoPath := filepath.Join(mediaDir, "a.jpg")
-	pf, err := os.Create(photoPath)
+	mediaPath := filepath.Join(mediaDir, "a.jpg")
+	pf, err := os.Create(mediaPath)
 	require.NoError(t, err)
 	require.NoError(t, jpeg.Encode(pf, image.NewRGBA(image.Rect(0, 0, 40, 20)), nil))
 	require.NoError(t, pf.Close())
@@ -2190,7 +2190,7 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 	require.NoError(t, st.Upsert(bg,
 		media.Restore(videoPath, time.Unix(1600000100, 0), time.Unix(1600000100, 0))))
 	require.NoError(t, st.Upsert(bg,
-		media.Restore(photoPath, time.Unix(1600000000, 0), time.Unix(1600000000, 0))))
+		media.Restore(mediaPath, time.Unix(1600000000, 0), time.Unix(1600000000, 0))))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	webSrv, err := web.NewServer(st, thumbs, nil, log)

@@ -14,7 +14,7 @@ import (
 func TestGalleryRendersTiles(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	rec := doGet(t, f.h, "/")
 
@@ -29,7 +29,7 @@ func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
 	for i := range 3 {
-		f.addPhoto(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), famifoThumb)
+		f.addMedia(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), famifoThumb)
 	}
 
 	body := doGet(t, f.h, "/").Body.String()
@@ -43,7 +43,7 @@ func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
 func TestGalleryDropsHtmx(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
-	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 
@@ -66,7 +66,7 @@ func TestGalleryEmptyLibrary(t *testing.T) {
 func TestGalleryPointsEveryTileAtThumb(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
+	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 
@@ -78,8 +78,8 @@ func TestGalleryPointsEveryTileAtThumb(t *testing.T) {
 func TestGalleryOrdersNewestFirst(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	old := f.addPhoto(t, "old.jpg", time.Unix(1600000000, 0), famifoThumb)
-	recent := f.addPhoto(t, "new.jpg", time.Unix(1700000000, 0), famifoThumb)
+	old := f.addMedia(t, "old.jpg", time.Unix(1600000000, 0), famifoThumb)
+	recent := f.addMedia(t, "new.jpg", time.Unix(1700000000, 0), famifoThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 
@@ -90,8 +90,8 @@ func TestGalleryOrdersNewestFirst(t *testing.T) {
 func TestTilesReturnsFragmentOnly(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 1)
-	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
-	last := f.addPhoto(t, "b.jpg", time.Unix(1700000000, 0), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	last := f.addMedia(t, "b.jpg", time.Unix(1700000000, 0), famifoThumb)
 
 	rec := doGet(t, f.h, "/tiles?t=1700000000&id="+last.ID())
 
@@ -107,7 +107,7 @@ func TestTilesReturnsRequestedWindow(t *testing.T) {
 	f := newWebFixture(t, 60)
 	var ids []string
 	for i := range 5 {
-		p := f.addPhoto(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), famifoThumb)
+		p := f.addMedia(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), famifoThumb)
 		ids = append(ids, p.ID())
 	}
 
@@ -123,7 +123,7 @@ func TestTilesReturnsRequestedWindow(t *testing.T) {
 func TestTilesHasNoSentinel(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
-	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	body := doGet(t, f.h, "/tiles?offset=0&limit=1").Body.String()
 
@@ -149,7 +149,7 @@ func TestTilesRejectsBadOffset(t *testing.T) {
 func TestTilesDefaultsToFirstWindow(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	body := doGet(t, f.h, "/tiles").Body.String()
 
@@ -181,9 +181,9 @@ func TestGalleryEmbedsDayGroups(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
 	// 新しい順に: 2026-02-08 が2枚、2026-02-03 が1枚
-	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 18, 0, 0, 0, time.Local), famifoThumb)
-	f.addPhoto(t, "b.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), famifoThumb)
-	f.addPhoto(t, "c.jpg", time.Date(2026, 2, 3, 10, 0, 0, 0, time.Local), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 18, 0, 0, 0, time.Local), famifoThumb)
+	f.addMedia(t, "b.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), famifoThumb)
+	f.addMedia(t, "c.jpg", time.Date(2026, 2, 3, 10, 0, 0, 0, time.Local), famifoThumb)
 
 	got := embeddedDayGroups(t, doGet(t, f.h, "/").Body.String())
 
@@ -206,7 +206,7 @@ func TestGalleryEmbedsEmptyDayGroupsForEmptyLibrary(t *testing.T) {
 func TestDatesEndpointIsGone(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
-	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), famifoThumb)
 
 	rec := doGet(t, f.h, "/dates")
 
@@ -225,7 +225,7 @@ func TestTilesTagsEachTileWithLocalDate(t *testing.T) {
 	t.Cleanup(func() { time.Local = orig })
 
 	// ローカルで2月8日の未明。UTCに直すと2月7日になる時刻。
-	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 0, 30, 0, 0, time.Local), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 0, 30, 0, 0, time.Local), famifoThumb)
 
 	body := doGet(t, f.h, "/tiles?offset=0&limit=60").Body.String()
 
@@ -236,7 +236,7 @@ func TestTilesTagsEachTileWithLocalDate(t *testing.T) {
 func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
-	f.addPhoto(t, "a.jpg", time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local), famifoThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 
@@ -247,7 +247,7 @@ func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
 func TestGalleryUsesTheBorrowedThumbForHEIC(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
+	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 
@@ -257,17 +257,17 @@ func TestGalleryUsesTheBorrowedThumbForHEIC(t *testing.T) {
 
 // 写真ごとのURLは、その写真を開いた状態のギャラリーを返す。クライアントは
 // 埋め込まれた通し番号でその位置へ飛ぶので、番号が一覧の並びと一致していること。
-func TestItemOpensTheGalleryAtThePhoto(t *testing.T) {
+func TestItemOpensTheGalleryAtThatItem(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	var photos []string
+	var items []string
 	for i, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
-		p := f.addPhoto(t, name, time.Unix(int64(1600000000+i), 0), famifoThumb)
-		photos = append(photos, p.ID())
+		p := f.addMedia(t, name, time.Unix(int64(1600000000+i), 0), famifoThumb)
+		items = append(items, p.ID())
 	}
 
 	// 新しい順に並ぶので c, b, a。真ん中の b は1番目。
-	rec := doGet(t, f.h, "/item/"+photos[1])
+	rec := doGet(t, f.h, "/item/"+items[1])
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
@@ -277,21 +277,21 @@ func TestItemOpensTheGalleryAtThePhoto(t *testing.T) {
 }
 
 // 消えた写真のURLを共有されても、壊れた画面ではなくギャラリーを出す。
-func TestItemUnknownPhotoRedirectsToTheGallery(t *testing.T) {
+func TestItemUnknownIDRedirectsToTheGallery(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	rec := doGet(t, f.h, "/item/nosuchphoto")
+	rec := doGet(t, f.h, "/item/nosuchid")
 
 	require.Equal(t, http.StatusFound, rec.Code)
 	require.Equal(t, "/", rec.Header().Get("Location"))
 }
 
-func TestGalleryOpensNoPhoto(t *testing.T) {
+func TestGalleryOpensNoItem(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 
@@ -300,10 +300,10 @@ func TestGalleryOpensNoPhoto(t *testing.T) {
 
 // タイルのリンク先は画像そのものではなく写真のページである。新しいタブで開く
 // 操作や、リンクのコピーが意味のあるURLを返すようにするため。
-func TestTilesLinkToThePhotoPage(t *testing.T) {
+func TestTilesLinkToTheItemPage(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 
@@ -316,8 +316,8 @@ func TestTilesLinkToThePhotoPage(t *testing.T) {
 func TestGalleryMarksVideoTiles(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	still := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
-	video := f.addPhoto(t, "clip.mp4", time.Unix(1600000100, 0), noThumb)
+	still := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	video := f.addMedia(t, "clip.mp4", time.Unix(1600000100, 0), noThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 

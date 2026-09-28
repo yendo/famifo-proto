@@ -68,11 +68,11 @@ func TestValidateRejectsBadInput(t *testing.T) {
 func TestValidateAcceptsSiblingDataDir(t *testing.T) {
 	t.Parallel()
 	base := t.TempDir()
-	dir := filepath.Join(base, "photos")
-	data := filepath.Join(base, "photos-data")
+	dir := filepath.Join(base, "items")
+	data := filepath.Join(base, "items-data")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 
-	// "photos-data" は文字列としては "photos" で始まるが、兄弟ディレクトリであり
+	// "items-data" は文字列としては "items" で始まるが、兄弟ディレクトリであり
 	// 中には無い。プレフィックス比較ではなくパス階層で判定できていることの確認。
 	c := config.Config{MediaDirs: []string{dir}, DataDir: data, Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
 
@@ -125,10 +125,10 @@ func TestValidateRejectsDataInsideAnyRoot(t *testing.T) {
 func validConfig(t *testing.T) config.Config {
 	t.Helper()
 	dir := t.TempDir()
-	photos := filepath.Join(dir, "photos")
-	require.NoError(t, os.MkdirAll(photos, 0o755))
+	items := filepath.Join(dir, "items")
+	require.NoError(t, os.MkdirAll(items, 0o755))
 	return config.Config{
-		MediaDirs: []string{photos}, DataDir: filepath.Join(dir, "data"),
+		MediaDirs: []string{items}, DataDir: filepath.Join(dir, "data"),
 		Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 	}
 }

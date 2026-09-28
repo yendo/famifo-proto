@@ -168,16 +168,16 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	require.NoError(t, err)
 
 	dir := t.TempDir()
-	photoDir := filepath.Join(dir, "photos")
-	require.NoError(t, os.MkdirAll(photoDir, 0o755))
+	mediaDir := filepath.Join(dir, "items")
+	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
 	thumbs, err := thumb.NewProvider(filepath.Join(dir, "thumbs"))
 	require.NoError(t, err)
 	st, err := store.Open(filepath.Join(dir, "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 
-	require.NoError(t, writeTestPhoto(filepath.Join(photoDir, "p0000.jpg"), 0, time.Now()))
-	_, err = indexAll(st, photoDir, thumbs)
+	require.NoError(t, writeTestPhoto(filepath.Join(mediaDir, "p0000.jpg"), 0, time.Now()))
+	_, err = indexAll(st, mediaDir, thumbs)
 	require.NoError(t, err)
 
 	sessions, err := session.Open(filepath.Join(dir, "sessions.db"), false, log)

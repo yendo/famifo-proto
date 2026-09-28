@@ -27,7 +27,7 @@ type webFixture struct {
 	h        http.Handler
 	st       *store.Store
 	thumbs   *thumb.Provider
-	photoDir string
+	mediaDir string
 }
 
 func newWebFixture(t *testing.T, chunkSize int) *webFixture {
@@ -39,17 +39,17 @@ func newWebFixture(t *testing.T, chunkSize int) *webFixture {
 
 	thumbs, err := thumb.NewProvider(filepath.Join(base, "thumbs"))
 	require.NoError(t, err)
-	photoDir := filepath.Join(base, "photos")
-	require.NoError(t, os.MkdirAll(photoDir, 0o755))
+	mediaDir := filepath.Join(base, "items")
+	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv, err := web.NewServer(st, thumbs, nil, log)
 	require.NoError(t, err)
 	srv.SetChunkSize(chunkSize)
-	return &webFixture{h: srv.Handler(), st: st, thumbs: thumbs, photoDir: photoDir}
+	return &webFixture{h: srv.Handler(), st: st, thumbs: thumbs, mediaDir: mediaDir}
 }
 
-// thumbKind は addPhoto がどのサムネイルをディスクに置くかを指定する。
+// thumbKind は addMedia がどのサムネイルをディスクに置くかを指定する。
 // 出どころはDBの列ではなくファイルの有無で決まるので、テストが用意するのもファイルである。
 type thumbKind int
 
@@ -59,10 +59,10 @@ const (
 	eadirThumb                   // Synologyのものが @eaDir にある
 )
 
-// addPhoto は原本ファイルとDB行を用意する。kind に応じてサムネイルも置く。
-func (f *webFixture) addPhoto(t *testing.T, name string, takenAt time.Time, kind thumbKind) media.Media {
+// addMedia は原本ファイルとDB行を用意する。kind に応じてサムネイルも置く。
+func (f *webFixture) addMedia(t *testing.T, name string, takenAt time.Time, kind thumbKind) media.Media {
 	t.Helper()
-	path := filepath.Join(f.photoDir, name)
+	path := filepath.Join(f.mediaDir, name)
 	require.NoError(t, os.WriteFile(path, []byte("original-"+name), 0o644))
 
 	p := media.Restore(path, takenAt, takenAt)
@@ -109,7 +109,7 @@ func doGet(t *testing.T, h http.Handler, target string) *httptest.ResponseRecord
 func TestServeThumb(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
@@ -130,7 +130,7 @@ func TestServeThumbNotFoundForUnknownID(t *testing.T) {
 func TestServeThumbFallsBackToTheOriginal(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), noThumb)
+	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), noThumb)
 
 	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
@@ -145,7 +145,7 @@ func TestServeThumbFallsBackToTheOriginal(t *testing.T) {
 func TestServeThumbServesAPlaceholderWhenNothingCanBeShown(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
+	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
 	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
@@ -164,7 +164,7 @@ func TestServeThumbServesAPlaceholderWhenNothingCanBeShown(t *testing.T) {
 func TestServeThumbPicksUpAThumbThatAppearsAfterIndexing(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
+	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 	require.Equal(t, "image/svg+xml",
 		doGet(t, f.h, "/thumb/"+p.ID()).Header().Get("Content-Type"), "there is nothing to serve yet")
 
@@ -179,7 +179,7 @@ func TestServeThumbPicksUpAThumbThatAppearsAfterIndexing(t *testing.T) {
 func TestServeOriginal(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	rec := doGet(t, f.h, "/file/"+p.ID())
 
@@ -191,7 +191,7 @@ func TestServeOriginal(t *testing.T) {
 func TestServeOriginalSetsHEICContentType(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), noThumb)
+	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
 	rec := doGet(t, f.h, "/file/"+p.ID())
 
@@ -230,7 +230,7 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 func TestServeThumbFromEaDir(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
+	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
 	rec := doGet(t, f.h, "/thumb/"+p.ID())
 
@@ -241,7 +241,7 @@ func TestServeThumbFromEaDir(t *testing.T) {
 func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
+	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
 	rec := doGet(t, f.h, "/file/"+p.ID())
 
@@ -255,7 +255,7 @@ func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), eadirThumb)
+	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), eadirThumb)
 
 	rec := doGet(t, f.h, "/file/"+p.ID())
 
@@ -271,7 +271,7 @@ func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 func TestResponsesCarryTheSecurityHeaders(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addPhoto(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	for _, target := range []string{"/", "/tiles", "/static/app.css", "/thumb/" + p.ID(), "/file/" + p.ID()} {
 		t.Run(target, func(t *testing.T) {
