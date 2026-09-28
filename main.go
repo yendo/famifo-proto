@@ -267,11 +267,15 @@ func startupTimezone(t time.Time) string {
 	return t.Format("MST-07:00")
 }
 
+// shutdownTimeout は処理中のリクエストを待つ上限。docker stop は SIGTERM のあと
+// 既定で10秒後に SIGKILL を送るので、DBを閉じるぶんも含めてその枠に収める。
+const shutdownTimeout = 5 * time.Second
+
 // shutdownHTTP は待ち受けを猶予付きで止め、待ち受けの失敗と停止の失敗を
 // 1つのエラーにまとめる。listenErrは停止を待つ前に受け取っていた失敗で、
 // 受け取っていなければnilが渡る。
 func shutdownHTTP(httpSrv *http.Server, listenErrCh <-chan error, listenErr error) error {
-	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	shutErr := httpSrv.Shutdown(shutCtx)
 
