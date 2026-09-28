@@ -14,23 +14,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexedwards/scs/v2"
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/session"
 )
 
-func openStore(t *testing.T) *session.Store {
+func newManager(t *testing.T) *session.Manager {
 	t.Helper()
-	// 親ディレクトリが無い場所を指す。Openが作ることもここで確かめる。
+	// 親ディレクトリが無い場所を指す。Newが作ることもここで確かめる。
 	path := filepath.Join(t.TempDir(), "sub", "sessions.db")
-	st, err := session.Open(path, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	st, err := session.New(path, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 	return st
 }
 
 // serve は1リクエストをLoadAndSaveに通し、応答を返す。cookiesを渡すとそれを載せる。
-func serve(t *testing.T, m *scs.SessionManager, h http.HandlerFunc, cookies ...*http.Cookie) *http.Response {
+func serve(t *testing.T, m *session.Manager, h http.HandlerFunc, cookies ...*http.Cookie) *http.Response {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	for _, c := range cookies {
@@ -51,7 +50,7 @@ func cookieNamed(resp *http.Response, name string) *http.Cookie {
 }
 
 func TestSessionDataSurvivesARoundTrip(t *testing.T) {
-	m := openStore(t).Manager()
+	m := newManager(t)
 
 	put := serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
 		m.Put(r.Context(), "user", "yendo")
@@ -70,7 +69,7 @@ func TestSessionDataSurvivesARoundTrip(t *testing.T) {
 }
 
 func TestAnExpiredSessionIsNotFound(t *testing.T) {
-	m := openStore(t).Manager()
+	m := newManager(t)
 
 	put := serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
 		m.Put(r.Context(), "user", "yendo")
@@ -87,7 +86,7 @@ func TestAnExpiredSessionIsNotFound(t *testing.T) {
 }
 
 func TestDestroyRemovesTheSession(t *testing.T) {
-	m := openStore(t).Manager()
+	m := newManager(t)
 
 	put := serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
 		m.Put(r.Context(), "user", "yendo")
@@ -108,12 +107,12 @@ func TestDestroyRemovesTheSession(t *testing.T) {
 
 func TestSecureFollowsTheArgument(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.db")
-	st, err := session.Open(path, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	st, err := session.New(path, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 
-	resp := serve(t, st.Manager(), func(_ http.ResponseWriter, r *http.Request) {
-		st.Manager().Put(r.Context(), "user", "yendo")
+	resp := serve(t, st, func(_ http.ResponseWriter, r *http.Request) {
+		st.Put(r.Context(), "user", "yendo")
 	})
 	require.True(t, cookieNamed(resp, session.CookieName).Secure)
 }
@@ -124,11 +123,11 @@ func TestTheDatabaseCanBeReopened(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.db")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	first, err := session.Open(path, false, log)
+	first, err := session.New(path, false, log)
 	require.NoError(t, err)
 	require.NoError(t, first.Close())
 
-	second, err := session.Open(path, false, log)
+	second, err := session.New(path, false, log)
 	require.NoError(t, err)
 	require.NoError(t, second.Close())
 }

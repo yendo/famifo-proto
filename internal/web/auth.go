@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alexedwards/scs/v2"
 	"github.com/yendo/famifo-proto/internal/oidcauth"
+	"github.com/yendo/famifo-proto/internal/session"
 )
 
 // flowTTL は認可の往復に許す時間。ログイン画面を開いたまま放置した場合の上限になる。
@@ -51,7 +51,7 @@ type Auth struct {
 	oidc Provider
 	// sessions はセッションの保管と持ち回りを担う。Cookieの名前も属性も、
 	// 保管先のDBも internal/session が組み立てて設定してある。
-	sessions *scs.SessionManager
+	sessions *session.Manager
 	// externalURL はfamifoが外から見えるURL。RP-Initiated Logoutの
 	// post_logout_redirect_uriを組み立てるのに使う。
 	externalURL string
@@ -59,7 +59,7 @@ type Auth struct {
 }
 
 // NewAuth はAuthを作る。externalURL はfamifoが外から見えるURL。
-func NewAuth(oidc Provider, sessions *scs.SessionManager, externalURL string, log *slog.Logger) *Auth {
+func NewAuth(oidc Provider, sessions *session.Manager, externalURL string, log *slog.Logger) *Auth {
 	return &Auth{oidc: oidc, sessions: sessions, externalURL: externalURL, log: log}
 }
 

@@ -1,7 +1,7 @@
 // Package session はログインセッションの保管を担う。
 //
 // OIDCもHTTPのルーティングも知らない。セッションの置き場（sessions.db）を開き、
-// scsのマネージャを組み立てて渡すだけである。何を載せるかは呼び出し側が決める。
+// それを読み書きするscsのマネージャを返すだけである。何を載せるかは呼び出し側が決める。
 package session
 
 import (
@@ -39,21 +39,24 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON sessions(expiry);
 `
 
-// Store はセッションのDBと、それを使うscsのマネージャを保持する。
+// Manager はfamifoの設定が入ったscsのマネージャである。scs.SessionManager を
+// 埋め込んであるので、呼び出し側は Put / PopString / RenewToken / Destroy を
+// 直に呼ぶ。包み直すファサードは意味がないので作らない。
 //
-// 写真のインデックス（famifo.db）とは別のファイルに置く。このリポジトリは
-// スキーマ移行を書かず、列を変えたらDBを消して作り直す運用なので、同居させると
-// インデックスを作り直すたびに全端末がログアウトすることになる。分けておけば、
-// 逆に「全端末を一斉に切る」はこのファイルを消すだけで済む。
-type Store struct {
+// 埋め込んだマネージャが読み書きするDBは、写真のインデックス（famifo.db）とは
+// 別のファイルに置く。このリポジトリはスキーマ移行を書かず、列を変えたらDBを
+// 消して作り直す運用なので、同居させるとインデックスを作り直すたびに全端末が
+// ログアウトすることになる。分けておけば、逆に「全端末を一斉に切る」は
+// このファイルを消すだけで済む。
+type Manager struct {
+	*scs.SessionManager
 	db      *sql.DB
 	backing *sqlite3store.SQLite3Store
-	mgr     *scs.SessionManager
 }
 
-// Open はセッションDBを開き、scsのマネージャを組み立てる。親ディレクトリが
+// New はセッションDBを開き、scsのマネージャを組み立てる。親ディレクトリが
 // 無ければ作る。secure はCookieに Secure を付けるかで、外部URLがhttpsのときだけ真。
-func Open(dbPath string, secure bool, log *slog.Logger) (*Store, error) {
+func New(dbPath string, secure bool, log *slog.Logger) (*Manager, error) {
 	// SQLiteは親ディレクトリを作らない。無いまま開くと sql.Open は遅延接続なので
 	// 成功し、db.Ping() が "unable to open database file" で落ちる。
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
@@ -89,17 +92,13 @@ func Open(dbPath string, secure bool, log *slog.Logger) (*Store, error) {
 		log.Error("cannot load or save the session", "err", err, "path", r.URL.Path)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
-	return &Store{db: db, backing: backing, mgr: mgr}, nil
+	return &Manager{SessionManager: mgr, db: db, backing: backing}, nil
 }
-
-// Manager はscsのマネージャを返す。呼び出し側が Put / PopString / RenewToken /
-// Destroy を直に呼ぶ。全部を包み直すファサードは意味がないので作らない。
-func (s *Store) Manager() *scs.SessionManager { return s.mgr }
 
 // Close は掃除ゴルーチンを止めてからDBを閉じる。
 // sqlite3store.New は5分ごとに期限切れを消すゴルーチンを起こす。止めないと
-// Storeがガベージコレクトされない。
-func (s *Store) Close() error {
-	s.backing.StopCleanup()
-	return s.db.Close()
+// Managerがガベージコレクトされない。
+func (m *Manager) Close() error {
+	m.backing.StopCleanup()
+	return m.db.Close()
 }

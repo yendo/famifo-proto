@@ -180,11 +180,11 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	_, err = indexAll(st, mediaDir, thumbs)
 	require.NoError(t, err)
 
-	sessions, err := session.Open(filepath.Join(dir, "sessions.db"), false, log)
+	sessions, err := session.New(filepath.Join(dir, "sessions.db"), false, log)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sessions.Close() })
 
-	gallery, err := web.NewGallery(st, thumbs, web.NewAuth(client, sessions.Manager(), "", log), log)
+	gallery, err := web.NewGallery(st, thumbs, web.NewAuth(client, sessions, "", log), log)
 	require.NoError(t, err)
 
 	ts := httptest.NewUnstartedServer(gallery.Handler())

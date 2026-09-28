@@ -74,12 +74,12 @@ func newAuthFixtureWith(t *testing.T, prov *fakeProvider, secure bool) *authFixt
 	require.NoError(t, err)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	sessions, err := session.Open(dir+"/sessions.db", secure, log)
+	sessions, err := session.New(dir+"/sessions.db", secure, log)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sessions.Close() })
 
 	gallery, err := web.NewGallery(st, thumbs,
-		web.NewAuth(prov, sessions.Manager(), "https://famifo.example.invalid", log),
+		web.NewAuth(prov, sessions, "https://famifo.example.invalid", log),
 		log)
 	require.NoError(t, err)
 	return &authFixture{h: gallery.Handler(), prov: prov}
