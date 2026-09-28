@@ -141,16 +141,16 @@ func (ix *Indexer) removeFile(ctx context.Context, path string) error {
 	return nil
 }
 
-// removeTree はdir配下に登録されている写真を、まとめてインデックスと
+// removeTree はdir配下に登録されている写真と動画を、まとめてインデックスと
 // サムネイルの置き場から消す。ディレクトリのリネーム/移動はfsnotifyでは子ファイルごとの
 // イベントが来ないため、パスの前方一致で一括削除する必要がある。
 // 該当が無いパスに対しては何もしない。
 func (ix *Indexer) removeTree(ctx context.Context, dir string) error {
-	photos, err := ix.st.DeleteByPathPrefix(ctx, dir)
+	items, err := ix.st.DeleteByPathPrefix(ctx, dir)
 	if err != nil {
 		return err
 	}
-	for _, p := range photos {
+	for _, p := range items {
 		if err := ix.thumbs.Remove(p.ID()); err != nil {
 			// DBからは消えているので、サムネイルの消し残しは致命的ではない
 			ix.log.Warn("failed to delete the thumbnail", "id", p.ID(), "err", err)

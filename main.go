@@ -101,7 +101,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		auth = &web.Auth{OIDC: oidcClient, Sessions: sessions.Manager(), ExternalURL: cfg.ExternalURL}
 		log.Info("authentication is on", "issuer", cfg.OIDCIssuer, "redirect", cfg.RedirectURI())
 	} else {
-		log.Warn("authentication is off, anyone who can reach this address can see the photos")
+		log.Warn("authentication is off, anyone who can reach this address can see the media")
 	}
 
 	srv, err := web.NewServer(st, thumbs, auth, log)

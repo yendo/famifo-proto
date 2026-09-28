@@ -1,7 +1,7 @@
 {{define "tiles"}}
 {{/* id は貼り替えを差分で当てるときの対応付けに使う。これが無いと位置で
      照合され、1行スクロールしただけで全タイルの src が書き換わる。 */}}
-{{range .Photos}}
+{{range .Media}}
 <a class="tile" id="t-{{.ID}}" href="{{.PageURL}}" data-full="{{.FullURL}}" data-date="{{.Date}}"{{if .IsVideo}} data-video="1"{{end}}>
   <img src="{{.ThumbURL}}" alt="" loading="lazy" decoding="async">
 </a>
