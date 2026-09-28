@@ -300,14 +300,14 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	webSrv, err := web.NewServer(st, thumbs, nil, log)
+	gallery, err := web.NewGallery(st, thumbs, nil, log)
 	if err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
 	}
-	webSrv.SetChunkSize(testChunkSize)
+	gallery.SetChunkSize(testChunkSize)
 
-	srv = httptest.NewServer(webSrv.Handler())
+	srv = httptest.NewServer(gallery.Handler())
 	return tempDir, srv, func() { st.Close() }, nil
 }
 
@@ -1900,12 +1900,12 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 
 	require.NoError(t, prepareManyTestMedia(st, mediaDir, thumbs))
 
-	webSrv, err := web.NewServer(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gallery, err := web.NewGallery(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
-	webSrv.SetChunkSize(stallChunkSize)
+	gallery.SetChunkSize(stallChunkSize)
 
 	var items, dropped int64
-	h := webSrv.Handler()
+	h := gallery.Handler()
 	gate := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/tiles" {
@@ -2193,9 +2193,9 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 		media.Restore(mediaPath, time.Unix(1600000000, 0), time.Unix(1600000000, 0))))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	webSrv, err := web.NewServer(st, thumbs, nil, log)
+	gallery, err := web.NewGallery(st, thumbs, nil, log)
 	require.NoError(t, err)
-	srv := httptest.NewServer(webSrv.Handler())
+	srv := httptest.NewServer(gallery.Handler())
 	t.Cleanup(srv.Close)
 
 	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)

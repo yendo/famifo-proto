@@ -46,8 +46,8 @@ type galleryView struct {
 }
 
 // buildRange はオフセット指定で1窓枠分を組み立てる。
-func (s *Server) buildRange(r *http.Request, offset, limit int) (tilesView, error) {
-	items, err := s.st.ListRange(r.Context(), offset, limit)
+func (g *Gallery) buildRange(r *http.Request, offset, limit int) (tilesView, error) {
+	items, err := g.st.ListRange(r.Context(), offset, limit)
 	if err != nil {
 		return tilesView{}, err
 	}

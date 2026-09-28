@@ -104,7 +104,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Warn("authentication is off, anyone who can reach this address can see the media")
 	}
 
-	srv, err := web.NewServer(st, thumbs, auth, log)
+	gallery, err := web.NewGallery(st, thumbs, auth, log)
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// listenErrChは1要素バッファ: ListenAndServeの失敗をrunの戻り値まで伝え、
 	// プロセスが異常終了時に0で終了しないようにする。
 	listenErrCh := make(chan error, 1)
-	httpSrv := &http.Server{Addr: cfg.Addr, Handler: srv.Handler()}
+	httpSrv := &http.Server{Addr: cfg.Addr, Handler: gallery.Handler()}
 	go func() {
 		log.Info("starting HTTP server", "addr", cfg.Addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

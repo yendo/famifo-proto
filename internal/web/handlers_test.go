@@ -43,10 +43,10 @@ func newWebFixture(t *testing.T, chunkSize int) *webFixture {
 	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv, err := web.NewServer(st, thumbs, nil, log)
+	gallery, err := web.NewGallery(st, thumbs, nil, log)
 	require.NoError(t, err)
-	srv.SetChunkSize(chunkSize)
-	return &webFixture{h: srv.Handler(), st: st, thumbs: thumbs, mediaDir: mediaDir}
+	gallery.SetChunkSize(chunkSize)
+	return &webFixture{h: gallery.Handler(), st: st, thumbs: thumbs, mediaDir: mediaDir}
 }
 
 // thumbKind は addMedia がどのサムネイルをディスクに置くかを指定する。

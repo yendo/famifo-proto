@@ -16,8 +16,8 @@ import (
 const noOpenItem = -1
 
 // handleGallery はギャラリーのトップページを返す。
-func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
-	s.renderGallery(w, r, noOpenItem)
+func (g *Gallery) handleGallery(w http.ResponseWriter, r *http.Request) {
+	g.renderGallery(w, r, noOpenItem)
 }
 
 // handleItem は写真ごとのURLを受け、その写真を開いた状態のギャラリーを返す。
@@ -25,8 +25,8 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 //
 // 消えた写真のURLを共有されることは普通に起きる。404にすると行き止まりになるので、
 // ギャラリーへ送る。
-func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
-	rank, err := s.st.RankOf(r.Context(), r.PathValue("id"))
+func (g *Gallery) handleItem(w http.ResponseWriter, r *http.Request) {
+	rank, err := g.st.RankOf(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -35,24 +35,24 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.renderGallery(w, r, rank)
+	g.renderGallery(w, r, rank)
 }
 
 // renderGallery はギャラリーのHTMLを組み立てて返す。openIndex は開いた状態で
 // 表示する写真の通し番号で、noOpenItem なら閉じたまま開く。
 // 先頭の塊を埋めた状態で返すので、開いた直後に灰色の画面が出ない。
-func (s *Server) renderGallery(w http.ResponseWriter, r *http.Request, openIndex int) {
-	tiles, err := s.buildRange(r, 0, s.chunkSize)
+func (g *Gallery) renderGallery(w http.ResponseWriter, r *http.Request, openIndex int) {
+	tiles, err := g.buildRange(r, 0, g.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	total, err := s.st.Count(r.Context())
+	total, err := g.st.Count(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	days, err := s.st.DayGroups(r.Context())
+	days, err := g.st.DayGroups(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -69,47 +69,47 @@ func (s *Server) renderGallery(w http.ResponseWriter, r *http.Request, openIndex
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	view := galleryView{
-		tilesView: tiles, Total: total, ChunkSize: s.chunkSize,
+		tilesView: tiles, Total: total, ChunkSize: g.chunkSize,
 		DayGroups: template.JS(raw), OpenIndex: openIndex,
-		AuthEnabled: s.auth != nil,
+		AuthEnabled: g.auth != nil,
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "gallery", view); err != nil {
+	if err := g.tmpl.ExecuteTemplate(w, "gallery", view); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		s.log.Error("failed to render the gallery template", "err", err)
+		g.log.Error("failed to render the gallery template", "err", err)
 		return
 	}
 }
 
 // handleTiles は仮想スクロール用のHTML断片を返す。
 // 初回ページと同じテンプレートを使い、マークアップを1箇所に保つ。
-func (s *Server) handleTiles(w http.ResponseWriter, r *http.Request) {
-	offset, limit, err := parseWindow(r, s.chunkSize)
+func (g *Gallery) handleTiles(w http.ResponseWriter, r *http.Request) {
+	offset, limit, err := parseWindow(r, g.chunkSize)
 	if err != nil {
 		http.Error(w, "bad range", http.StatusBadRequest)
 		return
 	}
-	tiles, err := s.buildRange(r, offset, limit)
+	tiles, err := g.buildRange(r, offset, limit)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "tiles", tiles); err != nil {
+	if err := g.tmpl.ExecuteTemplate(w, "tiles", tiles); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		s.log.Error("failed to render the tiles template", "err", err)
+		g.log.Error("failed to render the tiles template", "err", err)
 		return
 	}
 }
 
 // handleThumb は一覧のタイルを配信する。どのファイルを出すかは thumb が決める。
 // 出せる絵が無ければプレースホルダに差し替えるので、404にはならない。
-func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.lookupMedia(w, r)
+func (g *Gallery) handleThumb(w http.ResponseWriter, r *http.Request) {
+	p, ok := g.lookupMedia(w, r)
 	if !ok {
 		return
 	}
-	path, contentType, ok := s.thumbs.SmallPath(p)
+	path, contentType, ok := g.thumbs.SmallPath(p)
 	if !ok {
 		serveNoPreview(w)
 		return
@@ -121,12 +121,12 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleFile は拡大表示用の画像を配信する。
-func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.lookupMedia(w, r)
+func (g *Gallery) handleFile(w http.ResponseWriter, r *http.Request) {
+	p, ok := g.lookupMedia(w, r)
 	if !ok {
 		return
 	}
-	path, contentType := s.thumbs.LargePath(p)
+	path, contentType := g.thumbs.LargePath(p)
 	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
 	// 先に設定しておけばServeContentは上書きしない。
 	w.Header().Set("Content-Type", contentType)
@@ -169,8 +169,8 @@ func serveNoPreview(w http.ResponseWriter) {
 
 // lookupMedia はURLのIDから写真を引く。
 // パスではなくIDを経由することで、インデックスに無いファイルは配信できない。
-func (s *Server) lookupMedia(w http.ResponseWriter, r *http.Request) (media.Media, bool) {
-	p, err := s.st.GetByID(r.Context(), r.PathValue("id"))
+func (g *Gallery) lookupMedia(w http.ResponseWriter, r *http.Request) (media.Media, bool) {
+	p, err := g.st.GetByID(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return media.Media{}, false

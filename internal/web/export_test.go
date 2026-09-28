@@ -8,4 +8,4 @@ package web
 //
 // ハンドラは別goroutineから chunkSize を読むので、Handler() を配信に出す前に
 // のみ呼ぶこと。
-func (s *Server) SetChunkSize(n int) { s.chunkSize = n }
+func (g *Gallery) SetChunkSize(n int) { g.chunkSize = n }

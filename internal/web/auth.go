@@ -45,7 +45,7 @@ type Provider interface {
 	LogoutURL(postLogoutRedirectURI, idTokenHint string) (string, bool)
 }
 
-// Auth は認証の手段をまとめる。NewServer に nil を渡すと認証しない。
+// Auth は認証の手段をまとめる。NewGallery に nil を渡すと認証しない。
 type Auth struct {
 	OIDC Provider
 	// Sessions はセッションの保管と持ち回りを担う。Cookieの名前も属性も、
@@ -57,12 +57,12 @@ type Auth struct {
 }
 
 // authenticate は認証を要求するミドルウェア。auth が nil なら素通しする。
-func (s *Server) authenticate(next http.Handler) http.Handler {
-	if s.auth == nil {
+func (g *Gallery) authenticate(next http.Handler) http.Handler {
+	if g.auth == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.currentUser(r) != "" {
+		if g.currentUser(r) != "" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -82,8 +82,8 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 //
 // セッションが無い、期限切れ、ログアウト済み、知らないトークンは、どれもここでは
 // 「userが入っていない」に落ちる。サーバーから見ればすべて「その行が無い」である。
-func (s *Server) currentUser(r *http.Request) string {
-	return s.auth.Sessions.GetString(r.Context(), keyUser)
+func (g *Gallery) currentUser(r *http.Request) string {
+	return g.auth.Sessions.GetString(r.Context(), keyUser)
 }
 
 func isDataPath(p string) bool {
@@ -95,90 +95,90 @@ func isDataPath(p string) bool {
 // 先にDestroyするのは、ログインの開始が「今のセッションを捨てて入り直す」操作
 // だからである。すでにログイン済みの端末で /login を開いた場合も、古いセッションは
 // ここで破棄される。セッション固定への備えも兼ねる。
-func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+func (g *Gallery) handleLogin(w http.ResponseWriter, r *http.Request) {
 	p, err := oidcauth.NewParams()
 	if err != nil {
-		s.log.Error("cannot start the login flow", "err", err)
+		g.log.Error("cannot start the login flow", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	ctx := r.Context()
-	if err := s.auth.Sessions.Destroy(ctx); err != nil {
-		s.log.Error("cannot start the login flow", "err", err)
+	if err := g.auth.Sessions.Destroy(ctx); err != nil {
+		g.log.Error("cannot start the login flow", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.auth.Sessions.Put(ctx, keyState, p.State)
-	s.auth.Sessions.Put(ctx, keyNonce, p.Nonce)
-	s.auth.Sessions.Put(ctx, keyVerifier, p.Verifier)
-	s.auth.Sessions.Put(ctx, keyNext, safeNext(r.URL.Query().Get("next")))
+	g.auth.Sessions.Put(ctx, keyState, p.State)
+	g.auth.Sessions.Put(ctx, keyNonce, p.Nonce)
+	g.auth.Sessions.Put(ctx, keyVerifier, p.Verifier)
+	g.auth.Sessions.Put(ctx, keyNext, safeNext(r.URL.Query().Get("next")))
 	// 往復が終わるまでの短い期限にする。callbackのRenewTokenが30日に引き直すので、
 	// 放置されたログインの試みだけがここで期限切れになる。
-	s.auth.Sessions.SetDeadline(ctx, time.Now().Add(flowTTL))
-	http.Redirect(w, r, s.auth.OIDC.AuthURL(p), http.StatusFound)
+	g.auth.Sessions.SetDeadline(ctx, time.Now().Add(flowTTL))
+	http.Redirect(w, r, g.auth.OIDC.AuthURL(p), http.StatusFound)
 }
 
 // handleCallback は認可コードを受け取ってセッションを発行する。
-func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
+func (g *Gallery) handleCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// Popで取り出す。往復に使った値は用済みなので、セッションに残さない。
-	state := s.auth.Sessions.PopString(ctx, keyState)
-	nonce := s.auth.Sessions.PopString(ctx, keyNonce)
-	verifier := s.auth.Sessions.PopString(ctx, keyVerifier)
-	next := s.auth.Sessions.PopString(ctx, keyNext)
+	state := g.auth.Sessions.PopString(ctx, keyState)
+	nonce := g.auth.Sessions.PopString(ctx, keyNonce)
+	verifier := g.auth.Sessions.PopString(ctx, keyVerifier)
+	next := g.auth.Sessions.PopString(ctx, keyNext)
 	// セッションが無い、期限切れ、すでに使い切った往復は、どれもstateが空になる。
 	if state == "" {
-		s.callbackError(w, r, "the login attempt has expired, please start again", http.StatusBadRequest)
+		g.callbackError(w, r, "the login attempt has expired, please start again", http.StatusBadRequest)
 		return
 	}
 	// stateが合わないものを通すとCSRFになる。
 	if q := r.URL.Query().Get("state"); q != state {
-		s.callbackError(w, r, "the login attempt does not match, please start again", http.StatusBadRequest)
+		g.callbackError(w, r, "the login attempt does not match, please start again", http.StatusBadRequest)
 		return
 	}
 	if e := r.URL.Query().Get("error"); e != "" {
-		s.log.Warn("the identity provider refused the login", "err", e)
-		s.callbackError(w, r, "the identity provider refused the login", http.StatusBadRequest)
+		g.log.Warn("the identity provider refused the login", "err", e)
+		g.callbackError(w, r, "the identity provider refused the login", http.StatusBadRequest)
 		return
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		s.callbackError(w, r, "the identity provider returned no code", http.StatusBadRequest)
+		g.callbackError(w, r, "the identity provider returned no code", http.StatusBadRequest)
 		return
 	}
 
-	id, err := s.auth.OIDC.Exchange(ctx, code, oidcauth.Params{State: state, Nonce: nonce, Verifier: verifier})
+	id, err := g.auth.OIDC.Exchange(ctx, code, oidcauth.Params{State: state, Nonce: nonce, Verifier: verifier})
 	if err != nil {
 		// 「IdPに届かない」と「IdPが応答したうえで拒んだ」は原因の調べ方が違う。
 		// 実機のインシデントでは両方が同じ「IdPに到達できない」に丸められ、
 		// 調査が違う方向へ進んだ。ProviderErrorが載っていれば後者である。
 		var perr *oidcauth.ProviderError
 		if errors.As(err, &perr) {
-			s.log.Error("the identity provider refused the login", "status", perr.StatusCode, "body", perr.Body)
+			g.log.Error("the identity provider refused the login", "status", perr.StatusCode, "body", perr.Body)
 			// 502はここでは正しくない。502は上流から届いた応答が不正なときの
 			// もので、ここでは上流は普通に応答し、そのうえで拒んだだけである。
 			// 503は「今は無理だが、また試して良い」を表す。実際に効くことが
 			// 多い（インシデントはどれも再試行で通っている）。
-			s.callbackError(w, r, "the identity provider refused the sign-in, please try again", http.StatusServiceUnavailable)
+			g.callbackError(w, r, "the identity provider refused the sign-in, please try again", http.StatusServiceUnavailable)
 			return
 		}
 		// famifo は動いているがIdPに届かなかった、という区別を残す。
-		s.log.Error("cannot complete the login", "err", err)
-		s.callbackError(w, r, "cannot reach the identity provider", http.StatusBadGateway)
+		g.log.Error("cannot complete the login", "err", err)
+		g.callbackError(w, r, "cannot reach the identity provider", http.StatusBadGateway)
 		return
 	}
 	// トークンを振り直してからログイン済みにする。往復のあいだ使っていたトークンを
 	// そのまま昇格させない（セッション固定への備え）。期限もここで30日に戻る。
-	if err := s.auth.Sessions.RenewToken(ctx); err != nil {
-		s.log.Error("cannot issue the session", "err", err)
+	if err := g.auth.Sessions.RenewToken(ctx); err != nil {
+		g.log.Error("cannot issue the session", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.auth.Sessions.Put(ctx, keyUser, id.Username)
+	g.auth.Sessions.Put(ctx, keyUser, id.Username)
 	// サインアウトのときにIdPへ渡すhint。セッションはサーバー側（sessions.db）に
 	// あるので、1KB前後のトークンを載せてもCookieの大きさには効かない。
-	s.auth.Sessions.Put(ctx, keyIDToken, id.IDToken)
-	s.log.Info("signed in", "user", id.Username)
+	g.auth.Sessions.Put(ctx, keyIDToken, id.IDToken)
+	g.log.Info("signed in", "user", id.Username)
 	http.Redirect(w, r, safeNext(next), http.StatusFound)
 }
 
@@ -199,38 +199,38 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 // Cookieを消したあとそちらへ送る。1回の操作でIdP側のセッションも終わる。
 // 対応していなければ（実機ではSynology SSO Serverがこれにあたる）、
 // famifo自身のセッションを終えたことを伝える案内ページを返す。
-func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+func (g *Gallery) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// hintはDestroyより前に読む。あとからでは行が消えていて空になり、IdPは
 	// post_logout_redirect_uri を尊重しなくてよくなる（/signed-outに帰ってこない）。
-	hint := s.auth.Sessions.GetString(r.Context(), keyIDToken)
-	if err := s.auth.Sessions.Destroy(r.Context()); err != nil {
-		s.log.Error("cannot sign out", "err", err)
+	hint := g.auth.Sessions.GetString(r.Context(), keyIDToken)
+	if err := g.auth.Sessions.Destroy(r.Context()); err != nil {
+		g.log.Error("cannot sign out", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if u, ok := s.auth.OIDC.LogoutURL(s.signedOutURL(), hint); ok {
+	if u, ok := g.auth.OIDC.LogoutURL(g.signedOutURL(), hint); ok {
 		http.Redirect(w, r, u, http.StatusFound)
 		return
 	}
-	s.renderSignedOut(w)
+	g.renderSignedOut(w)
 }
 
 // handleSignedOut はRP-Initiated Logoutの戻り先、かつ /logout が
 // end_session_endpoint を持たないIdPのときに見せる案内ページ。
 // ミドルウェアの外側（認証不要な経路）に登録してあるので、セッションが
 // 無くても届く。
-func (s *Server) handleSignedOut(w http.ResponseWriter, r *http.Request) {
-	s.renderSignedOut(w)
+func (g *Gallery) handleSignedOut(w http.ResponseWriter, r *http.Request) {
+	g.renderSignedOut(w)
 }
 
 // signedOutURL はRP-Initiated Logoutのpost_logout_redirect_uriに渡す、
 // famifo自身の絶対URL。IdPはここへブラウザを送り返す。
-func (s *Server) signedOutURL() string {
-	return strings.TrimSuffix(s.auth.ExternalURL, "/") + "/signed-out"
+func (g *Gallery) signedOutURL() string {
+	return strings.TrimSuffix(g.auth.ExternalURL, "/") + "/signed-out"
 }
 
-func (s *Server) renderSignedOut(w http.ResponseWriter) {
-	s.writeHTMLPage(w, http.StatusOK, "Signed out", `<link rel="stylesheet" href="/static/app.css">`+
+func (g *Gallery) renderSignedOut(w http.ResponseWriter) {
+	g.writeHTMLPage(w, http.StatusOK, "Signed out", `<link rel="stylesheet" href="/static/app.css">`+
 		`<p>You have been signed out of famifo.</p>`+
 		`<p>The sign-in at the login screen may still be open, separately from this. That's why signing in `+
 		`again may not ask you anything.</p>`+
@@ -267,18 +267,18 @@ func safeNext(next string) string {
 // 戻る手段がない。ここでセッションも破棄する。残すと、失敗した往復のあとも
 // 中途半端な状態が最長flowTTLぶん生き、「やり直してください」が実際にはやり直し
 // にならない（別タブが往復を上書きしてここに来るのは日常的に起きる）。
-func (s *Server) callbackError(w http.ResponseWriter, r *http.Request, message string, status int) {
-	if err := s.auth.Sessions.Destroy(r.Context()); err != nil {
-		s.log.Error("cannot discard the failed login attempt", "err", err)
+func (g *Gallery) callbackError(w http.ResponseWriter, r *http.Request, message string, status int) {
+	if err := g.auth.Sessions.Destroy(r.Context()); err != nil {
+		g.log.Error("cannot discard the failed login attempt", "err", err)
 	}
-	s.writeHTMLPage(w, status, "Sign-in failed",
+	g.writeHTMLPage(w, status, "Sign-in failed",
 		fmt.Sprintf(`<p>%s</p><p><a href="/login">Try signing in again</a></p>`, html.EscapeString(message)))
 }
 
 // writeHTMLPage は認証の内側を経由しない小さなHTMLページを書き出す。bodyHTML
 // はすでに安全な断片であることを呼び出し側が保証する（利用者由来の文字列を
 // 混ぜるときはhtml.EscapeStringを通すこと）。
-func (s *Server) writeHTMLPage(w http.ResponseWriter, status int, title, bodyHTML string) {
+func (g *Gallery) writeHTMLPage(w http.ResponseWriter, status int, title, bodyHTML string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `<!doctype html><title>%s</title>%s`, html.EscapeString(title), bodyHTML)

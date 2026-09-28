@@ -7,7 +7,7 @@
 // 一切通さない。したがって Provider インターフェース、Params が一時Cookieの
 // JSON を往復すること、Identity.Username がセッションのpayloadになることは、
 // これまでどこにもテストされていなかった。このファイルは、本物の oidcauth.Client を
-// 本物の web.Server に対して動かし、ブラウザで実際にリダイレクトを辿らせて
+// 本物の web.Gallery に対して動かし、ブラウザで実際にリダイレクトを辿らせて
 // その境目を通す。
 package web_test
 
@@ -146,8 +146,8 @@ func writeOIDCJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// newOIDCTestApp は偽のIdPに対して本物のoidcauth.Clientとweb.Serverを組み立て、
-// famifoのURLを返す。web.NewServerがredirect_uriとしてfamifo自身のURLを必要と
+// newOIDCTestApp は偽のIdPに対して本物のoidcauth.Clientとweb.Galleryを組み立て、
+// famifoのURLを返す。web.NewGalleryがredirect_uriとしてfamifo自身のURLを必要と
 // するため、httptest.NewServerでハンドラを渡す前にポートを確保しておく
 // （net.Listenで先にポートを取り、httptest.NewUnstartedServerへ差し込む）。
 func newOIDCTestApp(t *testing.T) (famifoURL string) {
@@ -184,10 +184,10 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sessions.Close() })
 
-	webSrv, err := web.NewServer(st, thumbs, &web.Auth{OIDC: client, Sessions: sessions.Manager()}, log)
+	gallery, err := web.NewGallery(st, thumbs, &web.Auth{OIDC: client, Sessions: sessions.Manager()}, log)
 	require.NoError(t, err)
 
-	ts := httptest.NewUnstartedServer(webSrv.Handler())
+	ts := httptest.NewUnstartedServer(gallery.Handler())
 	_ = ts.Listener.Close()
 	ts.Listener = l
 	ts.Start()
