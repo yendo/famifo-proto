@@ -47,10 +47,7 @@ func (c Config) Validate() error {
 	for i, dir := range c.MediaDirs {
 		fi, err := os.Stat(dir)
 		if err != nil {
-			// ':' はUnixのパスに使える文字なので、それを含むディレクトリを
-			// 渡すと意図しない位置で切れる。分割結果を見せて原因を読めるようにする。
-			return fmt.Errorf("cannot read -dir: %w (-dir was split on %q into: %v)",
-				err, string(filepath.ListSeparator), c.MediaDirs)
+			return fmt.Errorf("cannot read -dir: %w", err)
 		}
 		if !fi.IsDir() {
 			return fmt.Errorf("-dir is not a directory: %s", dir)

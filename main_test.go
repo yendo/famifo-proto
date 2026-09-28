@@ -118,14 +118,27 @@ func TestParseArgsLeavesAuthEmptyByDefault(t *testing.T) {
 	require.Empty(t, c.OIDCIssuer)
 }
 
-func TestParseArgsSplitsDirOnTheListSeparator(t *testing.T) {
+func TestParseArgsCollectsEveryDirFlag(t *testing.T) {
 	t.Parallel()
 	a, b := t.TempDir(), t.TempDir()
 
-	got, _, err := parseArgs([]string{"-dir", a + string(filepath.ListSeparator) + b}, io.Discard)
+	got, _, err := parseArgs([]string{"-dir", a, "-dir", b}, io.Discard)
 
 	require.NoError(t, err)
 	require.Equal(t, []string{a, b}, got.MediaDirs)
+}
+
+// ':' はUnixのパスに使える文字である。区切り文字として扱っていたころは
+// ここで切れていた。
+func TestParseArgsKeepsAColonInTheDir(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "2024:05:24")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+
+	got, _, err := parseArgs([]string{"-dir", dir}, io.Discard)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{dir}, got.MediaDirs)
 }
 
 // parseArgs は -version を報告するだけで、表示も検証も呼び出し側に任せる。
@@ -135,17 +148,6 @@ func TestParseArgsReportsTheVersionFlag(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, showVersion)
-}
-
-// ':' を含むパスを渡すと分割で壊れる。なぜそうなったか読めるエラーにする。
-func TestRunExplainsHowDirWasSplit(t *testing.T) {
-	t.Parallel()
-	err := run(context.Background(), []string{"-dir", "/no/such/2024:05:24"},
-		io.Discard, io.Discard)
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "2024",
-		"shows the split, so it is clear the separator cut the path")
 }
 
 // run は起動から停止までの配線である。取り込みや配信の中身はそれぞれの
@@ -224,11 +226,11 @@ func runArgs(t *testing.T, addr string) []string {
 	t.Helper()
 
 	root := t.TempDir()
-	items := filepath.Join(root, "items")
-	require.NoError(t, os.Mkdir(items, 0o755))
+	media := filepath.Join(root, "media")
+	require.NoError(t, os.Mkdir(media, 0o755))
 
 	return []string{
-		"-dir", items,
+		"-dir", media,
 		"-data", filepath.Join(root, "data"),
 		"-addr", addr,
 	}

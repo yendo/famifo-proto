@@ -12,9 +12,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -188,10 +188,8 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	fs.SetOutput(stderr)
 
 	var c config.Config
-	var dirs string
-	fs.StringVar(&dirs, "dir", "",
-		fmt.Sprintf("directories to collect photos and videos from (required); %q separates several",
-			string(filepath.ListSeparator)))
+	fs.Var((*dirList)(&c.MediaDirs), "dir",
+		"`directory` to collect photos and videos from (required); repeat the flag for several")
 	fs.StringVar(&c.DataDir, "data", "./famifo-data", "where the database and generated thumbnails are stored")
 	fs.StringVar(&c.Addr, "addr", ":8080", "HTTP listen address")
 	// 適正値はCPU数とストレージの待ち時間の両方で決まる。NASでは読み込み待ちが
@@ -219,12 +217,22 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	if err := fs.Parse(args); err != nil {
 		return config.Config{}, false, err
 	}
-	// 空文字を SplitList に渡すと [""] ではなく [] が返る。
-	c.MediaDirs = filepath.SplitList(dirs)
 	// 秘密をフラグで受け取らない。コマンドライン引数は同じホストの誰からでも
 	// /proc で読める。
 	c.OIDCClientSecret = os.Getenv("FAMIFO_OIDC_CLIENT_SECRET")
 	return c, *showVersion, nil
+}
+
+// dirList は -dir を繰り返し指定で集める。1つの文字列を区切り文字で割らないのは、
+// ':' がUnixのパスに使える文字であり、それを含むディレクトリを渡すと意図しない
+// 位置で切れるためである。flag は同じフラグが現れるたびに Set を呼ぶ。
+type dirList []string
+
+func (d *dirList) String() string { return strings.Join(*d, ", ") }
+
+func (d *dirList) Set(v string) error {
+	*d = append(*d, v)
+	return nil
 }
 
 // defaultScanWorkers は取り込みの既定の並行数を返す。

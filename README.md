@@ -67,10 +67,10 @@ untracked file would otherwise stamp the binaries `+dirty`.
 ./famifo-proto -dir /path/to/photos
 ```
 
-Several roots can be given at once, separated by the OS list separator (`:` on Unix):
+Several roots can be given at once by repeating the flag:
 
 ```bash
-./famifo-proto -dir /home/alice/Photos:/home/bob/Photos
+./famifo-proto -dir /home/alice/Photos -dir /home/bob/Photos
 ```
 
 Roots may not be duplicated or nested inside one another, and `-data` has to sit outside
@@ -78,7 +78,7 @@ every one of them.
 
 | Flag | Default | Description |
 |---|---|---|
-| `-dir` | (required) | Directories to collect photos and videos from, `:`-separated |
+| `-dir` | (required) | Directory to collect photos and videos from; repeat for several |
 | `-data` | `./famifo-data` | Where the database and generated thumbnails are stored |
 | `-addr` | `:8080` | HTTP listen address |
 | `-scan-workers` | half the CPUs | How many files are taken in at once, both by the scan and by the watcher |
@@ -257,7 +257,7 @@ docker run -d --restart unless-stopped -p 8080:8080 \
   -v /volume1/photo:/photos/main:ro \
   -v /mnt/usb:/photos/usb:ro \
   -v /volume1/famifo/data:/data \
-  famifo -dir /photos/main:/photos/usb -data /data
+  famifo -dir /photos/main -dir /photos/usb -data /data
 ```
 
 Split them by what can disappear independently. The per-root guard described under
