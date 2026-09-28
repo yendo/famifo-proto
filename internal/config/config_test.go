@@ -191,20 +191,20 @@ func TestRedirectURIDoesNotDoubleTheSlash(t *testing.T) {
 	require.Equal(t, "https://famifo.example.invalid:8443/auth/callback", c.RedirectURI())
 }
 
-func TestCookieSecureIsTrueForHTTPS(t *testing.T) {
+func TestIsExternalURLHTTPSTrueForHTTPS(t *testing.T) {
 	c := validConfig(t)
 	c.ExternalURL = "https://famifo.example.invalid:8443"
-	require.True(t, c.CookieSecure())
+	require.True(t, c.IsExternalURLHTTPS())
 }
 
-func TestCookieSecureIsFalseForHTTP(t *testing.T) {
+func TestIsExternalURLHTTPSFalseForHTTP(t *testing.T) {
 	c := validConfig(t)
 	c.ExternalURL = "http://famifo.example.invalid:8080"
-	require.False(t, c.CookieSecure())
+	require.False(t, c.IsExternalURLHTTPS())
 }
 
-func TestCookieSecureIsTrueForUppercaseScheme(t *testing.T) {
+func TestIsExternalURLHTTPSTrueForUppercaseScheme(t *testing.T) {
 	c := validConfig(t)
 	c.ExternalURL = "HTTPS://famifo.example.invalid:8443"
-	require.True(t, c.CookieSecure())
+	require.True(t, c.IsExternalURLHTTPS())
 }

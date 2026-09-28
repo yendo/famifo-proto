@@ -84,7 +84,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// 止める。認証すると宣言しておいて黙って無認証で配信するより、起動しないほうがよい。
 	var auth *web.Auth
 	if cfg.OIDCIssuer != "" {
-		sessions, err := session.Open(cfg.SessionDBPath(), cfg.CookieSecure(), log)
+		sessions, err := session.Open(cfg.SessionDBPath(), cfg.IsExternalURLHTTPS(), log)
 		if err != nil {
 			return err
 		}

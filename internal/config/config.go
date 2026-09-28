@@ -165,12 +165,12 @@ func (c Config) RedirectURI() string {
 	return strings.TrimSuffix(c.ExternalURL, "/") + "/auth/callback"
 }
 
-// CookieSecure は Cookie に Secure を付けるかを返す。
-// ヘッダからは推測しない。設定した外部URLの scheme だけで決める。
+// IsExternalURLHTTPS は ExternalURL の scheme が https かを返す。
+// リクエストのヘッダからは推測しない。設定した値だけで決める。
 // Validate と同じ net/url での解釈に揃える。url.Parse は scheme を小文字化するので、
 // "HTTPS://..." のような大文字混じりの入力でも文字列プレフィックス比較のように
 // 見落とさない。
-func (c Config) CookieSecure() bool {
+func (c Config) IsExternalURLHTTPS() bool {
 	u, err := url.Parse(c.ExternalURL)
 	return err == nil && u.Scheme == "https"
 }
