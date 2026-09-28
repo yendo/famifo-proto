@@ -64,7 +64,7 @@ func TestParseArgsUsesDefaults(t *testing.T) {
 	got, _, err := parseArgs([]string{"-dir", dir}, io.Discard)
 
 	require.NoError(t, err)
-	require.Equal(t, []string{dir}, got.PhotoDirs)
+	require.Equal(t, []string{dir}, got.MediaDirs)
 	require.Equal(t, "./famifo-data", got.DataDir)
 	require.Equal(t, ":8080", got.Addr)
 	require.Equal(t, max(runtime.NumCPU()/2, 1), got.ScanWorkers,
@@ -125,7 +125,7 @@ func TestParseArgsSplitsDirOnTheListSeparator(t *testing.T) {
 	got, _, err := parseArgs([]string{"-dir", a + string(filepath.ListSeparator) + b}, io.Discard)
 
 	require.NoError(t, err)
-	require.Equal(t, []string{a, b}, got.PhotoDirs)
+	require.Equal(t, []string{a, b}, got.MediaDirs)
 }
 
 // parseArgs は -version を報告するだけで、表示も検証も呼び出し側に任せる。

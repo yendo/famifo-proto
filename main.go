@@ -65,7 +65,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// 誤ったまま本番のインデックスを作ると、全件やり直しになる。
 	log.Info("starting", "version", versionString(),
 		"timezone", startupTimezone(time.Now()),
-		"dirs", cfg.PhotoDirs, "data", cfg.DataDir, "addr", cfg.Addr,
+		"dirs", cfg.MediaDirs, "data", cfg.DataDir, "addr", cfg.Addr,
 		"scan-workers", cfg.ScanWorkers, "scan-interval", cfg.ScanInterval)
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {
@@ -129,7 +129,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}()
 
-	ix := index.New(cfg.PhotoDirs, st, thumbs, cfg.ScanWorkers, log)
+	ix := index.New(cfg.MediaDirs, st, thumbs, cfg.ScanWorkers, log)
 
 	// スキャンより先に監視を張る。逆にすると、スキャンが走査を終えてから監視が
 	// 張られるまでの間に置かれた写真を、どちらも拾えない。数千枚でスキャンが
@@ -140,7 +140,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	defer watcher.Close()
-	log.Info("watching for changes", "dirs", cfg.PhotoDirs)
+	log.Info("watching for changes", "dirs", cfg.MediaDirs)
 
 	// 取り込みを走らせる goroutine の終了を待ってから store を閉じる。待たずに
 	// 閉じると、あとから Upsert するワーカーが閉じたDBに書きに行く。
@@ -220,7 +220,7 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 		return config.Config{}, false, err
 	}
 	// 空文字を SplitList に渡すと [""] ではなく [] が返る。
-	c.PhotoDirs = filepath.SplitList(dirs)
+	c.MediaDirs = filepath.SplitList(dirs)
 	// 秘密をフラグで受け取らない。コマンドライン引数は同じホストの誰からでも
 	// /proc で読める。
 	c.OIDCClientSecret = os.Getenv("FAMIFO_OIDC_CLIENT_SECRET")

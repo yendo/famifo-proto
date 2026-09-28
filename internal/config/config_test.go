@@ -21,40 +21,40 @@ func TestValidateRejectsBadInput(t *testing.T) {
 			DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"dir does not exist": {
-			PhotoDirs: []string{filepath.Join(dir, "nope")},
+			MediaDirs: []string{filepath.Join(dir, "nope")},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"dir is not a directory": {
-			PhotoDirs: []string{file},
+			MediaDirs: []string{file},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"addr is empty": {
-			PhotoDirs: []string{dir},
+			MediaDirs: []string{dir},
 			DataDir:   "./famifo-data", Addr: "", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"data is inside dir": {
-			PhotoDirs: []string{dir},
+			MediaDirs: []string{dir},
 			DataDir:   filepath.Join(dir, "famifo-data"), Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"data is dir itself": {
-			PhotoDirs: []string{dir},
+			MediaDirs: []string{dir},
 			DataDir:   dir, Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 		},
 		"scan-workers is 0": {
-			PhotoDirs: []string{dir},
+			MediaDirs: []string{dir},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 0, ScanInterval: time.Hour,
 		},
 		"scan-workers is negative": {
-			PhotoDirs: []string{dir},
+			MediaDirs: []string{dir},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: -1, ScanInterval: time.Hour,
 		},
 		// 0 だと待たずに回り続ける。走査が止まらなくなるので弾く。
 		"scan-interval is 0": {
-			PhotoDirs: []string{dir},
+			MediaDirs: []string{dir},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: 0,
 		},
 		"scan-interval is negative": {
-			PhotoDirs: []string{dir},
+			MediaDirs: []string{dir},
 			DataDir:   "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: -time.Second,
 		},
 	}
@@ -74,7 +74,7 @@ func TestValidateAcceptsSiblingDataDir(t *testing.T) {
 
 	// "photos-data" は文字列としては "photos" で始まるが、兄弟ディレクトリであり
 	// 中には無い。プレフィックス比較ではなくパス階層で判定できていることの確認。
-	c := config.Config{PhotoDirs: []string{dir}, DataDir: data, Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
+	c := config.Config{MediaDirs: []string{dir}, DataDir: data, Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
 
 	require.NoError(t, c.Validate())
 }
@@ -91,7 +91,7 @@ func TestValidateRejectsDuplicateRoots(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	c := config.Config{PhotoDirs: []string{dir, dir}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
+	c := config.Config{MediaDirs: []string{dir, dir}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
 
 	require.Error(t, c.Validate(), "scanning the same root twice is pure waste")
 }
@@ -103,7 +103,7 @@ func TestValidateRejectsNestedRoots(t *testing.T) {
 	inner := filepath.Join(outer, "sub")
 	require.NoError(t, os.MkdirAll(inner, 0o755))
 
-	c := config.Config{PhotoDirs: []string{outer, inner}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
+	c := config.Config{MediaDirs: []string{outer, inner}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
 
 	require.Error(t, c.Validate())
 }
@@ -115,7 +115,7 @@ func TestValidateRejectsDataInsideAnyRoot(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 
 	c := config.Config{
-		PhotoDirs: []string{a, b},
+		MediaDirs: []string{a, b},
 		DataDir:   filepath.Join(b, "famifo-data"), Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 	}
 
@@ -128,7 +128,7 @@ func validConfig(t *testing.T) config.Config {
 	photos := filepath.Join(dir, "photos")
 	require.NoError(t, os.MkdirAll(photos, 0o755))
 	return config.Config{
-		PhotoDirs: []string{photos}, DataDir: filepath.Join(dir, "data"),
+		MediaDirs: []string{photos}, DataDir: filepath.Join(dir, "data"),
 		Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour,
 	}
 }
