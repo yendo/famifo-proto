@@ -1,8 +1,12 @@
-// Package oidcauth は OpenID Connect の認可コードフローを扱う。
+// Package oidc は OpenID Connect の認可コードフローを扱う。
 //
-// discovery と ID トークンの検証は go-oidc に、PKCE とコード交換は x/oauth2 に任せる。
-// famifo に残るのは nonce の照合と subject の取り出しだけである。
-package oidcauth
+// discovery と ID トークンの検証は go-oidc に、PKCE とコード交換は x/oauth2 に
+// 任せる。famifo に残るのは nonce の照合と subject の取り出しだけである。
+//
+// HTTPの経路も画面もセッションも持たない。どのURLでログインを始めるか、往復の
+// 値をどこに置くか、失敗を何と書くかは、これを使う側（internal/web の login.go）
+// が決める。
+package oidc
 
 import (
 	"context"
@@ -15,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
+	goidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
 
@@ -83,22 +87,25 @@ type Params struct {
 }
 
 // Client はIdPと話す。New が discovery を引いた時点で不変になる。
+//
+// 仕様でいう RP 側、つまりfamifoがIdPに対して持つクライアントである。Provider を満たす。
 type Client struct {
 	oauth              *oauth2.Config
-	verifier           *oidc.IDTokenVerifier
+	verifier           *goidc.IDTokenVerifier
 	endSessionEndpoint string // RP-Initiated Logout の宛先。discoveryに無ければ空
 }
 
 // New は discovery を引いてClientを組み立てる。
 //
-// 起動時に1回だけ呼ぶ。IdPに届かなければエラーを返し、呼び出し側は起動を止める。
-// oidc.NewProvider は discovery が名乗る issuer と設定した issuer の一致も確かめるので、
+// 名前に反してその場でネットワークに出る。起動時に1回だけ呼ぶこと。IdPに
+// 届かなければエラーを返し、呼び出し側は起動を止める。
+// goidc.NewProvider は discovery が名乗る issuer と設定した issuer の一致も確かめるので、
 // その防御をこちらで書く必要はない。
 func New(ctx context.Context, cfg Config) (*Client, error) {
 	// 既定のクライアントは待ち時間の上限を持たない。落ちたIdPに繋ぎに行ったまま
 	// 起動が止まらないよう、明示する。
-	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: httpTimeout})
-	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
+	ctx = goidc.ClientContext(ctx, &http.Client{Timeout: httpTimeout})
+	provider, err := goidc.NewProvider(ctx, cfg.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read the OIDC discovery document: %w", err)
 	}
@@ -117,9 +124,9 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 			ClientSecret: cfg.ClientSecret,
 			RedirectURL:  cfg.RedirectURI,
 			Endpoint:     provider.Endpoint(),
-			Scopes:       []string{oidc.ScopeOpenID},
+			Scopes:       []string{goidc.ScopeOpenID},
 		},
-		verifier:           provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
+		verifier:           provider.Verifier(&goidc.Config{ClientID: cfg.ClientID}),
 		endSessionEndpoint: metadata.EndSessionEndpoint,
 	}, nil
 }
@@ -139,12 +146,12 @@ func NewParams() (Params, error) {
 
 // AuthURL はIdPの認可エンドポイントへ送るURLを組み立てる。
 func (c *Client) AuthURL(p Params) string {
-	return c.oauth.AuthCodeURL(p.State, oidc.Nonce(p.Nonce), oauth2.S256ChallengeOption(p.Verifier))
+	return c.oauth.AuthCodeURL(p.State, goidc.Nonce(p.Nonce), oauth2.S256ChallengeOption(p.Verifier))
 }
 
 // Exchange は認可コードをトークンに交換し、IDトークンを検証して利用者を返す。
 func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity, error) {
-	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: httpTimeout})
+	ctx = goidc.ClientContext(ctx, &http.Client{Timeout: httpTimeout})
 	tok, err := c.oauth.Exchange(ctx, code, oauth2.VerifierOption(p.Verifier))
 	if err != nil {
 		// x/oauth2 はトークンエンドポイントが応答したうえで拒んだ場合、

@@ -1,5 +1,12 @@
 package web
 
+// ログインの経路。認可の往復とセッションの持ち回りをここで組み立てる。
+//
+// 手続きの中身——stateとnonceの生成、PKCE、コード交換、IDトークンの検証は
+// internal/oidc、セッションの置き場は internal/session が持つ。こちらはそれを
+// famifoのURLと画面に繋ぐ側で、どの経路があるか、未認証に何を返すか、何と
+// 書くかを決める。
+
 import (
 	"context"
 	"errors"
@@ -11,8 +18,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yendo/famifo-proto/internal/oidcauth"
+	"github.com/yendo/famifo-proto/internal/oidc"
 	"github.com/yendo/famifo-proto/internal/session"
+)
+
+// ログインが使うURL。登録もリダイレクトもここを見るので、経路の名前が散らない。
+// callbackの絶対URLは設定（RedirectURI）が持っており、末尾はこれと一致して
+// いなければならない。
+const (
+	loginPath     = "/login"
+	callbackPath  = "/auth/callback"
+	logoutPath    = "/logout"
+	signedOutPath = "/signed-out"
 )
 
 // flowTTL は認可の往復に許す時間。ログイン画面を開いたまま放置した場合の上限になる。
@@ -34,11 +51,11 @@ const (
 	keyNext     = "next"
 )
 
-// Provider は認可の往復を担う。oidcauth.Client がこれを満たす。
+// Provider は認可の往復を担う。oidc.Client がこれを満たす。
 // インターフェースにしてあるのは、テストがIdPを立てずに済むようにするためである。
 type Provider interface {
-	AuthURL(oidcauth.Params) string
-	Exchange(ctx context.Context, code string, p oidcauth.Params) (oidcauth.Identity, error)
+	AuthURL(oidc.Params) string
+	Exchange(ctx context.Context, code string, p oidc.Params) (oidc.Identity, error)
 	// LogoutURL はRP-Initiated Logoutの宛先を返す。IdPがdiscoveryで
 	// end_session_endpointを広告していなければfalseを返す。idTokenHintは
 	// サインインしたときのIDトークンで、これが無いとIdPは戻り先へ
@@ -59,12 +76,26 @@ type Auth struct {
 }
 
 // NewAuth はAuthを作る。externalURL はfamifoが外から見えるURL。
-func NewAuth(oidc Provider, sessions *session.Manager, externalURL string, log *slog.Logger) *Auth {
-	return &Auth{oidc: oidc, sessions: sessions, externalURL: externalURL, log: log}
+func NewAuth(p Provider, sessions *session.Manager, externalURL string, log *slog.Logger) *Auth {
+	return &Auth{oidc: p, sessions: sessions, externalURL: externalURL, log: log}
 }
 
-// authenticate は認証を要求するミドルウェア。
-func (a *Auth) authenticate(next http.Handler) http.Handler {
+// routes はログインの経路を登録する。登録先のmuxはセッションのミドルウェアの
+// 内側になければならない。往復の値もログイン済みの印もセッションに載るためである。
+func (a *Auth) routes(mux *http.ServeMux) {
+	mux.HandleFunc("GET "+loginPath, a.handleLogin)
+	mux.HandleFunc("GET "+callbackPath, a.handleCallback)
+	mux.HandleFunc("POST "+logoutPath, a.handleLogout)
+	// RP-Initiated LogoutでIdPが戻ってくる先。/logout自身がend_session_endpoint
+	// を持たないIdPのとき案内ページとして返すのもここ。
+	mux.HandleFunc("GET "+signedOutPath, a.handleSignedOut)
+}
+
+// requireSignIn はサインイン済みでない要求を追い返すミドルウェア。
+//
+// 認証そのものは /auth/callback で済んでいる。ここがやるのはセッションを見て
+// 通すか断るかを決めることだけで、断り方は要求の種類で変わる。
+func (a *Auth) requireSignIn(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.currentUser(r) != "" {
 			next.ServeHTTP(w, r)
@@ -78,8 +109,17 @@ func (a *Auth) authenticate(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+		http.Redirect(w, r, loginPath+"?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 	})
+}
+
+// isDataPath はページではなくデータを取りに来た経路を見分ける。
+//
+// /tiles は app.js が fetch し、/thumb/ と /file/ は <img> と <video> が読む。
+// ここに挙げる経路は Handler のルート表と一対一である。データを返す経路を
+// 足したらここにも足すこと。忘れると、その経路だけ未認証時に白い画面になる。
+func isDataPath(p string) bool {
+	return p == "/tiles" || strings.HasPrefix(p, "/thumb/") || strings.HasPrefix(p, "/file/")
 }
 
 // currentUser はセッションから利用者の識別子（IDトークンの sub）を取り出す。
@@ -91,17 +131,13 @@ func (a *Auth) currentUser(r *http.Request) string {
 	return a.sessions.GetString(r.Context(), keyUser)
 }
 
-func isDataPath(p string) bool {
-	return p == "/tiles" || strings.HasPrefix(p, "/thumb/") || strings.HasPrefix(p, "/file/")
-}
-
 // handleLogin は認可の往復を始める。
 //
 // 先にDestroyするのは、ログインの開始が「今のセッションを捨てて入り直す」操作
 // だからである。すでにログイン済みの端末で /login を開いた場合も、古いセッションは
 // ここで破棄される。セッション固定への備えも兼ねる。
 func (a *Auth) handleLogin(w http.ResponseWriter, r *http.Request) {
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	if err != nil {
 		a.log.Error("cannot start the login flow", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -152,12 +188,12 @@ func (a *Auth) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := a.oidc.Exchange(ctx, code, oidcauth.Params{State: state, Nonce: nonce, Verifier: verifier})
+	id, err := a.oidc.Exchange(ctx, code, oidc.Params{State: state, Nonce: nonce, Verifier: verifier})
 	if err != nil {
 		// 「IdPに届かない」と「IdPが応答したうえで拒んだ」は原因の調べ方が違う。
 		// 実機のインシデントでは両方が同じ「IdPに到達できない」に丸められ、
 		// 調査が違う方向へ進んだ。ProviderErrorが載っていれば後者である。
-		var perr *oidcauth.ProviderError
+		var perr *oidc.ProviderError
 		if errors.As(err, &perr) {
 			a.log.Error("the identity provider refused the login",
 				"status", perr.StatusCode, "error", perr.Code, "description", perr.Description)
@@ -223,26 +259,48 @@ func (a *Auth) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // handleSignedOut はRP-Initiated Logoutの戻り先、かつ /logout が
 // end_session_endpoint を持たないIdPのときに見せる案内ページ。
-// ミドルウェアの外側（認証不要な経路）に登録してあるので、セッションが
-// 無くても届く。
-func (a *Auth) handleSignedOut(w http.ResponseWriter, r *http.Request) {
+// 認証を要求しない経路に登録してあるので、セッションが無くても届く。
+func (a *Auth) handleSignedOut(w http.ResponseWriter, _ *http.Request) {
 	a.renderSignedOut(w)
 }
 
 // signedOutURL はRP-Initiated Logoutのpost_logout_redirect_uriに渡す、
 // famifo自身の絶対URL。IdPはここへブラウザを送り返す。
 func (a *Auth) signedOutURL() string {
-	return strings.TrimSuffix(a.externalURL, "/") + "/signed-out"
+	return strings.TrimSuffix(a.externalURL, "/") + signedOutPath
 }
 
 func (a *Auth) renderSignedOut(w http.ResponseWriter) {
-	a.writeHTMLPage(w, http.StatusOK, "Signed out", `<link rel="stylesheet" href="/static/app.css">`+
+	a.writeHTMLPage(w, http.StatusOK, "Signed out",
 		`<p>You have been signed out of famifo.</p>`+
-		`<p>The sign-in at the login screen may still be open, separately from this. That's why signing in `+
-		`again may not ask you anything.</p>`+
-		`<p>To sign in as someone else, or to sign out completely, also sign out on the login screen you `+
-		`originally used (if that's DSM, sign out of DSM).</p>`+
-		`<p><a href="/login">Sign in again</a></p>`)
+			`<p>The sign-in at the login screen may still be open, separately from this. That's why signing in `+
+			`again may not ask you anything.</p>`+
+			`<p>To sign in as someone else, or to sign out completely, also sign out on the login screen you `+
+			`originally used (if that's DSM, sign out of DSM).</p>`+
+			`<p><a href="`+loginPath+`">Sign in again</a></p>`)
+}
+
+// callbackError は失敗した /auth/callback を、/login へのリンク付きの小さな
+// HTMLページで終える。素のtext/plainな400だとURLバーを手で書き換えるしか
+// 戻る手段がない。ここでセッションも破棄する。残すと、失敗した往復のあとも
+// 中途半端な状態が最長flowTTLぶん生き、「やり直してください」が実際にはやり直し
+// にならない（別タブが往復を上書きしてここに来るのは日常的に起きる）。
+func (a *Auth) callbackError(w http.ResponseWriter, r *http.Request, message string, status int) {
+	if err := a.sessions.Destroy(r.Context()); err != nil {
+		a.log.Error("cannot discard the failed login attempt", "err", err)
+	}
+	a.writeHTMLPage(w, status, "Sign-in failed",
+		fmt.Sprintf(`<p>%s</p><p><a href="%s">Try signing in again</a></p>`, html.EscapeString(message), loginPath))
+}
+
+// writeHTMLPage は認証の内側を経由しない小さなHTMLページを書き出す。bodyHTML
+// はすでに安全な断片であることを呼び出し側が保証する（利用者由来の文字列を
+// 混ぜるときはhtml.EscapeStringを通すこと）。
+func (a *Auth) writeHTMLPage(w http.ResponseWriter, status int, title, bodyHTML string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, `<!doctype html><title>%s</title><link rel="stylesheet" href="/static/app.css">%s`,
+		html.EscapeString(title), bodyHTML)
 }
 
 // safeNext は戻り先を自サイト内に限る。
@@ -266,26 +324,4 @@ func safeNext(next string) string {
 		return "/"
 	}
 	return u.RequestURI()
-}
-
-// callbackError は失敗した /auth/callback を、/login へのリンク付きの小さな
-// HTMLページで終える。素のtext/plainな400だとURLバーを手で書き換えるしか
-// 戻る手段がない。ここでセッションも破棄する。残すと、失敗した往復のあとも
-// 中途半端な状態が最長flowTTLぶん生き、「やり直してください」が実際にはやり直し
-// にならない（別タブが往復を上書きしてここに来るのは日常的に起きる）。
-func (a *Auth) callbackError(w http.ResponseWriter, r *http.Request, message string, status int) {
-	if err := a.sessions.Destroy(r.Context()); err != nil {
-		a.log.Error("cannot discard the failed login attempt", "err", err)
-	}
-	a.writeHTMLPage(w, status, "Sign-in failed",
-		fmt.Sprintf(`<p>%s</p><p><a href="/login">Try signing in again</a></p>`, html.EscapeString(message)))
-}
-
-// writeHTMLPage は認証の内側を経由しない小さなHTMLページを書き出す。bodyHTML
-// はすでに安全な断片であることを呼び出し側が保証する（利用者由来の文字列を
-// 混ぜるときはhtml.EscapeStringを通すこと）。
-func (a *Auth) writeHTMLPage(w http.ResponseWriter, status int, title, bodyHTML string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	fmt.Fprintf(w, `<!doctype html><title>%s</title>%s`, html.EscapeString(title), bodyHTML)
 }

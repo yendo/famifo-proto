@@ -1,4 +1,4 @@
-package oidcauth_test
+package oidc_test
 
 // 偽のIdPを立てて認可コードフローを確かめる。IDトークンはテスト内で作ったRSA鍵で
 // 署名する。正常系だけでなく「通ってはいけないもの」を通さないことを固定するのが
@@ -25,7 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
-	"github.com/yendo/famifo-proto/internal/oidcauth"
+	"github.com/yendo/famifo-proto/internal/oidc"
 )
 
 // idp はテスト用のIdP。既定では正しく振る舞い、フィールドを差し替えると壊れた
@@ -151,9 +151,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func newClient(t *testing.T, i *idp) *oidcauth.Client {
+func newClient(t *testing.T, i *idp) *oidc.Client {
 	t.Helper()
-	c, err := oidcauth.New(context.Background(), oidcauth.Config{
+	c, err := oidc.New(context.Background(), oidc.Config{
 		Issuer: i.srv.URL, ClientID: "famifo", ClientSecret: "s3cret",
 		RedirectURI: "https://famifo.example.invalid/auth/callback",
 	})
@@ -164,7 +164,7 @@ func newClient(t *testing.T, i *idp) *oidcauth.Client {
 func TestExchangeReturnsTheSubject(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 	i.claims["nonce"] = p.Nonce
 
@@ -179,7 +179,7 @@ func TestExchangeReturnsTheSubject(t *testing.T) {
 func TestExchangeReturnsTheRawIDToken(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 	i.claims["nonce"] = p.Nonce
 
@@ -192,7 +192,7 @@ func TestExchangeReturnsTheRawIDToken(t *testing.T) {
 func TestAuthURLCarriesTheFlowParameters(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
-	p := oidcauth.Params{State: "st", Nonce: "no", Verifier: "ve"}
+	p := oidc.Params{State: "st", Nonce: "no", Verifier: "ve"}
 
 	u, err := url.Parse(c.AuthURL(p))
 	require.NoError(t, err)
@@ -211,7 +211,7 @@ func TestAuthURLCarriesTheFlowParameters(t *testing.T) {
 func TestExchangeRejectsNonceMismatch(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 	i.claims["nonce"] = "someone-elses-nonce"
 
@@ -224,7 +224,7 @@ func TestExchangeRejectsNonceMismatch(t *testing.T) {
 func TestExchangeRejectsAnotherSigningKey(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 	i.claims["nonce"] = p.Nonce
 	// JWKSで配る鍵とは別の鍵で署名する。
@@ -245,7 +245,7 @@ func TestExchangeRejectsAlgNone(t *testing.T) {
 	// alg=none で署名を空にしたトークンを受け入れると、中身を好きに書けてしまう。
 	i := newIDP(t)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 	i.claims["nonce"] = p.Nonce
 	i.alg = "none"
@@ -260,7 +260,7 @@ func TestExchangeRejectsHMACSignedWithThePublicKey(t *testing.T) {
 	// 誰でも偽造できることになる。
 	i := newIDP(t)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 	i.claims["nonce"] = p.Nonce
 	i.alg = "HS256"
@@ -275,7 +275,7 @@ func TestExchangeRejectsHMACSignedWithThePublicKey(t *testing.T) {
 func TestExchangeRejectsExpired(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 	i.claims["nonce"] = p.Nonce
 	i.claims["exp"] = time.Now().Add(-time.Minute).Unix()
@@ -287,7 +287,7 @@ func TestExchangeRejectsExpired(t *testing.T) {
 func TestExchangeRejectsAnotherAudience(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 	i.claims["nonce"] = p.Nonce
 	i.claims["aud"] = "someone-else"
@@ -299,7 +299,7 @@ func TestExchangeRejectsAnotherAudience(t *testing.T) {
 func TestExchangeRejectsAnotherIssuer(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 	i.claims["nonce"] = p.Nonce
 	i.claims["iss"] = "https://evil.example.invalid"
@@ -313,7 +313,7 @@ func TestExchangeRejectsEmptySubject(t *testing.T) {
 	// セッションを張ってしまうので、famifo側で弾く。
 	i := newIDP(t)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 	i.claims["nonce"] = p.Nonce
 	i.claims["sub"] = ""
@@ -325,7 +325,7 @@ func TestExchangeRejectsEmptySubject(t *testing.T) {
 func TestExchangeReportsATokenEndpointError(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 
 	_, err = c.Exchange(context.Background(), "wrong-code", p)
@@ -341,14 +341,14 @@ func TestExchangeReportsAProviderRefusal(t *testing.T) {
 	i.tokenErrStatus = http.StatusBadRequest
 	i.tokenErrBody = []byte(`{"error":"server_error","error_description":"upstream hiccup"}`)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 
 	_, err = c.Exchange(context.Background(), "wrong-code", p)
 	require.Error(t, err)
-	require.ErrorIs(t, err, oidcauth.ErrProviderRefused)
+	require.ErrorIs(t, err, oidc.ErrProviderRefused)
 
-	var perr *oidcauth.ProviderError
+	var perr *oidc.ProviderError
 	require.ErrorAs(t, err, &perr)
 	require.Equal(t, http.StatusBadRequest, perr.StatusCode)
 	require.Equal(t, "server_error", perr.Code)
@@ -365,12 +365,12 @@ func TestExchangeReportsARefusalThatIsNotAnOAuthError(t *testing.T) {
 	i.tokenErrType = "text/html"
 	i.tokenErrBody = []byte("<html><body>502 Bad Gateway</body></html>")
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 
 	_, err = c.Exchange(context.Background(), "wrong-code", p)
-	require.ErrorIs(t, err, oidcauth.ErrProviderRefused)
-	var perr *oidcauth.ProviderError
+	require.ErrorIs(t, err, oidc.ErrProviderRefused)
+	var perr *oidc.ProviderError
 	require.ErrorAs(t, err, &perr)
 	require.Equal(t, http.StatusBadGateway, perr.StatusCode)
 	require.Empty(t, perr.Code)
@@ -385,11 +385,11 @@ func TestExchangeTruncatesAHugeErrorDescription(t *testing.T) {
 	i.tokenErrBody = []byte(`{"error":"server_error","error_description":"` +
 		strings.Repeat("a", 10*1024) + `"}`)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 
 	_, err = c.Exchange(context.Background(), "wrong-code", p)
-	var perr *oidcauth.ProviderError
+	var perr *oidc.ProviderError
 	require.ErrorAs(t, err, &perr)
 	require.LessOrEqual(t, len(perr.Description), 1024)
 }
@@ -406,11 +406,11 @@ func TestExchangeTruncatesOnARuneBoundary(t *testing.T) {
 	desc := strings.Repeat("a", 1023) + "あ" + strings.Repeat("b", 100)
 	i.tokenErrBody = []byte(`{"error":"server_error","error_description":"` + desc + `"}`)
 	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 
 	_, err = c.Exchange(context.Background(), "wrong-code", p)
-	var perr *oidcauth.ProviderError
+	var perr *oidc.ProviderError
 	require.ErrorAs(t, err, &perr)
 	require.True(t, utf8.ValidString(perr.Description), "the truncated description must be valid UTF-8")
 	require.LessOrEqual(t, len(perr.Description), 1024)
@@ -423,20 +423,20 @@ func TestExchangeReportsAnUnreachableProvider(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
 	i.srv.Close()
-	p, err := oidcauth.NewParams()
+	p, err := oidc.NewParams()
 	require.NoError(t, err)
 
 	_, err = c.Exchange(context.Background(), "good-code", p)
 	require.Error(t, err)
-	require.NotErrorIs(t, err, oidcauth.ErrProviderRefused)
-	var perr *oidcauth.ProviderError
+	require.NotErrorIs(t, err, oidc.ErrProviderRefused)
+	var perr *oidc.ProviderError
 	require.False(t, errors.As(err, &perr))
 }
 
 func TestNewFailsWhenTheIssuerDoesNotMatch(t *testing.T) {
 	i := newIDP(t)
 	i.issuerOverride = "https://evil.example.invalid/sso"
-	_, err := oidcauth.New(context.Background(), oidcauth.Config{
+	_, err := oidc.New(context.Background(), oidc.Config{
 		Issuer: i.srv.URL, ClientID: "famifo", ClientSecret: "s",
 		RedirectURI: "https://famifo.example.invalid/auth/callback",
 	})
@@ -445,7 +445,7 @@ func TestNewFailsWhenTheIssuerDoesNotMatch(t *testing.T) {
 
 func TestNewFailsWhenDiscoveryIsUnreachable(t *testing.T) {
 	i := newIDP(t)
-	_, err := oidcauth.New(context.Background(), oidcauth.Config{
+	_, err := oidc.New(context.Background(), oidc.Config{
 		Issuer: i.srv.URL + "/elsewhere", ClientID: "famifo", ClientSecret: "s",
 		RedirectURI: "https://famifo.example.invalid/auth/callback",
 	})
@@ -453,9 +453,9 @@ func TestNewFailsWhenDiscoveryIsUnreachable(t *testing.T) {
 }
 
 func TestNewParamsAreUnpredictable(t *testing.T) {
-	a, err := oidcauth.NewParams()
+	a, err := oidc.NewParams()
 	require.NoError(t, err)
-	b, err := oidcauth.NewParams()
+	b, err := oidc.NewParams()
 	require.NoError(t, err)
 	require.NotEqual(t, a.State, b.State)
 	require.NotEqual(t, a.Nonce, b.Nonce)

@@ -132,19 +132,13 @@ func (g *Gallery) Handler() http.Handler {
 	protected.HandleFunc("GET /thumb/{id}", g.handleThumb)
 	protected.HandleFunc("GET /file/{id}", g.handleFile)
 
-	inner := http.NewServeMux()
 	if g.auth == nil {
-		inner.Handle("/", protected)
-		mux.Handle("/", inner)
+		mux.Handle("/", protected)
 		return securityHeaders(mux)
 	}
-	inner.Handle("/", g.auth.authenticate(protected))
-	inner.HandleFunc("GET /login", g.auth.handleLogin)
-	inner.HandleFunc("GET /auth/callback", g.auth.handleCallback)
-	inner.HandleFunc("POST /logout", g.auth.handleLogout)
-	// RP-Initiated LogoutでIdPが戻ってくる先。/logout自身がend_session_endpoint
-	// を持たないIdPのとき案内ページとして返すのもここ。
-	inner.HandleFunc("GET /signed-out", g.auth.handleSignedOut)
+	inner := http.NewServeMux()
+	inner.Handle("/", g.auth.requireSignIn(protected))
+	g.auth.routes(inner)
 	mux.Handle("/", g.auth.sessions.LoadAndSave(inner))
 	return securityHeaders(mux)
 }

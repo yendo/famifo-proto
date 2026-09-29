@@ -2,11 +2,11 @@
 
 // spec (docs/superpowers/specs/2026-09-10-oidc-auth-design.md, テスト節) は
 // 「偽の IdP を立てて、リダイレクトからギャラリー表示までを1本」通すブラウザテストを
-// 求めている。auth_test.go の fakeProvider は internal/web.Provider を直接満たす
-// スタブで、oidcauth.Client を経由しない。oidcauth_test.go は逆に internal/web を
-// 一切通さない。したがって Provider インターフェース、Params が一時Cookieの
-// JSON を往復すること、Identity.Subject がセッションのpayloadになることは、
-// これまでどこにもテストされていなかった。このファイルは、本物の oidcauth.Client を
+// 求めている。login_test.go の fakeProvider は Provider を直接満たすスタブで、
+// oidc.Client を経由しない。internal/oidc の oidc_test.go は逆に配信側を
+// 一切通さない。したがって Provider インターフェース、Params がセッションを
+// 往復すること、Identity.Subject がセッションのpayloadになることは、これまで
+// どこにもテストされていなかった。このファイルは、本物の oidc.Client を
 // 本物の web.Gallery に対して動かし、ブラウザで実際にリダイレクトを辿らせて
 // その境目を通す。
 package web_test
@@ -33,7 +33,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/require"
-	"github.com/yendo/famifo-proto/internal/oidcauth"
+	"github.com/yendo/famifo-proto/internal/oidc"
 	"github.com/yendo/famifo-proto/internal/session"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -43,7 +43,7 @@ import (
 // fakeIDP はブラウザ越しの認可コードフローを1往復させるための最小のIdP。
 // ログイン画面は無く、/authorize は照会なしに即座にcallbackへリダイレクトする。
 // このテストの関心はfamifo側の配線であって、IdPのUIではないためである。
-// ID トークンの署名手法は internal/oidcauth/oidcauth_test.go の idp と同じだが、
+// ID トークンの署名手法は internal/oidc/oidc_test.go の idp と同じだが、
 // パッケージが違うので呼び回せず、ここに小さくコピーしてある。
 type fakeIDP struct {
 	srv       *httptest.Server
@@ -146,7 +146,7 @@ func writeOIDCJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// newOIDCTestApp は偽のIdPに対して本物のoidcauth.Clientとweb.Galleryを組み立て、
+// newOIDCTestApp は偽のIdPに対して本物のoidc.Clientとweb.Galleryを組み立て、
 // famifoのURLを返す。web.NewGalleryがredirect_uriとしてfamifo自身のURLを必要と
 // するため、httptest.NewServerでハンドラを渡す前にポートを確保しておく
 // （net.Listenで先にポートを取り、httptest.NewUnstartedServerへ差し込む）。
@@ -161,7 +161,7 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	client, err := oidcauth.New(context.Background(), oidcauth.Config{
+	client, err := oidc.New(context.Background(), oidc.Config{
 		Issuer: idp.srv.URL, ClientID: "famifo", ClientSecret: "s3cret",
 		RedirectURI: famifoURL + "/auth/callback",
 	})
