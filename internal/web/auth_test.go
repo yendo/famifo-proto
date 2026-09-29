@@ -203,7 +203,7 @@ func TestCallbackReportsAnUnreachableProvider(t *testing.T) {
 func TestCallbackReportsAProviderRefusal(t *testing.T) {
 	f := newAuthFixture(t)
 	f.prov.err = fmt.Errorf("cannot exchange the authorization code: %w",
-		&oidcauth.ProviderError{StatusCode: http.StatusBadRequest, Body: `{"error":"server_error"}`})
+		&oidcauth.ProviderError{StatusCode: http.StatusBadRequest, Code: "server_error"})
 	start := get(t, f.h, "/login")
 	flow := cookieNamed(start, "famifo_session")
 

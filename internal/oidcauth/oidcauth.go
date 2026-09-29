@@ -22,24 +22,29 @@ import (
 // httpTimeout はIdPへの1回の往復に許す時間。
 const httpTimeout = 20 * time.Second
 
-// maxProviderErrorBody はProviderError.Bodyに残す上限。相手が暴れてもログが
+// maxProviderErrorField はProviderErrorの各項目に残す上限。相手が暴れてもログが
 // 埋まらないように切り詰める。
-const maxProviderErrorBody = 1024
+const maxProviderErrorField = 1024
 
 // ErrProviderRefused はIdPがトークン交換そのものには応答したが、その交換を
 // 拒んだことを表す番兵。呼び出し側は errors.Is で「IdPに届かない」場合と
 // 区別できる。
 var ErrProviderRefused = errors.New("the identity provider refused the exchange")
 
-// ProviderError はErrProviderRefusedを満たす。IdPの応答（HTTPステータスと本文）を
-// 保持しており、呼び出し側はログに残せる。本文は1KiBに切り詰めてある。
+// ProviderError はErrProviderRefusedを満たす。IdPの応答を保持しており、呼び出し側は
+// ログに残せる。CodeとDescriptionはRFC 6749 5.2が定めるerrorとerror_descriptionで、
+// x/oauth2 がパースしたものをそのまま持つ。応答がこの形でなければ（IdPの手前にいる
+// プロキシがHTMLのエラーページを返した場合など）両方とも空で、StatusCodeだけが残る。
+// それでも「IdPに届かない」との区別は付く。各項目は1KiBに切り詰めてある。
 type ProviderError struct {
-	StatusCode int
-	Body       string
+	StatusCode  int
+	Code        string
+	Description string
 }
 
 func (e *ProviderError) Error() string {
-	return fmt.Sprintf("the identity provider refused the exchange: status %d, body %q", e.StatusCode, e.Body)
+	return fmt.Sprintf("the identity provider refused the exchange: status %d, error %q, description %q",
+		e.StatusCode, e.Code, e.Description)
 }
 
 // Is はErrProviderRefusedとの errors.Is 判定を成立させる。
@@ -153,7 +158,11 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 				status = rErr.Response.StatusCode
 			}
 			return Identity{}, fmt.Errorf("cannot exchange the authorization code: %w",
-				&ProviderError{StatusCode: status, Body: c.sanitizeProviderBody(rErr.Body)})
+				&ProviderError{
+					StatusCode:  status,
+					Code:        clampProviderErrorField(rErr.ErrorCode),
+					Description: clampProviderErrorField(rErr.ErrorDescription),
+				})
 		}
 		return Identity{}, fmt.Errorf("cannot exchange the authorization code: %w", err)
 	}
@@ -210,44 +219,14 @@ func (c *Client) LogoutURL(postLogoutRedirectURI, idTokenHint string) (string, b
 	return u.String(), true
 }
 
-// sanitizeProviderBody はProviderErrorに載せる前にIdPの応答本文を安全にする。
+// clampProviderErrorField はIdPが返した文字列をログに載せる長さに収める。
 //
-// クライアント認証の方式は x/oauth2 の自動検出に任せているので、client secret は
-// POSTボディ（client_secret_post）とAuthorizationヘッダ（client_secret_basic）の
-// どちらにも載りうる。リクエストをそのまま読み返すような（珍しくない）IdPの
-// エラー応答は、どちらの形でもsecretをそっくり含みうる。先に置換してから
-// 切り詰める。順序を逆にすると、切り詰めの境目でsecretが分断され、
-// ReplaceAllが後半だけになった破片を見つけられずログに残ってしまう。
-//
-// 置換するのは3つの形である。リテラル、パーセントエンコードした形、そして
-// base64("clientID:secret") である。x/oauth2 はPOSTボディを
-// application/x-www-form-urlencoded で組み立てるので、secretは
-// url.Values.Encode() と同じ規則でエンコードされた形で載る。secretがbase64由来
-// だと "+" や "/" や "=" を含むのが普通で、リテラルの置換だけではこの形を
-// 取りこぼす。url.QueryEscapeは url.Values.Encode() と同じエンコードを作る。
-// Basicのほうは SetBasicAuth が QueryEscape した両者をコロンで繋いでbase64に
-// するので、これも別の形として置換する。エンコードしても変わらない（16進数などの）
-// secretで同じ置換を二度走らせないよう、重複する形はスキップする。
-//
-// 置換のあとに切り詰めるので、その時点でマルチバイト文字の途中を切ることがある。
-// string()は不正なUTF-8でも失敗しないが、slogはそれを出力時にU+FFFDへ置き換える
-// ため見た目が壊れる。strings.ToValidUTF8で有効な境界まで戻す。
-func (c *Client) sanitizeProviderBody(body []byte) string {
-	s := string(body)
-	if secret := c.oauth.ClientSecret; secret != "" {
-		basic := base64.StdEncoding.EncodeToString(
-			[]byte(url.QueryEscape(c.oauth.ClientID) + ":" + url.QueryEscape(secret)))
-		seen := make(map[string]bool)
-		for _, form := range []string{secret, url.QueryEscape(secret), basic} {
-			if seen[form] {
-				continue
-			}
-			seen[form] = true
-			s = strings.ReplaceAll(s, form, "[redacted]")
-		}
-	}
-	if len(s) > maxProviderErrorBody {
-		s = strings.ToValidUTF8(s[:maxProviderErrorBody], "")
+// error_description はIdPが書く自由文で、長さに上限がない。切り詰めるとマルチバイト
+// 文字の途中で切ることがあり、string自体は不正なUTF-8でも壊れないが、slogが出力時に
+// U+FFFDへ置き換えるため見た目が崩れる。strings.ToValidUTF8で有効な境界まで戻す。
+func clampProviderErrorField(s string) string {
+	if len(s) > maxProviderErrorField {
+		s = strings.ToValidUTF8(s[:maxProviderErrorField], "")
 	}
 	return s
 }

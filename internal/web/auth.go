@@ -159,7 +159,8 @@ func (a *Auth) handleCallback(w http.ResponseWriter, r *http.Request) {
 		// 調査が違う方向へ進んだ。ProviderErrorが載っていれば後者である。
 		var perr *oidcauth.ProviderError
 		if errors.As(err, &perr) {
-			a.log.Error("the identity provider refused the login", "status", perr.StatusCode, "body", perr.Body)
+			a.log.Error("the identity provider refused the login",
+				"status", perr.StatusCode, "error", perr.Code, "description", perr.Description)
 			// 502はここでは正しくない。502は上流から届いた応答が不正なときの
 			// もので、ここでは上流は普通に応答し、そのうえで拒んだだけである。
 			// 503は「今は無理だが、また試して良い」を表す。実際に効くことが
