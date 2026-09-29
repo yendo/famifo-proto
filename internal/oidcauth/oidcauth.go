@@ -130,12 +130,7 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Client, error) {
 			// ログだけが違いを伝える。
 			Scopes: []string{oidc.ScopeOpenID},
 		},
-		// 受け入れる署名アルゴリズムを discovery が広告する集合に委ねない。IdPが将来
-		// 弱いものを広告し始めても、こちらが受け入れる範囲は変わらないようにする。
-		verifier: provider.Verifier(&oidc.Config{
-			ClientID:             cfg.ClientID,
-			SupportedSigningAlgs: []string{oidc.RS256},
-		}),
+		verifier:           provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
 		endSessionEndpoint: discovery.EndSessionEndpoint,
 		log:                log,
 	}, nil
