@@ -82,7 +82,8 @@ func (a *Auth) authenticate(next http.Handler) http.Handler {
 	})
 }
 
-// currentUser はセッションから利用者名を取り出す。無ければ空を返す。
+// currentUser はセッションから利用者の識別子（IDトークンの sub）を取り出す。
+// 無ければ空を返す。
 //
 // セッションが無い、期限切れ、ログアウト済み、知らないトークンは、どれもここでは
 // 「userが入っていない」に落ちる。サーバーから見ればすべて「その行が無い」である。
@@ -178,11 +179,11 @@ func (a *Auth) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	a.sessions.Put(ctx, keyUser, id.Username)
+	a.sessions.Put(ctx, keyUser, id.Subject)
 	// サインアウトのときにIdPへ渡すhint。セッションはサーバー側（sessions.db）に
 	// あるので、1KB前後のトークンを載せてもCookieの大きさには効かない。
 	a.sessions.Put(ctx, keyIDToken, id.IDToken)
-	a.log.Info("signed in", "user", id.Username)
+	a.log.Info("signed in", "sub", id.Subject)
 	http.Redirect(w, r, safeNext(next), http.StatusFound)
 }
 

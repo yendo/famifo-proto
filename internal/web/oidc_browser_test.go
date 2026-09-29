@@ -5,7 +5,7 @@
 // 求めている。auth_test.go の fakeProvider は internal/web.Provider を直接満たす
 // スタブで、oidcauth.Client を経由しない。oidcauth_test.go は逆に internal/web を
 // 一切通さない。したがって Provider インターフェース、Params が一時Cookieの
-// JSON を往復すること、Identity.Username がセッションのpayloadになることは、
+// JSON を往復すること、Identity.Subject がセッションのpayloadになることは、
 // これまでどこにもテストされていなかった。このファイルは、本物の oidcauth.Client を
 // 本物の web.Gallery に対して動かし、ブラウザで実際にリダイレクトを辿らせて
 // その境目を通す。
@@ -99,9 +99,9 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 			writeOIDCJSON(w, map[string]any{"error": "invalid_grant"})
 			return
 		}
-		// x/oauth2 は既定でまず HTTP Basic を試す。Synology SSO Server は
-		// client_secret_basic と client_secret_post の両方を広告しているので、
-		// 偽物も両方受ける。
+		// クライアント認証の方式は x/oauth2 の自動検出に任せている。まず
+		// HTTP Basic を試し、断られたらPOSTボディで送り直すので、偽物も
+		// 両方受ける。
 		id := r.Form.Get("client_id")
 		if u, _, ok := r.BasicAuth(); ok && u != "" {
 			id = u
@@ -120,7 +120,7 @@ func (i *fakeIDP) idToken(t *testing.T, aud string) string {
 	t.Helper()
 	now := time.Now()
 	claims := map[string]any{
-		"iss": i.srv.URL, "aud": aud, "sub": "yendo", "username": "yendo",
+		"iss": i.srv.URL, "aud": aud, "sub": "yendo",
 		"email": "yendo@example.invalid", "groups": []string{"users"},
 		"iat": now.Unix(), "exp": now.Add(3 * time.Minute).Unix(),
 		"nonce": i.lastNonce,
@@ -164,7 +164,7 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	client, err := oidcauth.New(context.Background(), oidcauth.Config{
 		Issuer: idp.srv.URL, ClientID: "famifo", ClientSecret: "s3cret",
 		RedirectURI: famifoURL + "/auth/callback",
-	}, log)
+	})
 	require.NoError(t, err)
 
 	dir := t.TempDir()
