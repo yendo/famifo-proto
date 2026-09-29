@@ -110,19 +110,12 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Client, error) {
 	if err := provider.Claims(&discovery); err != nil {
 		return nil, fmt.Errorf("cannot read the OIDC discovery document: %w", err)
 	}
-	endpoint := provider.Endpoint()
-	// Synology SSO Server は client_secret_basic と client_secret_post の両方を
-	// 広告しているが、実機で認可コードフローを1往復させて確かめたのは
-	// client_secret_post のほうだけである。x/oauth2 の既定 AuthStyleAutoDetect は
-	// まず HTTP Basic を試すので、放っておくと本番の最初のログインが一度も
-	// 検証していない経路を通ることになる。検証済みの方式に固定する。
-	endpoint.AuthStyle = oauth2.AuthStyleInParams
 	return &Client{
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
 			RedirectURL:  cfg.RedirectURI,
-			Endpoint:     endpoint,
+			Endpoint:     provider.Endpoint(),
 			// openid だけ要求する。Synology SSO Server が提供するのは他に email と
 			// groups だが、どちらもfamifoは読んでいない。要求すればIDトークンの
 			// ペイロードに載り、そのトークンはサインアウトのhintとしてセッションに
@@ -258,19 +251,22 @@ func (c *Client) LogoutURL(postLogoutRedirectURI, idTokenHint string) (string, b
 
 // sanitizeProviderBody はProviderErrorに載せる前にIdPの応答本文を安全にする。
 //
-// client_secret_post を固定しているため（New内のコメントを見よ）、client secret は
-// すべての交換リクエストのPOSTボディに載っている。リクエストをそのまま読み返す
-// ような（珍しくない）IdPのエラー応答は、secretをそっくり含みうる。先に置換して
-// から切り詰める。順序を逆にすると、切り詰めの境目でsecretが分断され、
+// クライアント認証の方式は x/oauth2 の自動検出に任せているので、client secret は
+// POSTボディ（client_secret_post）とAuthorizationヘッダ（client_secret_basic）の
+// どちらにも載りうる。リクエストをそのまま読み返すような（珍しくない）IdPの
+// エラー応答は、どちらの形でもsecretをそっくり含みうる。先に置換してから
+// 切り詰める。順序を逆にすると、切り詰めの境目でsecretが分断され、
 // ReplaceAllが後半だけになった破片を見つけられずログに残ってしまう。
 //
-// x/oauth2 はPOSTボディを application/x-www-form-urlencoded で組み立てるので、
-// secretは url.Values.Encode() と同じ規則でパーセントエンコードされた形でも
-// リクエストに載っている。secretがbase64由来だと "+" や "/" や "=" を含むのが
-// 普通で、リテラルの置換だけではこの形を取りこぼす。url.QueryEscapeは
-// url.Values.Encode() と同じエンコードを作るので、両方の形を置換する。
-// エンコードしても変わらない（16進数などの）secretで同じ置換を二度走らせない
-// よう、一致するときはスキップする。
+// 置換するのは3つの形である。リテラル、パーセントエンコードした形、そして
+// base64("clientID:secret") である。x/oauth2 はPOSTボディを
+// application/x-www-form-urlencoded で組み立てるので、secretは
+// url.Values.Encode() と同じ規則でエンコードされた形で載る。secretがbase64由来
+// だと "+" や "/" や "=" を含むのが普通で、リテラルの置換だけではこの形を
+// 取りこぼす。url.QueryEscapeは url.Values.Encode() と同じエンコードを作る。
+// Basicのほうは SetBasicAuth が QueryEscape した両者をコロンで繋いでbase64に
+// するので、これも別の形として置換する。エンコードしても変わらない（16進数などの）
+// secretで同じ置換を二度走らせないよう、重複する形はスキップする。
 //
 // 置換のあとに切り詰めるので、その時点でマルチバイト文字の途中を切ることがある。
 // string()は不正なUTF-8でも失敗しないが、slogはそれを出力時にU+FFFDへ置き換える
@@ -278,9 +274,15 @@ func (c *Client) LogoutURL(postLogoutRedirectURI, idTokenHint string) (string, b
 func (c *Client) sanitizeProviderBody(body []byte) string {
 	s := string(body)
 	if secret := c.oauth.ClientSecret; secret != "" {
-		s = strings.ReplaceAll(s, secret, "[redacted]")
-		if encoded := url.QueryEscape(secret); encoded != secret {
-			s = strings.ReplaceAll(s, encoded, "[redacted]")
+		basic := base64.StdEncoding.EncodeToString(
+			[]byte(url.QueryEscape(c.oauth.ClientID) + ":" + url.QueryEscape(secret)))
+		seen := make(map[string]bool)
+		for _, form := range []string{secret, url.QueryEscape(secret), basic} {
+			if seen[form] {
+				continue
+			}
+			seen[form] = true
+			s = strings.ReplaceAll(s, form, "[redacted]")
 		}
 	}
 	if len(s) > maxProviderErrorBody {

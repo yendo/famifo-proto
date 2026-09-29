@@ -87,9 +87,9 @@ func newIDP(t *testing.T) *idp {
 			writeJSON(w, map[string]any{"error": "invalid_grant"})
 			return
 		}
-		// x/oauth2 は既定でまず HTTP Basic を試す。Synology SSO Server は
-		// client_secret_basic と client_secret_post の両方を広告しているので、
-		// 偽物も両方受ける。
+		// クライアント認証の方式は x/oauth2 の自動検出に任せている。まず
+		// HTTP Basic を試し、断られたらPOSTボディで送り直すので、偽物も
+		// 両方受ける。
 		id := r.Form.Get("client_id")
 		if u, _, ok := r.BasicAuth(); ok && u != "" {
 			id = u
@@ -461,8 +461,8 @@ func TestExchangeTruncatesOnARuneBoundary(t *testing.T) {
 
 // TestExchangeRedactsTheClientSecretFromTheProviderBody は、IdPがリクエストを
 // そのまま読み返すエラー応答を返したときに、client secretがProviderErrorへ
-// そのまま流れ込まないことを固定する。client_secret_post を固定しているため、
-// secretはすべての交換リクエストのPOSTボディに載っている。
+// そのまま流れ込まないことを固定する。client_secret_post で送った場合、secretは
+// 交換リクエストのPOSTボディに載っている。
 func TestExchangeRedactsTheClientSecretFromTheProviderBody(t *testing.T) {
 	i := newIDP(t)
 	i.tokenErrStatus = http.StatusBadRequest
@@ -502,6 +502,27 @@ func TestExchangeRedactsAURLEncodedClientSecret(t *testing.T) {
 	require.ErrorAs(t, err, &perr)
 	require.NotContains(t, perr.Body, secret)
 	require.NotContains(t, perr.Body, encoded)
+	require.Contains(t, perr.Body, "[redacted]")
+}
+
+// TestExchangeRedactsABasicAuthorizationHeader は、secretがHTTP Basicの形
+// （base64("clientID:secret")）で読み返されたときもリダクションが効くことを
+// 固定する。クライアント認証の方式は自動検出に任せてあり、Basicで通る相手なら
+// secretはこの形でリクエストに載る。
+func TestExchangeRedactsABasicAuthorizationHeader(t *testing.T) {
+	i := newIDP(t)
+	basic := base64.StdEncoding.EncodeToString([]byte("famifo:s3cret"))
+	i.tokenErrStatus = http.StatusBadRequest
+	i.tokenErrBody = []byte(`{"error":"server_error","echo":"Authorization: Basic ` + basic + `"}`)
+	c := newClient(t, i) // newClientは ClientID: "famifo", ClientSecret: "s3cret" で組み立てる
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+
+	_, err = c.Exchange(context.Background(), "wrong-code", p)
+	var perr *oidcauth.ProviderError
+	require.ErrorAs(t, err, &perr)
+	require.NotContains(t, perr.Body, basic)
+	require.NotContains(t, perr.Body, "s3cret")
 	require.Contains(t, perr.Body, "[redacted]")
 }
 
