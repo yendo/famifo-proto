@@ -18,6 +18,11 @@ import (
 	"github.com/yendo/famifo-proto/internal/session"
 )
 
+// cookieName はsessionが発行するCookieの名前。パッケージ側の定数を参照せず、
+// ここに書き写してある。共有すると名前を変えたときに両方が同時に変わって
+// 黙って通るが、名前が変わると全端末がログアウトするので落ちてほしい。
+const cookieName = "famifo_session"
+
 func newManager(t *testing.T) *session.Manager {
 	t.Helper()
 	// 親ディレクトリが無い場所を指す。Newが作ることもここで確かめる。
@@ -55,7 +60,7 @@ func TestSessionDataSurvivesARoundTrip(t *testing.T) {
 	put := serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
 		m.Put(r.Context(), "user", "yendo")
 	})
-	c := cookieNamed(put, session.CookieName)
+	c := cookieNamed(put, cookieName)
 	require.NotNil(t, c, "a session cookie must be issued")
 	require.True(t, c.HttpOnly)
 	require.Equal(t, http.SameSiteLaxMode, c.SameSite)
@@ -75,7 +80,7 @@ func TestAnExpiredSessionIsNotFound(t *testing.T) {
 		m.Put(r.Context(), "user", "yendo")
 		m.SetDeadline(r.Context(), time.Now().Add(-time.Minute))
 	})
-	c := cookieNamed(put, session.CookieName)
+	c := cookieNamed(put, cookieName)
 	require.NotNil(t, c)
 
 	var got string
@@ -91,7 +96,7 @@ func TestDestroyRemovesTheSession(t *testing.T) {
 	put := serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
 		m.Put(r.Context(), "user", "yendo")
 	})
-	c := cookieNamed(put, session.CookieName)
+	c := cookieNamed(put, cookieName)
 	require.NotNil(t, c)
 
 	serve(t, m, func(_ http.ResponseWriter, r *http.Request) {
@@ -114,7 +119,7 @@ func TestSecureFollowsTheArgument(t *testing.T) {
 	resp := serve(t, st, func(_ http.ResponseWriter, r *http.Request) {
 		st.Put(r.Context(), "user", "yendo")
 	})
-	require.True(t, cookieNamed(resp, session.CookieName).Secure)
+	require.True(t, cookieNamed(resp, cookieName).Secure)
 }
 
 func TestTheDatabaseCanBeReopened(t *testing.T) {

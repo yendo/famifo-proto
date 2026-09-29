@@ -18,15 +18,15 @@ import (
 	_ "modernc.org/sqlite" // pure Goのsqliteドライバ。cgo不要。
 )
 
-// Lifetime はログイン状態が続く長さ。
+// lifetime はログイン状態が続く長さ。
 //
 // 使うたびに延ばすスライディング方式にすると、リクエストごとに Set-Cookie を出すか、
 // 残り時間を見て再発行する分岐が要る。家族が30日ごとに1回入れ直す程度なら固定で足りる。
 // 利用者が変えられる設定ではない。
-const Lifetime = 30 * 24 * time.Hour
+const lifetime = 30 * 24 * time.Hour
 
-// CookieName はセッショントークンを載せるCookieの名前。
-const CookieName = "famifo_session"
+// cookieName はセッショントークンを載せるCookieの名前。
+const cookieName = "famifo_session"
 
 // schema はセッションの表。scs/sqlite3store が読み書きする形に合わせてある。
 // expiry は julianday の実数で、sqlite3store が自分で入れる。
@@ -79,9 +79,9 @@ func New(dbPath string, secure bool, log *slog.Logger) (*Manager, error) {
 	backing := sqlite3store.New(db)
 	mgr := scs.New()
 	mgr.Store = backing
-	mgr.Lifetime = Lifetime
+	mgr.Lifetime = lifetime
 	// IdleTimeout は設定しない。スライディングにしないため。
-	mgr.Cookie.Name = CookieName
+	mgr.Cookie.Name = cookieName
 	mgr.Cookie.Path = "/"
 	mgr.Cookie.HttpOnly = true
 	mgr.Cookie.SameSite = http.SameSiteLaxMode
