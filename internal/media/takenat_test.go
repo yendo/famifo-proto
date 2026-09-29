@@ -10,7 +10,7 @@ import (
 
 // newWithEXIFDate は撮影日時だけを変えて1枚を組み立てる。
 func newWithEXIFDate(exifTakenAt time.Time) media.Media {
-	return media.New("/photos/a.jpg",
+	return media.New("/items/a.jpg",
 		fakeFileInfo{modTime: testModTime}, exifTakenAt)
 }
 
@@ -72,5 +72,5 @@ func TestNewFallsBackToModTimeWithoutAnEXIFDate(t *testing.T) {
 	t.Parallel()
 	p := newWithEXIFDate(time.Time{})
 
-	require.True(t, p.TakenAt().Equal(testModTime), "a photo with no capture time still stays in the gallery")
+	require.True(t, p.TakenAt().Equal(testModTime), "a item with no capture time still stays in the gallery")
 }

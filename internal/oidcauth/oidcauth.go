@@ -1,11 +1,7 @@
 // Package oidcauth は OpenID Connect の認可コードフローを扱う。
 //
 // discovery と ID トークンの検証は go-oidc に、PKCE とコード交換は x/oauth2 に任せる。
-// famifo に残るのは nonce の照合と claim の取り出しだけである。
-//
-// 当初は標準ライブラリだけで書いていた。動いてはいたが、issuer すり替えの防御を
-// 検証しているはずのテストが別の理由で通っていたことがレビューで分かり、
-// 失敗経路の正しさは実績のある実装に任せるほうが安いと判断した。
+// famifo に残るのは nonce の照合と subject の取り出しだけである。
 package oidcauth
 
 import (
@@ -14,7 +10,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -27,24 +22,29 @@ import (
 // httpTimeout はIdPへの1回の往復に許す時間。
 const httpTimeout = 20 * time.Second
 
-// maxProviderErrorBody はProviderError.Bodyに残す上限。相手が暴れてもログが
+// maxProviderErrorField はProviderErrorの各項目に残す上限。相手が暴れてもログが
 // 埋まらないように切り詰める。
-const maxProviderErrorBody = 1024
+const maxProviderErrorField = 1024
 
 // ErrProviderRefused はIdPがトークン交換そのものには応答したが、その交換を
 // 拒んだことを表す番兵。呼び出し側は errors.Is で「IdPに届かない」場合と
 // 区別できる。
 var ErrProviderRefused = errors.New("the identity provider refused the exchange")
 
-// ProviderError はErrProviderRefusedを満たす。IdPの応答（HTTPステータスと本文）を
-// 保持しており、呼び出し側はログに残せる。本文は1KiBに切り詰めてある。
+// ProviderError はErrProviderRefusedを満たす。IdPの応答を保持しており、呼び出し側は
+// ログに残せる。CodeとDescriptionはRFC 6749 5.2が定めるerrorとerror_descriptionで、
+// x/oauth2 がパースしたものをそのまま持つ。応答がこの形でなければ（IdPの手前にいる
+// プロキシがHTMLのエラーページを返した場合など）両方とも空で、StatusCodeだけが残る。
+// それでも「IdPに届かない」との区別は付く。各項目は1KiBに切り詰めてある。
 type ProviderError struct {
-	StatusCode int
-	Body       string
+	StatusCode  int
+	Code        string
+	Description string
 }
 
 func (e *ProviderError) Error() string {
-	return fmt.Sprintf("the identity provider refused the exchange: status %d, body %q", e.StatusCode, e.Body)
+	return fmt.Sprintf("the identity provider refused the exchange: status %d, error %q, description %q",
+		e.StatusCode, e.Code, e.Description)
 }
 
 // Is はErrProviderRefusedとの errors.Is 判定を成立させる。
@@ -62,11 +62,12 @@ type Config struct {
 
 // Identity は認証できた利用者。
 //
-// 呼び出し側が実際に使う値だけを持つ。sub と email と groups も受け取っては
-// いるが、誰も読まないので外へは出さない。必要になったら足せばよい。
+// 呼び出し側が実際に使う値だけを持つ。
 type Identity struct {
-	// Username は表示とログに使う。空ならsubで代用する。
-	Username string
+	// Subject はIdPにおける利用者の識別子（IDトークンの sub）。仕様が一意性と
+	// 不変性を保証するのはこれだけなので、famifoが利用者を指すときに使う。
+	// 人が読む前提の値ではなく、UUIDであることも多い。
+	Subject string
 	// IDToken は検証済みのIDトークンそのもの。RP-Initiated Logout の
 	// id_token_hint に渡すために保持する。仕様は、これを付けずに
 	// post_logout_redirect_uri だけを送った場合、IdPは戻り先へ
@@ -86,7 +87,6 @@ type Client struct {
 	oauth              *oauth2.Config
 	verifier           *oidc.IDTokenVerifier
 	endSessionEndpoint string // RP-Initiated Logout の宛先。discoveryに無ければ空
-	log                *slog.Logger
 }
 
 // New は discovery を引いてClientを組み立てる。
@@ -94,7 +94,7 @@ type Client struct {
 // 起動時に1回だけ呼ぶ。IdPに届かなければエラーを返し、呼び出し側は起動を止める。
 // oidc.NewProvider は discovery が名乗る issuer と設定した issuer の一致も確かめるので、
 // その防御をこちらで書く必要はない。
-func New(ctx context.Context, cfg Config, log *slog.Logger) (*Client, error) {
+func New(ctx context.Context, cfg Config) (*Client, error) {
 	// 既定のクライアントは待ち時間の上限を持たない。落ちたIdPに繋ぎに行ったまま
 	// 起動が止まらないよう、明示する。
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: httpTimeout})
@@ -102,49 +102,25 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot read the OIDC discovery document: %w", err)
 	}
-	// go-oidcはend_session_endpointを型付きフィールドで公開していない。標準の
-	// discoveryに載るキーなので、生のdiscoveryドキュメントから自分で拾う。
-	var discovery struct {
+	// end_session_endpoint は RP-Initiated Logout の仕様が足すメタデータで、
+	// go-oidcが型付きフィールドで公開しているのはCoreの分だけである。生の
+	// メタデータから自分で拾う。
+	var metadata struct {
 		EndSessionEndpoint string `json:"end_session_endpoint"`
 	}
-	if err := provider.Claims(&discovery); err != nil {
+	if err := provider.Claims(&metadata); err != nil {
 		return nil, fmt.Errorf("cannot read the OIDC discovery document: %w", err)
 	}
-	endpoint := provider.Endpoint()
-	// Synology SSO Server は client_secret_basic と client_secret_post の両方を
-	// 広告しているが、実機で認可コードフローを1往復させて確かめたのは
-	// client_secret_post のほうだけである。x/oauth2 の既定 AuthStyleAutoDetect は
-	// まず HTTP Basic を試すので、放っておくと本番の最初のログインが一度も
-	// 検証していない経路を通ることになる。検証済みの方式に固定する。
-	endpoint.AuthStyle = oauth2.AuthStyleInParams
 	return &Client{
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
 			RedirectURL:  cfg.RedirectURI,
-			Endpoint:     endpoint,
-			// openid だけ要求する。Synology SSO Server が提供するのは他に email と
-			// groups だが、どちらもfamifoは読んでいない。要求すればIDトークンの
-			// ペイロードに載り、そのトークンはサインアウトのhintとしてセッションに
-			// 30日残るので、読まない claim を要求することはディスクに置くPIIを
-			// 増やすことと同じである。profile はそもそもSSO Serverに無い。
-			//
-			// username claim がどのスコープに紐づくかは文書化されていない
-			// （discovery は claims_supported に載せるが、scopes_supported は
-			// email / groups / openid の3つだけである）。openid だけで返らなく
-			// なった場合は Exchange が sub で代用し、そのとき警告を出す。
-			// この IdP では sub がユーザー名そのものなので、表示は変わらず
-			// ログだけが違いを伝える。
-			Scopes: []string{oidc.ScopeOpenID},
+			Endpoint:     provider.Endpoint(),
+			Scopes:       []string{oidc.ScopeOpenID},
 		},
-		// 受け入れる署名アルゴリズムを discovery が広告する集合に委ねない。IdPが将来
-		// 弱いものを広告し始めても、こちらが受け入れる範囲は変わらないようにする。
-		verifier: provider.Verifier(&oidc.Config{
-			ClientID:             cfg.ClientID,
-			SupportedSigningAlgs: []string{oidc.RS256},
-		}),
-		endSessionEndpoint: discovery.EndSessionEndpoint,
-		log:                log,
+		verifier:           provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
+		endSessionEndpoint: metadata.EndSessionEndpoint,
 	}, nil
 }
 
@@ -182,7 +158,11 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 				status = rErr.Response.StatusCode
 			}
 			return Identity{}, fmt.Errorf("cannot exchange the authorization code: %w",
-				&ProviderError{StatusCode: status, Body: c.sanitizeProviderBody(rErr.Body)})
+				&ProviderError{
+					StatusCode:  status,
+					Code:        clampProviderErrorField(rErr.ErrorCode),
+					Description: clampProviderErrorField(rErr.ErrorDescription),
+				})
 		}
 		return Identity{}, fmt.Errorf("cannot exchange the authorization code: %w", err)
 	}
@@ -204,24 +184,7 @@ func (c *Client) Exchange(ctx context.Context, code string, p Params) (Identity,
 	if idToken.Subject == "" {
 		return Identity{}, fmt.Errorf("the id_token carries no subject")
 	}
-	var claims struct {
-		Username string `json:"username"`
-	}
-	if err := idToken.Claims(&claims); err != nil {
-		return Identity{}, fmt.Errorf("cannot read the id_token claims: %w", err)
-	}
-	name := claims.Username
-	if name == "" {
-		// username は標準のclaimではない。別のIdPでは無いことがある。
-		//
-		// 黙って代用しない。この IdP では sub がユーザー名そのものなので、
-		// 代用が起きても表示は1文字も変わらず、ログだけが違いを伝える。
-		// 要求するスコープを削ったときに username まで落ちたことに気づく手立ては
-		// これしかない。
-		c.log.Warn("the id_token carries no username claim, falling back to sub")
-		name = idToken.Subject
-	}
-	return Identity{Username: name, IDToken: raw}, nil
+	return Identity{Subject: idToken.Subject, IDToken: raw}, nil
 }
 
 // LogoutURL はRP-Initiated Logoutの宛先を組み立てる。IdPが discovery で
@@ -256,42 +219,22 @@ func (c *Client) LogoutURL(postLogoutRedirectURI, idTokenHint string) (string, b
 	return u.String(), true
 }
 
-// sanitizeProviderBody はProviderErrorに載せる前にIdPの応答本文を安全にする。
+// clampProviderErrorField はIdPが返した文字列をログに載せる長さに収める。
 //
-// client_secret_post を固定しているため（New内のコメントを見よ）、client secret は
-// すべての交換リクエストのPOSTボディに載っている。リクエストをそのまま読み返す
-// ような（珍しくない）IdPのエラー応答は、secretをそっくり含みうる。先に置換して
-// から切り詰める。順序を逆にすると、切り詰めの境目でsecretが分断され、
-// ReplaceAllが後半だけになった破片を見つけられずログに残ってしまう。
-//
-// x/oauth2 はPOSTボディを application/x-www-form-urlencoded で組み立てるので、
-// secretは url.Values.Encode() と同じ規則でパーセントエンコードされた形でも
-// リクエストに載っている。secretがbase64由来だと "+" や "/" や "=" を含むのが
-// 普通で、リテラルの置換だけではこの形を取りこぼす。url.QueryEscapeは
-// url.Values.Encode() と同じエンコードを作るので、両方の形を置換する。
-// エンコードしても変わらない（16進数などの）secretで同じ置換を二度走らせない
-// よう、一致するときはスキップする。
-//
-// 置換のあとに切り詰めるので、その時点でマルチバイト文字の途中を切ることがある。
-// string()は不正なUTF-8でも失敗しないが、slogはそれを出力時にU+FFFDへ置き換える
-// ため見た目が壊れる。strings.ToValidUTF8で有効な境界まで戻す。
-func (c *Client) sanitizeProviderBody(body []byte) string {
-	s := string(body)
-	if secret := c.oauth.ClientSecret; secret != "" {
-		s = strings.ReplaceAll(s, secret, "[redacted]")
-		if encoded := url.QueryEscape(secret); encoded != secret {
-			s = strings.ReplaceAll(s, encoded, "[redacted]")
-		}
-	}
-	if len(s) > maxProviderErrorBody {
-		s = strings.ToValidUTF8(s[:maxProviderErrorBody], "")
+// error_description はIdPが書く自由文で、長さに上限がない。切り詰めるとマルチバイト
+// 文字の途中で切ることがあり、string自体は不正なUTF-8でも壊れないが、slogが出力時に
+// U+FFFDへ置き換えるため見た目が崩れる。strings.ToValidUTF8で有効な境界まで戻す。
+func clampProviderErrorField(s string) string {
+	if len(s) > maxProviderErrorField {
+		s = strings.ToValidUTF8(s[:maxProviderErrorField], "")
 	}
 	return s
 }
 
+// randomString は state と nonce に使う推測できない値を作る。crypto/rand の
+// 32バイトを base64url にした43文字を返す。
 func randomString() (string, error) {
-	// state と nonce に使う。PKCEのverifierはoauth2.GenerateVerifier()が作る。
-	b := make([]byte, 32) // base64urlで43文字。
+	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("cannot generate a random value: %w", err)
 	}

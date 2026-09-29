@@ -64,13 +64,13 @@ EXPOSE 8080
 # bind mount ではホスト側の所有者がそのまま適用される。コンテナのuidで書ける
 # ようにしておかないと起動時に落ちる。named volume と違い所有者は継承されない。
 #
-# 写真の置き場所が複数あるなら、-v 1つにつき -dir 1つを明示する。
+# 写真と動画の置き場所が複数あるなら、-v 1つにつき -dir 1つを明示する。
 #
 #   docker run -d --restart unless-stopped -p 8080:8080 \
 #     -v /volume1/photo:/photos/main:ro \
 #     -v /mnt/usb:/photos/usb:ro \
 #     -v /volume1/famifo/data:/data \
-#     ghcr.io/yendo/famifo-proto -dir /photos/main:/photos/usb -data /data
+#     ghcr.io/yendo/famifo-proto -dir /photos/main -dir /photos/usb -data /data
 #
 # /data のマウントは省略できない。省くとDBとサムネイルがコンテナの書き込み層に
 # 置かれ、イメージ更新でコンテナを作り直した時点で消える。DSMのGUIでの更新手順は
@@ -78,9 +78,9 @@ EXPOSE 8080
 # しかも初回の動作確認では気づけない。
 #
 # 分ける基準は「別々にマウントが外れうるか」。削除ガードはルート単位で働き、
-# 空に見えるルートの写真を消さずに残す。既定の -dir /photos ひとつでは、その下の
+# 空に見えるルートの中身を消さずに残す。既定の -dir /photos ひとつでは、その下の
 # マウントが1つ外れても /photos 全体は空にならないため、ガードが働かずに
-# そのぶんの写真がインデックスから消える。逆に同じマウントの中を細かく分けても、
+# そのぶんがインデックスから消える。逆に同じマウントの中を細かく分けても、
 # まとめて出入りするのでガードの観点では意味がない。
 ENTRYPOINT ["/famifo"]
 CMD ["-dir", "/photos", "-data", "/data"]

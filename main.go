@@ -12,9 +12,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -65,7 +65,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// 誤ったまま本番のインデックスを作ると、全件やり直しになる。
 	log.Info("starting", "version", versionString(),
 		"timezone", startupTimezone(time.Now()),
-		"dirs", cfg.PhotoDirs, "data", cfg.DataDir, "addr", cfg.Addr,
+		"dirs", cfg.MediaDirs, "data", cfg.DataDir, "addr", cfg.Addr,
 		"scan-workers", cfg.ScanWorkers, "scan-interval", cfg.ScanInterval)
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {
@@ -84,27 +84,29 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// 止める。認証すると宣言しておいて黙って無認証で配信するより、起動しないほうがよい。
 	var auth *web.Auth
 	if cfg.OIDCIssuer != "" {
-		sessions, err := session.Open(cfg.SessionDBPath(), cfg.CookieSecure(), log)
+		sessions, err := session.New(cfg.SessionDBPath(), cfg.IsExternalURLHTTPS(), log)
 		if err != nil {
 			return err
 		}
 		defer sessions.Close()
+
 		oidcClient, err := oidcauth.New(ctx, oidcauth.Config{
 			Issuer:       cfg.OIDCIssuer,
 			ClientID:     cfg.OIDCClientID,
 			ClientSecret: cfg.OIDCClientSecret,
 			RedirectURI:  cfg.RedirectURI(),
-		}, log)
+		})
 		if err != nil {
 			return err
 		}
-		auth = &web.Auth{OIDC: oidcClient, Sessions: sessions.Manager(), ExternalURL: cfg.ExternalURL}
+
+		auth = web.NewAuth(oidcClient, sessions, cfg.ExternalURL, log)
 		log.Info("authentication is on", "issuer", cfg.OIDCIssuer, "redirect", cfg.RedirectURI())
 	} else {
-		log.Warn("authentication is off, anyone who can reach this address can see the photos")
+		log.Warn("authentication is off, anyone who can reach this address can see the media")
 	}
 
-	srv, err := web.NewServer(st, thumbs, auth, log)
+	gallery, err := web.NewGallery(st, thumbs, auth, log)
 	if err != nil {
 		return err
 	}
@@ -119,7 +121,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// listenErrChは1要素バッファ: ListenAndServeの失敗をrunの戻り値まで伝え、
 	// プロセスが異常終了時に0で終了しないようにする。
 	listenErrCh := make(chan error, 1)
-	httpSrv := &http.Server{Addr: cfg.Addr, Handler: srv.Handler()}
+	httpSrv := &http.Server{Addr: cfg.Addr, Handler: gallery.Handler()}
 	go func() {
 		log.Info("starting HTTP server", "addr", cfg.Addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -129,7 +131,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}()
 
-	ix := index.New(cfg.PhotoDirs, st, thumbs, cfg.ScanWorkers, log)
+	// 取り込みの実行役。この下の監視とスキャンは、どちらもこれを起こす入口になる。
+	ix := index.New(cfg.MediaDirs, st, thumbs, cfg.ScanWorkers, log)
 
 	// スキャンより先に監視を張る。逆にすると、スキャンが走査を終えてから監視が
 	// 張られるまでの間に置かれた写真を、どちらも拾えない。数千枚でスキャンが
@@ -140,20 +143,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	defer watcher.Close()
-	log.Info("watching for changes", "dirs", cfg.PhotoDirs)
+	log.Info("watching for changes", "dirs", cfg.MediaDirs)
 
 	// 取り込みを走らせる goroutine の終了を待ってから store を閉じる。待たずに
 	// 閉じると、あとから Upsert するワーカーが閉じたDBに書きに行く。
 	// defer の順序で st.Close() より先に走る。
-	var indexers sync.WaitGroup
+	var wg sync.WaitGroup
 	defer func() {
 		cancel() // 監視とスキャンに終わるよう伝える
-		indexers.Wait()
+		wg.Wait()
 	}()
 
-	indexers.Add(1)
+	wg.Add(1)
 	go func() {
-		defer indexers.Done()
+		defer wg.Done()
 		if err := watcher.Run(ctx); err != nil {
 			log.Error("watcher stopped", "err", err)
 		}
@@ -161,10 +164,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	// スキャンは間隔をおいて繰り返す。1回目は起動直後に走り、止まっていた間の
 	// 変更を取り戻す。2回目以降は監視の取りこぼしを回復する。
-	indexers.Add(1)
+	scanner := index.NewScanner(ix, cfg.ScanInterval, watcher.ScanRequests(), log)
+	wg.Add(1)
 	go func() {
-		defer indexers.Done()
-		ix.RunScans(ctx, cfg.ScanInterval, watcher.ScanRequests())
+		defer wg.Done()
+		scanner.Run(ctx)
 	}()
 
 	// ListenAndServeの失敗はcancel()経由でctx.Done()も閉じるため、どちらが
@@ -188,10 +192,8 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	fs.SetOutput(stderr)
 
 	var c config.Config
-	var dirs string
-	fs.StringVar(&dirs, "dir", "",
-		fmt.Sprintf("directories to collect photos and videos from (required); %q separates several",
-			string(filepath.ListSeparator)))
+	fs.Var((*dirList)(&c.MediaDirs), "dir",
+		"`directory` to collect photos and videos from (required); repeat the flag for several")
 	fs.StringVar(&c.DataDir, "data", "./famifo-data", "where the database and generated thumbnails are stored")
 	fs.StringVar(&c.Addr, "addr", ":8080", "HTTP listen address")
 	// 適正値はCPU数とストレージの待ち時間の両方で決まる。NASでは読み込み待ちが
@@ -219,12 +221,20 @@ func parseArgs(args []string, stderr io.Writer) (config.Config, bool, error) {
 	if err := fs.Parse(args); err != nil {
 		return config.Config{}, false, err
 	}
-	// 空文字を SplitList に渡すと [""] ではなく [] が返る。
-	c.PhotoDirs = filepath.SplitList(dirs)
 	// 秘密をフラグで受け取らない。コマンドライン引数は同じホストの誰からでも
 	// /proc で読める。
 	c.OIDCClientSecret = os.Getenv("FAMIFO_OIDC_CLIENT_SECRET")
 	return c, *showVersion, nil
+}
+
+// dirList は -dir を繰り返し指定で集める。flag は同じフラグが現れるたびに Set を呼ぶ。
+type dirList []string
+
+func (d *dirList) String() string { return strings.Join(*d, ", ") }
+
+func (d *dirList) Set(v string) error {
+	*d = append(*d, v)
+	return nil
 }
 
 // defaultScanWorkers は取り込みの既定の並行数を返す。
@@ -261,11 +271,15 @@ func startupTimezone(t time.Time) string {
 	return t.Format("MST-07:00")
 }
 
+// shutdownTimeout は処理中のリクエストを待つ上限。docker stop は SIGTERM のあと
+// 既定で10秒後に SIGKILL を送るので、DBを閉じるぶんも含めてその枠に収める。
+const shutdownTimeout = 5 * time.Second
+
 // shutdownHTTP は待ち受けを猶予付きで止め、待ち受けの失敗と停止の失敗を
 // 1つのエラーにまとめる。listenErrは停止を待つ前に受け取っていた失敗で、
 // 受け取っていなければnilが渡る。
 func shutdownHTTP(httpSrv *http.Server, listenErrCh <-chan error, listenErr error) error {
-	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	shutErr := httpSrv.Shutdown(shutCtx)
 

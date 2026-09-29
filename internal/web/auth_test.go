@@ -60,7 +60,7 @@ type authFixture struct {
 
 func newAuthFixture(t *testing.T) *authFixture {
 	t.Helper()
-	return newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Username: "yendo"}}, false)
+	return newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Subject: "yendo"}}, false)
 }
 
 // newAuthFixtureWith はIdPの偽物とSecureの設定を選べる版。
@@ -74,15 +74,15 @@ func newAuthFixtureWith(t *testing.T, prov *fakeProvider, secure bool) *authFixt
 	require.NoError(t, err)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	sessions, err := session.Open(dir+"/sessions.db", secure, log)
+	sessions, err := session.New(dir+"/sessions.db", secure, log)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sessions.Close() })
 
-	srv, err := web.NewServer(st, thumbs,
-		&web.Auth{OIDC: prov, Sessions: sessions.Manager(), ExternalURL: "https://famifo.example.invalid"},
+	gallery, err := web.NewGallery(st, thumbs,
+		web.NewAuth(prov, sessions, "https://famifo.example.invalid", log),
 		log)
 	require.NoError(t, err)
-	return &authFixture{h: srv.Handler(), prov: prov}
+	return &authFixture{h: gallery.Handler(), prov: prov}
 }
 
 func get(t *testing.T, h http.Handler, path string, cookies ...*http.Cookie) *http.Response {
@@ -203,7 +203,7 @@ func TestCallbackReportsAnUnreachableProvider(t *testing.T) {
 func TestCallbackReportsAProviderRefusal(t *testing.T) {
 	f := newAuthFixture(t)
 	f.prov.err = fmt.Errorf("cannot exchange the authorization code: %w",
-		&oidcauth.ProviderError{StatusCode: http.StatusBadRequest, Body: `{"error":"server_error"}`})
+		&oidcauth.ProviderError{StatusCode: http.StatusBadRequest, Code: "server_error"})
 	start := get(t, f.h, "/login")
 	flow := cookieNamed(start, "famifo_session")
 
@@ -303,7 +303,7 @@ func TestLogoutClearsTheSession(t *testing.T) {
 // リダイレクトが起きたことだけでは、宛先を取り違えても気づけない。
 func TestLogoutRedirectsToTheProviderWhenSupported(t *testing.T) {
 	prov := &fakeProvider{
-		identity:           oidcauth.Identity{Username: "yendo"},
+		identity:           oidcauth.Identity{Subject: "yendo"},
 		endSessionEndpoint: "https://idp.example.invalid:5001/webman/logout.cgi",
 	}
 	f := newAuthFixtureWith(t, prov, false)
@@ -342,7 +342,7 @@ func TestLogoutRedirectsToTheProviderWhenSupported(t *testing.T) {
 func TestLogoutCarriesTheIDTokenHint(t *testing.T) {
 	prov := &fakeProvider{
 		identity: oidcauth.Identity{
-			Username: "yendo", IDToken: "header.payload.signature",
+			Subject: "yendo", IDToken: "header.payload.signature",
 		},
 		endSessionEndpoint: "https://idp.example.invalid:5001/webman/logout.cgi",
 	}
@@ -384,7 +384,7 @@ func TestSignedOutRendersWithoutASession(t *testing.T) {
 }
 
 func TestSecureAttributeFollowsTheSetting(t *testing.T) {
-	f := newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Username: "yendo"}}, true)
+	f := newAuthFixtureWith(t, &fakeProvider{identity: oidcauth.Identity{Subject: "yendo"}}, true)
 
 	resp := get(t, f.h, "/login")
 	require.True(t, cookieNamed(resp, "famifo_session").Secure)
@@ -420,10 +420,10 @@ func TestWithoutAuthEverythingIsOpen(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	thumbs, err := thumb.NewProvider(dir + "/thumbs")
 	require.NoError(t, err)
-	srv, err := web.NewServer(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gallery, err := web.NewGallery(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 
-	resp := get(t, srv.Handler(), "/")
+	resp := get(t, gallery.Handler(), "/")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NotContains(t, bodyOf(t, resp), "/logout", "the logout button must not be shown")
 }

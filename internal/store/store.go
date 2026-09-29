@@ -42,7 +42,7 @@ func Open(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("cannot create the database directory: %w", err)
 	}
 
-	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
+	dsn := dbPath + "?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open the database: %w", err)
@@ -210,7 +210,7 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]media.Media
 //
 // 並びは ListRange と同じ taken_at DESC, id DESC でなければならない。順序式が
 // 二重になるが、片方だけ変えるとURLが別の1件の位置を指すため、
-// TestRankOfLocatesThePhotoInListRange が両者の一致を縛っている。
+// TestRankOfLocatesTheItemInListRange が両者の一致を縛っている。
 func (s *Store) RankOf(ctx context.Context, id string) (int, error) {
 	var takenAt int64
 	err := s.db.QueryRowContext(ctx, `SELECT taken_at FROM media WHERE id = ?`, id).Scan(&takenAt)

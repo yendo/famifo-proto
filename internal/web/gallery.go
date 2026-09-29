@@ -84,8 +84,9 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// Server はギャラリーのHTTPハンドラ群を保持する。
-type Server struct {
+// Gallery はギャラリーのHTTPハンドラが使う依存をまとめる。ハンドラはこの型の
+// メソッドとして handlers.go にある。認証の経路は Auth が持つ。
+type Gallery struct {
 	st        *store.Store
 	tmpl      *template.Template
 	thumbs    *thumb.Provider
@@ -94,27 +95,27 @@ type Server struct {
 	log       *slog.Logger
 }
 
-// NewServer はテンプレートを読み込んでServerを作る。
+// NewGallery はテンプレートを読み込んでGalleryを作る。
 // 塊の大きさは defaultChunkSize に任せる。利用者が変えられる設定ではない。
 //
 // thumbs は取り込み側と共有する。配信するファイルの選択はすべてそこが決めるので、
-// サーバーはサムネイルの置き場所を知らない。
+// この型はサムネイルの置き場所を知らない。
 //
 // auth に nil を渡すと認証しない。開発機やテストでIdPを立てずに動かせるようにするため
 // であり、既定の構成でもある。
-func NewServer(st *store.Store, thumbs *thumb.Provider, auth *Auth, log *slog.Logger) (*Server, error) {
+func NewGallery(st *store.Store, thumbs *thumb.Provider, auth *Auth, log *slog.Logger) (*Gallery, error) {
 	tmpl, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("cannot load the templates: %w", err)
 	}
-	return &Server{st: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, auth: auth, log: log}, nil
+	return &Gallery{st: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, auth: auth, log: log}, nil
 }
 
 // Handler はルーティング済みのハンドラを返す。
 //
 // セッションのミドルウェア（LoadAndSave）は /static/ には掛けない。静的ファイルは
 // セッションを読まないし、掛けると応答に Vary: Cookie が付く。
-func (s *Server) Handler() http.Handler {
+func (g *Gallery) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	staticFS, err := fs.Sub(assets, "static")
@@ -125,24 +126,25 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
 	protected := http.NewServeMux()
-	protected.HandleFunc("GET /{$}", s.handleGallery)
-	protected.HandleFunc("GET /item/{id}", s.handleItem)
-	protected.HandleFunc("GET /tiles", s.handleTiles)
-	protected.HandleFunc("GET /thumb/{id}", s.handleThumb)
-	protected.HandleFunc("GET /file/{id}", s.handleFile)
+	protected.HandleFunc("GET /{$}", g.handleGallery)
+	protected.HandleFunc("GET /item/{id}", g.handleItem)
+	protected.HandleFunc("GET /tiles", g.handleTiles)
+	protected.HandleFunc("GET /thumb/{id}", g.handleThumb)
+	protected.HandleFunc("GET /file/{id}", g.handleFile)
 
 	inner := http.NewServeMux()
-	inner.Handle("/", s.authenticate(protected))
-	if s.auth == nil {
+	if g.auth == nil {
+		inner.Handle("/", protected)
 		mux.Handle("/", inner)
 		return securityHeaders(mux)
 	}
-	inner.HandleFunc("GET /login", s.handleLogin)
-	inner.HandleFunc("GET /auth/callback", s.handleCallback)
-	inner.HandleFunc("POST /logout", s.handleLogout)
+	inner.Handle("/", g.auth.authenticate(protected))
+	inner.HandleFunc("GET /login", g.auth.handleLogin)
+	inner.HandleFunc("GET /auth/callback", g.auth.handleCallback)
+	inner.HandleFunc("POST /logout", g.auth.handleLogout)
 	// RP-Initiated LogoutでIdPが戻ってくる先。/logout自身がend_session_endpoint
 	// を持たないIdPのとき案内ページとして返すのもここ。
-	inner.HandleFunc("GET /signed-out", s.handleSignedOut)
-	mux.Handle("/", s.auth.Sessions.LoadAndSave(inner))
+	inner.HandleFunc("GET /signed-out", g.auth.handleSignedOut)
+	mux.Handle("/", g.auth.sessions.LoadAndSave(inner))
 	return securityHeaders(mux)
 }

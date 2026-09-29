@@ -13,21 +13,21 @@ import (
 func TestSupportedDecodableAndVideoByExtension(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct{ supported, decodable, video bool }{
-		"a.jpg":              {true, true, false},
-		"a.jpeg":             {true, true, false},
-		"a.png":              {true, true, false},
-		"a.gif":              {true, true, false},
-		"a.webp":             {true, true, false},
-		"A.JPG":              {true, true, false},  // 大文字小文字を区別しない
-		"a.heic":             {true, false, false}, // 載せるが、デコードは @eaDir 頼み
-		"a.HEIF":             {true, false, false},
-		"a.mp4":              {true, false, true}, // 載せるが、絵は借りるしかない
-		"a.MOV":              {true, false, true},
-		"a.avi":              {false, false, false}, // 実物を見るまで足さない
-		"a.webm":             {false, false, false},
-		"a.txt":              {false, false, false},
-		"noext":              {false, false, false},
-		"/photos/2020/b.png": {true, true, false}, // フルパスでも拡張子で判定する
+		"a.jpg":             {true, true, false},
+		"a.jpeg":            {true, true, false},
+		"a.png":             {true, true, false},
+		"a.gif":             {true, true, false},
+		"a.webp":            {true, true, false},
+		"A.JPG":             {true, true, false},  // 大文字小文字を区別しない
+		"a.heic":            {true, false, false}, // 載せるが、デコードは @eaDir 頼み
+		"a.HEIF":            {true, false, false},
+		"a.mp4":             {true, false, true}, // 載せるが、絵は借りるしかない
+		"a.MOV":             {true, false, true},
+		"a.avi":             {false, false, false}, // 実物を見るまで足さない
+		"a.webm":            {false, false, false},
+		"a.txt":             {false, false, false},
+		"noext":             {false, false, false},
+		"/items/2020/b.png": {true, true, false}, // フルパスでも拡張子で判定する
 	}
 	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -54,7 +54,7 @@ func TestContentType(t *testing.T) {
 	}
 	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, want, imagefmt.ContentType("/photos/"+name))
+			require.Equal(t, want, imagefmt.ContentType("/items/"+name))
 		})
 	}
 }

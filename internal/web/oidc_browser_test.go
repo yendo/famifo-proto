@@ -5,9 +5,9 @@
 // 求めている。auth_test.go の fakeProvider は internal/web.Provider を直接満たす
 // スタブで、oidcauth.Client を経由しない。oidcauth_test.go は逆に internal/web を
 // 一切通さない。したがって Provider インターフェース、Params が一時Cookieの
-// JSON を往復すること、Identity.Username がセッションのpayloadになることは、
+// JSON を往復すること、Identity.Subject がセッションのpayloadになることは、
 // これまでどこにもテストされていなかった。このファイルは、本物の oidcauth.Client を
-// 本物の web.Server に対して動かし、ブラウザで実際にリダイレクトを辿らせて
+// 本物の web.Gallery に対して動かし、ブラウザで実際にリダイレクトを辿らせて
 // その境目を通す。
 package web_test
 
@@ -99,9 +99,9 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 			writeOIDCJSON(w, map[string]any{"error": "invalid_grant"})
 			return
 		}
-		// x/oauth2 は既定でまず HTTP Basic を試す。Synology SSO Server は
-		// client_secret_basic と client_secret_post の両方を広告しているので、
-		// 偽物も両方受ける。
+		// クライアント認証の方式は x/oauth2 の自動検出に任せている。まず
+		// HTTP Basic を試し、断られたらPOSTボディで送り直すので、偽物も
+		// 両方受ける。
 		id := r.Form.Get("client_id")
 		if u, _, ok := r.BasicAuth(); ok && u != "" {
 			id = u
@@ -120,7 +120,7 @@ func (i *fakeIDP) idToken(t *testing.T, aud string) string {
 	t.Helper()
 	now := time.Now()
 	claims := map[string]any{
-		"iss": i.srv.URL, "aud": aud, "sub": "yendo", "username": "yendo",
+		"iss": i.srv.URL, "aud": aud, "sub": "yendo",
 		"email": "yendo@example.invalid", "groups": []string{"users"},
 		"iat": now.Unix(), "exp": now.Add(3 * time.Minute).Unix(),
 		"nonce": i.lastNonce,
@@ -146,8 +146,8 @@ func writeOIDCJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// newOIDCTestApp は偽のIdPに対して本物のoidcauth.Clientとweb.Serverを組み立て、
-// famifoのURLを返す。web.NewServerがredirect_uriとしてfamifo自身のURLを必要と
+// newOIDCTestApp は偽のIdPに対して本物のoidcauth.Clientとweb.Galleryを組み立て、
+// famifoのURLを返す。web.NewGalleryがredirect_uriとしてfamifo自身のURLを必要と
 // するため、httptest.NewServerでハンドラを渡す前にポートを確保しておく
 // （net.Listenで先にポートを取り、httptest.NewUnstartedServerへ差し込む）。
 func newOIDCTestApp(t *testing.T) (famifoURL string) {
@@ -164,30 +164,30 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	client, err := oidcauth.New(context.Background(), oidcauth.Config{
 		Issuer: idp.srv.URL, ClientID: "famifo", ClientSecret: "s3cret",
 		RedirectURI: famifoURL + "/auth/callback",
-	}, log)
+	})
 	require.NoError(t, err)
 
 	dir := t.TempDir()
-	photoDir := filepath.Join(dir, "photos")
-	require.NoError(t, os.MkdirAll(photoDir, 0o755))
+	mediaDir := filepath.Join(dir, "items")
+	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
 	thumbs, err := thumb.NewProvider(filepath.Join(dir, "thumbs"))
 	require.NoError(t, err)
 	st, err := store.Open(filepath.Join(dir, "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 
-	require.NoError(t, writeTestPhoto(filepath.Join(photoDir, "p0000.jpg"), 0, time.Now()))
-	_, err = indexAll(st, photoDir, thumbs)
+	require.NoError(t, writeTestPhoto(filepath.Join(mediaDir, "p0000.jpg"), 0, time.Now()))
+	_, err = indexAll(st, mediaDir, thumbs)
 	require.NoError(t, err)
 
-	sessions, err := session.Open(filepath.Join(dir, "sessions.db"), false, log)
+	sessions, err := session.New(filepath.Join(dir, "sessions.db"), false, log)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sessions.Close() })
 
-	webSrv, err := web.NewServer(st, thumbs, &web.Auth{OIDC: client, Sessions: sessions.Manager()}, log)
+	gallery, err := web.NewGallery(st, thumbs, web.NewAuth(client, sessions, "", log), log)
 	require.NoError(t, err)
 
-	ts := httptest.NewUnstartedServer(webSrv.Handler())
+	ts := httptest.NewUnstartedServer(gallery.Handler())
 	_ = ts.Listener.Close()
 	ts.Listener = l
 	ts.Start()

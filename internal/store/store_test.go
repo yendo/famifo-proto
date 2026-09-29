@@ -23,7 +23,7 @@ func openTestStore(t *testing.T) *store.Store {
 	return s
 }
 
-func photoAt(path string, takenAt time.Time) media.Media {
+func mediaAt(path string, takenAt time.Time) media.Media {
 	return media.Restore(path, takenAt, takenAt)
 }
 
@@ -62,7 +62,7 @@ func TestUpsertThenGetByID(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	want := photoAt("/photos/a.jpg", time.Unix(1600000000, 0))
+	want := mediaAt("/items/a.jpg", time.Unix(1600000000, 0))
 
 	require.NoError(t, s.Upsert(ctx, want))
 	got, err := s.GetByID(ctx, want.ID())
@@ -77,10 +77,10 @@ func TestUpsertReplacesExistingRow(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	p := photoAt("/photos/a.jpg", time.Unix(1600000000, 0))
+	p := mediaAt("/items/a.jpg", time.Unix(1600000000, 0))
 	require.NoError(t, s.Upsert(ctx, p))
 
-	p = photoAt(p.Path(), time.Unix(1700000000, 0))
+	p = mediaAt(p.Path(), time.Unix(1700000000, 0))
 	require.NoError(t, s.Upsert(ctx, p))
 
 	got, err := s.GetByID(ctx, p.ID())
@@ -105,7 +105,7 @@ func TestDeleteByPath(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	p := photoAt("/photos/a.jpg", time.Unix(1600000000, 0))
+	p := mediaAt("/items/a.jpg", time.Unix(1600000000, 0))
 	require.NoError(t, s.Upsert(ctx, p))
 
 	got, ok, err := s.DeleteByPath(ctx, p.Path())
@@ -122,8 +122,8 @@ func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	a := photoAt("/p/album/a.jpg", time.Unix(1600000000, 0))
-	b := photoAt("/p/album2/b.jpg", time.Unix(1600000001, 0))
+	a := mediaAt("/p/album/a.jpg", time.Unix(1600000000, 0))
+	b := mediaAt("/p/album2/b.jpg", time.Unix(1600000001, 0))
 	require.NoError(t, s.Upsert(ctx, a))
 	require.NoError(t, s.Upsert(ctx, b))
 
@@ -155,8 +155,8 @@ func TestDeleteByPathPrefixTreatsWildcardsAsLiterals(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := openTestStore(t)
 			ctx := context.Background()
-			a := photoAt(tt.prefix+"/a.jpg", time.Unix(1600000000, 0))
-			b := photoAt(tt.other+"/b.jpg", time.Unix(1600000001, 0))
+			a := mediaAt(tt.prefix+"/a.jpg", time.Unix(1600000000, 0))
+			b := mediaAt(tt.other+"/b.jpg", time.Unix(1600000001, 0))
 			require.NoError(t, s.Upsert(ctx, a))
 			require.NoError(t, s.Upsert(ctx, b))
 
@@ -173,14 +173,14 @@ func TestAllPaths(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	p := media.Restore("/photos/a.jpg",
+	p := media.Restore("/items/a.jpg",
 		time.Unix(1600000000, 0), time.Unix(1650000000, 0))
 	require.NoError(t, s.Upsert(ctx, p))
 
 	got, err := s.AllPaths(ctx)
 
 	require.NoError(t, err)
-	require.Equal(t, map[string]int64{"/photos/a.jpg": 1650000000}, got)
+	require.Equal(t, map[string]int64{"/items/a.jpg": 1650000000}, got)
 }
 
 func TestListRangeReturnsRequestedWindow(t *testing.T) {
@@ -189,15 +189,15 @@ func TestListRangeReturnsRequestedWindow(t *testing.T) {
 	ctx := context.Background()
 	// 新しい順に e, d, c, b, a になるよう投入する
 	for i, name := range []string{"a", "b", "c", "d", "e"} {
-		require.NoError(t, s.Upsert(ctx, photoAt("/photos/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
+		require.NoError(t, s.Upsert(ctx, mediaAt("/items/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
 	}
 
 	got, err := s.ListRange(ctx, 1, 2)
 
 	require.NoError(t, err)
 	require.Len(t, got, 2)
-	require.Equal(t, "/photos/d.jpg", got[0].Path())
-	require.Equal(t, "/photos/c.jpg", got[1].Path())
+	require.Equal(t, "/items/d.jpg", got[0].Path())
+	require.Equal(t, "/items/c.jpg", got[1].Path())
 }
 
 func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
@@ -206,7 +206,7 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 	ctx := context.Background()
 	same := time.Unix(1600000000, 0)
 	for _, name := range []string{"a", "b", "c"} {
-		require.NoError(t, s.Upsert(ctx, photoAt("/photos/"+name+".jpg", same)))
+		require.NoError(t, s.Upsert(ctx, mediaAt("/items/"+name+".jpg", same)))
 	}
 
 	// 撮影日時が同じ場合は id の降順で安定すること。
@@ -216,7 +216,7 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 	// ORDER BY 句から id DESC を外しただけではこのテストは落ちない。
 	// 不変条件は「ORDER BY 句 + インデックス」の組で担保されており、
 	// テストで句の削除だけを検出することは原理的にできない。
-	paths := []string{"/photos/a.jpg", "/photos/b.jpg", "/photos/c.jpg"}
+	paths := []string{"/items/a.jpg", "/items/b.jpg", "/items/c.jpg"}
 	want := append([]string(nil), paths...)
 	sort.Slice(want, func(i, j int) bool { return media.IDFor(want[i]) > media.IDFor(want[j]) })
 
@@ -236,7 +236,7 @@ func TestListRangeHandlesBoundaries(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 	for i, name := range []string{"a", "b", "c"} {
-		require.NoError(t, s.Upsert(ctx, photoAt("/photos/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
+		require.NoError(t, s.Upsert(ctx, mediaAt("/items/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
 	}
 
 	tail, err := s.ListRange(ctx, 2, 10) // limitが残数を超える
@@ -266,29 +266,29 @@ func TestListRangeRejectsNegativeArguments(t *testing.T) {
 // RankOf が返す位置は ListRange の並びそのものでなければならない。共有された
 // URLを開いたとき、クライアントはこの番号で飛ぶので、両者がずれると別の写真の
 // 位置に着地する。撮影日時が同じ組を混ぜて、同点の解き方も一緒に縛る。
-func TestRankOfLocatesThePhotoInListRange(t *testing.T) {
+func TestRankOfLocatesTheItemInListRange(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
 	same := time.Unix(1600000100, 0)
-	photos := []media.Media{
-		photoAt("/photos/new.jpg", time.Unix(1600000200, 0)),
-		photoAt("/photos/tie-a.jpg", same),
-		photoAt("/photos/tie-b.jpg", same),
-		photoAt("/photos/old.jpg", time.Unix(1600000000, 0)),
+	items := []media.Media{
+		mediaAt("/items/new.jpg", time.Unix(1600000200, 0)),
+		mediaAt("/items/tie-a.jpg", same),
+		mediaAt("/items/tie-b.jpg", same),
+		mediaAt("/items/old.jpg", time.Unix(1600000000, 0)),
 	}
-	for _, p := range photos {
+	for _, p := range items {
 		require.NoError(t, s.Upsert(ctx, p))
 	}
 
-	for _, p := range photos {
+	for _, p := range items {
 		rank, err := s.RankOf(ctx, p.ID())
 		require.NoError(t, err)
 
 		at, err := s.ListRange(ctx, rank, 1)
 		require.NoError(t, err)
 		require.Len(t, at, 1)
-		require.Equal(t, p.Path(), at[0].Path(), "the photo at rank %d", rank)
+		require.Equal(t, p.Path(), at[0].Path(), "the item at rank %d", rank)
 	}
 }
 
@@ -296,7 +296,7 @@ func TestRankOfMissingReturnsErrNotFound(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 
-	_, err := s.RankOf(context.Background(), media.IDFor("/photos/gone.jpg"))
+	_, err := s.RankOf(context.Background(), media.IDFor("/items/gone.jpg"))
 
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
@@ -314,7 +314,7 @@ func TestDayGroupsCountsEachDay(t *testing.T) {
 		time.Date(2021, 5, 20, 9, 0, 0, 0, time.Local),
 	}
 	for i, at := range times {
-		require.NoError(t, s.Upsert(ctx, photoAt(fmt.Sprintf("/photos/%d.jpg", i), at)))
+		require.NoError(t, s.Upsert(ctx, mediaAt(fmt.Sprintf("/items/%d.jpg", i), at)))
 	}
 
 	got, err := s.DayGroups(ctx)
@@ -341,7 +341,7 @@ func TestDayGroupsUsesLocalTime(t *testing.T) {
 
 	// ローカルで11月1日の未明。UTCに直すと10月31日になる時刻を選ぶ。
 	at := time.Date(2022, 11, 1, 0, 30, 0, 0, time.Local)
-	require.NoError(t, s.Upsert(ctx, photoAt("/photos/a.jpg", at)))
+	require.NoError(t, s.Upsert(ctx, mediaAt("/items/a.jpg", at)))
 
 	got, err := s.DayGroups(ctx)
 
@@ -373,7 +373,7 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 	for d, count := range perDay {
 		for k := 0; k < count; k++ {
 			at := base.AddDate(0, 0, -d).Add(time.Duration(-k) * time.Hour)
-			require.NoError(t, s.Upsert(ctx, photoAt(fmt.Sprintf("/photos/%d.jpg", n), at)))
+			require.NoError(t, s.Upsert(ctx, mediaAt(fmt.Sprintf("/items/%d.jpg", n), at)))
 			n++
 		}
 	}
@@ -396,7 +396,7 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 	for _, g := range groups {
 		for k := 0; k < g.Count; k++ {
 			require.Equal(t, g.Date, all[offset].TakenAt().Format("2006-01-02"),
-				"the photo at offset=%d should be from %s", offset, g.Date)
+				"the item at offset=%d should be from %s", offset, g.Date)
 			offset++
 		}
 	}

@@ -6,7 +6,6 @@ package oidcauth_test
 // 検証を静かに緩めても気づけるように、拒否されるべき経路をここでピン留めする。
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/hmac"
@@ -16,12 +15,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
-	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -41,6 +39,7 @@ type idp struct {
 	issuerOverride string                      // discoveryが名乗るissuer。空ならi.srv.URL
 	tokenErrStatus int                         // 0なら既定の400/invalid_grantを返す
 	tokenErrBody   []byte                      // tokenErrStatusとあわせて使う
+	tokenErrType   string                      // エラー応答のContent-Type。空ならapplication/json
 	endSession     string                      // discoveryに載せるend_session_endpoint。空なら載せない
 	lastIDToken    string                      // 直前に発行したIDトークン。生の文字列を突き合わせるのに使う
 }
@@ -79,6 +78,14 @@ func newIDP(t *testing.T) *idp {
 		require.NoError(t, r.ParseForm())
 		if r.Form.Get("code") != "good-code" {
 			if i.tokenErrStatus != 0 {
+				// RFC 6749 5.2 はエラー応答をJSONで返すよう定めている。ここを
+				// 省くとGoが中身から推測し、x/oauth2 はクエリ文字列として
+				// 読もうとするので、errorとerror_descriptionを取り出せない。
+				ct := i.tokenErrType
+				if ct == "" {
+					ct = "application/json"
+				}
+				w.Header().Set("Content-Type", ct)
 				w.WriteHeader(i.tokenErrStatus)
 				_, _ = w.Write(i.tokenErrBody)
 				return
@@ -87,9 +94,9 @@ func newIDP(t *testing.T) *idp {
 			writeJSON(w, map[string]any{"error": "invalid_grant"})
 			return
 		}
-		// x/oauth2 は既定でまず HTTP Basic を試す。Synology SSO Server は
-		// client_secret_basic と client_secret_post の両方を広告しているので、
-		// 偽物も両方受ける。
+		// クライアント認証の方式は x/oauth2 の自動検出に任せている。まず
+		// HTTP Basic を試し、断られたらPOSTボディで送り直すので、偽物も
+		// 両方受ける。
 		id := r.Form.Get("client_id")
 		if u, _, ok := r.BasicAuth(); ok && u != "" {
 			id = u
@@ -109,7 +116,7 @@ func (i *idp) idToken(t *testing.T, aud string) string {
 	t.Helper()
 	now := time.Now()
 	claims := map[string]any{
-		"iss": i.srv.URL, "aud": aud, "sub": "yendo", "username": "yendo",
+		"iss": i.srv.URL, "aud": aud, "sub": "yendo",
 		"email": "yendo@example.invalid", "groups": []string{"users"},
 		"iat": now.Unix(), "exp": now.Add(3 * time.Minute).Unix(),
 	}
@@ -146,21 +153,15 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func newClient(t *testing.T, i *idp) *oidcauth.Client {
 	t.Helper()
-	return newClientWithLog(t, i, slog.New(slog.NewTextHandler(io.Discard, nil)))
-}
-
-// newClientWithLog はログの行き先を選べる版。警告を出すこと自体を見るテストが使う。
-func newClientWithLog(t *testing.T, i *idp, log *slog.Logger) *oidcauth.Client {
-	t.Helper()
 	c, err := oidcauth.New(context.Background(), oidcauth.Config{
 		Issuer: i.srv.URL, ClientID: "famifo", ClientSecret: "s3cret",
 		RedirectURI: "https://famifo.example.invalid/auth/callback",
-	}, log)
+	})
 	require.NoError(t, err)
 	return c
 }
 
-func TestExchangeReturnsTheUsername(t *testing.T) {
+func TestExchangeReturnsTheSubject(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
 	p, err := oidcauth.NewParams()
@@ -169,7 +170,7 @@ func TestExchangeReturnsTheUsername(t *testing.T) {
 
 	id, err := c.Exchange(context.Background(), "good-code", p)
 	require.NoError(t, err)
-	require.Equal(t, "yendo", id.Username)
+	require.Equal(t, "yendo", id.Subject)
 }
 
 // TestExchangeReturnsTheRawIDToken は検証済みのIDトークンを生の文字列のまま
@@ -199,7 +200,7 @@ func TestAuthURLCarriesTheFlowParameters(t *testing.T) {
 	require.Equal(t, "famifo", q.Get("client_id"))
 	require.Equal(t, "code", q.Get("response_type"))
 	require.Equal(t, "openid", q.Get("scope"),
-		"email and groups are never read; requesting them only puts more PII in the id_token, which the session keeps for 30 days")
+		"famifo identifies the user by sub alone; profile, email and groups would only put more personal data in the id_token, which the session keeps for 30 days")
 	require.Equal(t, "st", q.Get("state"))
 	require.Equal(t, "no", q.Get("nonce"))
 	require.Equal(t, "S256", q.Get("code_challenge_method"))
@@ -321,56 +322,6 @@ func TestExchangeRejectsEmptySubject(t *testing.T) {
 	require.ErrorContains(t, err, "the id_token carries no subject")
 }
 
-func TestExchangeFallsBackToSubWhenUsernameIsAbsent(t *testing.T) {
-	// username は標準のclaimではない。別のIdPに差し替えたときに空になりうる。
-	i := newIDP(t)
-	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
-	require.NoError(t, err)
-	i.claims["nonce"] = p.Nonce
-	i.claims["username"] = nil
-
-	id, err := c.Exchange(context.Background(), "good-code", p)
-	require.NoError(t, err)
-	require.Equal(t, "yendo", id.Username)
-}
-
-// TestExchangeWarnsWhenTheUsernameClaimIsAbsent は、sub で代用したことが
-// 必ずログに出ることを固定する。
-//
-// 要求するスコープは openid だけで、username claim がそれで返ってくるかは
-// 文書化されていない。この IdP では sub がユーザー名そのものなので、落ちても
-// 表示は1文字も変わらない。黙って代用すると、スコープを削ったせいで username が
-// 消えたことに気づく手立てが無くなる。
-func TestExchangeWarnsWhenTheUsernameClaimIsAbsent(t *testing.T) {
-	var logged bytes.Buffer
-	i := newIDP(t)
-	c := newClientWithLog(t, i, slog.New(slog.NewTextHandler(&logged, nil)))
-	p, err := oidcauth.NewParams()
-	require.NoError(t, err)
-	i.claims["nonce"] = p.Nonce
-	i.claims["username"] = nil
-
-	_, err = c.Exchange(context.Background(), "good-code", p)
-	require.NoError(t, err)
-	require.Contains(t, logged.String(), "no username claim")
-}
-
-// TestExchangeStaysQuietWhenTheUsernameClaimIsThere は、代用が起きていない
-// ときに警告を出さないことを固定する。毎回出るなら知らせにならない。
-func TestExchangeStaysQuietWhenTheUsernameClaimIsThere(t *testing.T) {
-	var logged bytes.Buffer
-	i := newIDP(t)
-	c := newClientWithLog(t, i, slog.New(slog.NewTextHandler(&logged, nil)))
-	p, err := oidcauth.NewParams()
-	require.NoError(t, err)
-	i.claims["nonce"] = p.Nonce
-
-	_, err = c.Exchange(context.Background(), "good-code", p)
-	require.NoError(t, err)
-	require.NotContains(t, logged.String(), "no username claim")
-}
-
 func TestExchangeReportsATokenEndpointError(t *testing.T) {
 	i := newIDP(t)
 	c := newClient(t, i)
@@ -382,9 +333,9 @@ func TestExchangeReportsATokenEndpointError(t *testing.T) {
 }
 
 // TestExchangeReportsAProviderRefusal はIdPがトークン交換に応答したうえで拒んだ
-// ときに、ステータスと本文（error_descriptionを含む）が取り出せることを固定する。
-// 実機のインシデントでは "server_error" とだけ言われ、本文を捨てていたせいで
-// 原因の手がかりが残らなかった。
+// ときに、ステータスとerror・error_descriptionが取り出せることを固定する。
+// 実機のインシデントでは "server_error" とだけ言われ、error_descriptionを捨てて
+// いたせいで原因の手がかりが残らなかった。
 func TestExchangeReportsAProviderRefusal(t *testing.T) {
 	i := newIDP(t)
 	i.tokenErrStatus = http.StatusBadRequest
@@ -400,15 +351,39 @@ func TestExchangeReportsAProviderRefusal(t *testing.T) {
 	var perr *oidcauth.ProviderError
 	require.ErrorAs(t, err, &perr)
 	require.Equal(t, http.StatusBadRequest, perr.StatusCode)
-	require.Contains(t, perr.Body, "upstream hiccup")
+	require.Equal(t, "server_error", perr.Code)
+	require.Equal(t, "upstream hiccup", perr.Description)
 }
 
-// TestExchangeTruncatesAHugeProviderBody は本文を1KiBに切り詰めることを固定する。
-// 相手が暴れても、ログが埋まらないようにするため。
-func TestExchangeTruncatesAHugeProviderBody(t *testing.T) {
+// TestExchangeReportsARefusalThatIsNotAnOAuthError は、応答がRFC 6749 5.2の形で
+// ないときでも「IdPが応答したうえで拒んだ」と分かることを固定する。IdPの手前に
+// いるプロキシがHTMLのエラーページを返す構成が該当する。errorは取り出せないが、
+// ステータスが残るので「IdPに届かない」場合とは区別できる。
+func TestExchangeReportsARefusalThatIsNotAnOAuthError(t *testing.T) {
+	i := newIDP(t)
+	i.tokenErrStatus = http.StatusBadGateway
+	i.tokenErrType = "text/html"
+	i.tokenErrBody = []byte("<html><body>502 Bad Gateway</body></html>")
+	c := newClient(t, i)
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+
+	_, err = c.Exchange(context.Background(), "wrong-code", p)
+	require.ErrorIs(t, err, oidcauth.ErrProviderRefused)
+	var perr *oidcauth.ProviderError
+	require.ErrorAs(t, err, &perr)
+	require.Equal(t, http.StatusBadGateway, perr.StatusCode)
+	require.Empty(t, perr.Code)
+}
+
+// TestExchangeTruncatesAHugeErrorDescription は各項目を1KiBに切り詰めることを
+// 固定する。error_descriptionはIdPが書く自由文で上限がないので、相手が暴れても
+// ログが埋まらないようにするため。
+func TestExchangeTruncatesAHugeErrorDescription(t *testing.T) {
 	i := newIDP(t)
 	i.tokenErrStatus = http.StatusInternalServerError
-	i.tokenErrBody = bytes.Repeat([]byte("a"), 10*1024)
+	i.tokenErrBody = []byte(`{"error":"server_error","error_description":"` +
+		strings.Repeat("a", 10*1024) + `"}`)
 	c := newClient(t, i)
 	p, err := oidcauth.NewParams()
 	require.NoError(t, err)
@@ -416,7 +391,29 @@ func TestExchangeTruncatesAHugeProviderBody(t *testing.T) {
 	_, err = c.Exchange(context.Background(), "wrong-code", p)
 	var perr *oidcauth.ProviderError
 	require.ErrorAs(t, err, &perr)
-	require.LessOrEqual(t, len(perr.Body), 1024)
+	require.LessOrEqual(t, len(perr.Description), 1024)
+}
+
+// TestExchangeTruncatesOnARuneBoundary は、1024バイト目がマルチバイト文字の
+// 途中に落ちるときでも、保存される項目が有効なUTF-8であることを固定する。
+// バイト単位で機械的に切り詰めると不正なUTF-8になり、slogが出力時にU+FFFDへ
+// 置き換えて見た目が壊れる。
+func TestExchangeTruncatesOnARuneBoundary(t *testing.T) {
+	i := newIDP(t)
+	i.tokenErrStatus = http.StatusInternalServerError
+	// "a" を1023文字並べたあとに3バイトの"あ"を置くと、1024バイト目
+	// （0始まりでindex 1023）は"あ"の先頭バイトに落ちる。
+	desc := strings.Repeat("a", 1023) + "あ" + strings.Repeat("b", 100)
+	i.tokenErrBody = []byte(`{"error":"server_error","error_description":"` + desc + `"}`)
+	c := newClient(t, i)
+	p, err := oidcauth.NewParams()
+	require.NoError(t, err)
+
+	_, err = c.Exchange(context.Background(), "wrong-code", p)
+	var perr *oidcauth.ProviderError
+	require.ErrorAs(t, err, &perr)
+	require.True(t, utf8.ValidString(perr.Description), "the truncated description must be valid UTF-8")
+	require.LessOrEqual(t, len(perr.Description), 1024)
 }
 
 // TestExchangeReportsAnUnreachableProvider は「IdPに届かない」と「IdPに拒まれた」
@@ -436,82 +433,13 @@ func TestExchangeReportsAnUnreachableProvider(t *testing.T) {
 	require.False(t, errors.As(err, &perr))
 }
 
-// TestExchangeTruncatesOnARuneBoundary は、1024バイト目がマルチバイト文字の
-// 途中に落ちるときでも、保存される本文が有効なUTF-8であることを固定する。
-// バイト単位で機械的に切り詰めると不正なUTF-8になり、slogが出力時にU+FFFDへ
-// 置き換えて見た目が壊れる。
-func TestExchangeTruncatesOnARuneBoundary(t *testing.T) {
-	i := newIDP(t)
-	i.tokenErrStatus = http.StatusInternalServerError
-	// "a" を1023バイト並べたあとに3バイトの"あ"を置くと、1024バイト目
-	// （0始まりでindex 1023）は"あ"の先頭バイトに落ちる。
-	body := append(bytes.Repeat([]byte("a"), 1023), []byte("あ")...)
-	body = append(body, bytes.Repeat([]byte("b"), 100)...)
-	i.tokenErrBody = body
-	c := newClient(t, i)
-	p, err := oidcauth.NewParams()
-	require.NoError(t, err)
-
-	_, err = c.Exchange(context.Background(), "wrong-code", p)
-	var perr *oidcauth.ProviderError
-	require.ErrorAs(t, err, &perr)
-	require.True(t, utf8.ValidString(perr.Body), "truncated body must be valid UTF-8")
-	require.LessOrEqual(t, len(perr.Body), 1024)
-}
-
-// TestExchangeRedactsTheClientSecretFromTheProviderBody は、IdPがリクエストを
-// そのまま読み返すエラー応答を返したときに、client secretがProviderErrorへ
-// そのまま流れ込まないことを固定する。client_secret_post を固定しているため、
-// secretはすべての交換リクエストのPOSTボディに載っている。
-func TestExchangeRedactsTheClientSecretFromTheProviderBody(t *testing.T) {
-	i := newIDP(t)
-	i.tokenErrStatus = http.StatusBadRequest
-	i.tokenErrBody = []byte(`{"error":"server_error","echo":"client_secret=s3cret&code=wrong-code"}`)
-	c := newClient(t, i) // newClientは ClientSecret: "s3cret" で組み立てる
-	p, err := oidcauth.NewParams()
-	require.NoError(t, err)
-
-	_, err = c.Exchange(context.Background(), "wrong-code", p)
-	var perr *oidcauth.ProviderError
-	require.ErrorAs(t, err, &perr)
-	require.NotContains(t, perr.Body, "s3cret")
-	require.Contains(t, perr.Body, "[redacted]")
-}
-
-// TestExchangeRedactsAURLEncodedClientSecret は、secretがform-reservedな文字
-// （"+" "/" "="）を含むときに、x/oauth2 がPOSTボディで使うパーセントエンコード
-// 形でもリダクションが効くことを固定する。base64由来のsecretはこれらの文字を
-// 含むのが普通で、リテラル一致だけでは取りこぼす。
-func TestExchangeRedactsAURLEncodedClientSecret(t *testing.T) {
-	i := newIDP(t)
-	secret := "se+cr/et="
-	encoded := url.QueryEscape(secret)
-	require.NotEqual(t, secret, encoded, "the secret must actually need encoding for this test to mean anything")
-	i.tokenErrStatus = http.StatusBadRequest
-	i.tokenErrBody = []byte(`{"error":"server_error","echo":"client_secret=` + encoded + `&code=wrong-code"}`)
-	c, err := oidcauth.New(context.Background(), oidcauth.Config{
-		Issuer: i.srv.URL, ClientID: "famifo", ClientSecret: secret,
-		RedirectURI: "https://famifo.example.invalid/auth/callback",
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.NoError(t, err)
-	p, err := oidcauth.NewParams()
-	require.NoError(t, err)
-
-	_, err = c.Exchange(context.Background(), "wrong-code", p)
-	var perr *oidcauth.ProviderError
-	require.ErrorAs(t, err, &perr)
-	require.NotContains(t, perr.Body, secret)
-	require.NotContains(t, perr.Body, encoded)
-	require.Contains(t, perr.Body, "[redacted]")
-}
-
 func TestNewFailsWhenTheIssuerDoesNotMatch(t *testing.T) {
 	i := newIDP(t)
 	i.issuerOverride = "https://evil.example.invalid/sso"
 	_, err := oidcauth.New(context.Background(), oidcauth.Config{
 		Issuer: i.srv.URL, ClientID: "famifo", ClientSecret: "s",
 		RedirectURI: "https://famifo.example.invalid/auth/callback",
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	})
 	require.ErrorContains(t, err, "did not match the issuer URL returned by provider")
 }
 
@@ -520,7 +448,7 @@ func TestNewFailsWhenDiscoveryIsUnreachable(t *testing.T) {
 	_, err := oidcauth.New(context.Background(), oidcauth.Config{
 		Issuer: i.srv.URL + "/elsewhere", ClientID: "famifo", ClientSecret: "s",
 		RedirectURI: "https://famifo.example.invalid/auth/callback",
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	})
 	require.Error(t, err)
 }
 

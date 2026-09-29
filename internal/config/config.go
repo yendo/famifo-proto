@@ -14,7 +14,7 @@ import (
 
 // Config はアプリの実行時設定。すべてコマンドライン引数から与えられる。
 type Config struct {
-	PhotoDirs   []string // 写真を収集するルートディレクトリ（複数可）
+	MediaDirs   []string // 写真と動画を収集するルートディレクトリ（複数可）
 	DataDir     string   // DBとサムネイルの置き場
 	Addr        string   // HTTPの待ち受けアドレス
 	ScanWorkers int      // 同時に取り込む枚数（スキャンとfsnotifyの追従に共通）
@@ -41,23 +41,20 @@ type Config struct {
 
 // Validate は設定の不備を報告する。ここでのエラーは起動を中止させる。
 func (c Config) Validate() error {
-	if len(c.PhotoDirs) == 0 {
+	if len(c.MediaDirs) == 0 {
 		return errors.New("-dir is required")
 	}
-	for i, dir := range c.PhotoDirs {
+	for i, dir := range c.MediaDirs {
 		fi, err := os.Stat(dir)
 		if err != nil {
-			// ':' はUnixのパスに使える文字なので、それを含むディレクトリを
-			// 渡すと意図しない位置で切れる。分割結果を見せて原因を読めるようにする。
-			return fmt.Errorf("cannot read -dir: %w (-dir was split on %q into: %v)",
-				err, string(filepath.ListSeparator), c.PhotoDirs)
+			return fmt.Errorf("cannot read -dir: %w", err)
 		}
 		if !fi.IsDir() {
 			return fmt.Errorf("-dir is not a directory: %s", dir)
 		}
 		// 同じルートを2回走査しても無駄なだけ。入れ子は同じファイルを2回
 		// 走査し、サムネイルを2回作る。
-		for _, other := range c.PhotoDirs[i+1:] {
+		for _, other := range c.MediaDirs[i+1:] {
 			nested, err := dirContains(dir, other)
 			if err != nil {
 				return fmt.Errorf("cannot resolve -dir: %w", err)
@@ -86,7 +83,7 @@ func (c Config) Validate() error {
 	if c.ScanInterval <= 0 {
 		return fmt.Errorf("-scan-interval must be positive: %s", c.ScanInterval)
 	}
-	for _, dir := range c.PhotoDirs {
+	for _, dir := range c.MediaDirs {
 		inside, err := dirContains(dir, c.DataDir)
 		if err != nil {
 			return fmt.Errorf("cannot resolve -data: %w", err)
@@ -165,12 +162,12 @@ func (c Config) RedirectURI() string {
 	return strings.TrimSuffix(c.ExternalURL, "/") + "/auth/callback"
 }
 
-// CookieSecure は Cookie に Secure を付けるかを返す。
-// ヘッダからは推測しない。設定した外部URLの scheme だけで決める。
+// IsExternalURLHTTPS は ExternalURL の scheme が https かを返す。
+// リクエストのヘッダからは推測しない。設定した値だけで決める。
 // Validate と同じ net/url での解釈に揃える。url.Parse は scheme を小文字化するので、
 // "HTTPS://..." のような大文字混じりの入力でも文字列プレフィックス比較のように
 // 見落とさない。
-func (c Config) CookieSecure() bool {
+func (c Config) IsExternalURLHTTPS() bool {
 	u, err := url.Parse(c.ExternalURL)
 	return err == nil && u.Scheme == "https"
 }

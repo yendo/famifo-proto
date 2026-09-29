@@ -21,15 +21,15 @@ func writeFile(t *testing.T, path, body string) {
 func TestThumbMPathPointsAtTheMediumThumbnail(t *testing.T) {
 	t.Parallel()
 	require.Equal(t,
-		"/photos/2026-08-16/@eaDir/IMG_0428.HEIC/SYNOPHOTO_THUMB_M.jpg",
-		synology.ThumbMPath("/photos/2026-08-16/IMG_0428.HEIC"))
+		"/items/2026-08-16/@eaDir/IMG_0428.HEIC/SYNOPHOTO_THUMB_M.jpg",
+		synology.ThumbMPath("/items/2026-08-16/IMG_0428.HEIC"))
 }
 
 func TestThumbXLPathPointsAtTheXLThumbnail(t *testing.T) {
 	t.Parallel()
 	require.Equal(t,
-		"/photos/2026-08-16/@eaDir/IMG_0428.HEIC/SYNOPHOTO_THUMB_XL.jpg",
-		synology.ThumbXLPath("/photos/2026-08-16/IMG_0428.HEIC"))
+		"/items/2026-08-16/@eaDir/IMG_0428.HEIC/SYNOPHOTO_THUMB_XL.jpg",
+		synology.ThumbXLPath("/items/2026-08-16/IMG_0428.HEIC"))
 }
 
 func TestHasThumbMFindsTheThumbnailSynologyLeftBehind(t *testing.T) {
@@ -72,8 +72,8 @@ func TestHasThumbMIsFalseForAnEmptyThumbnail(t *testing.T) {
 func TestFilmPathPointsAtTheTranscodedVideo(t *testing.T) {
 	t.Parallel()
 	require.Equal(t,
-		"/photos/2026-09/@eaDir/PXL_20260909.mp4/SYNOPHOTO_FILM_H.mp4",
-		synology.FilmPath("/photos/2026-09/PXL_20260909.mp4"))
+		"/items/2026-09/@eaDir/PXL_20260909.mp4/SYNOPHOTO_FILM_H.mp4",
+		synology.FilmPath("/items/2026-09/PXL_20260909.mp4"))
 }
 
 func TestHasFilmFindsTheTranscodeSynologyLeftBehind(t *testing.T) {
@@ -126,7 +126,7 @@ func TestIsManagedDirCoversSynologysOwnDirectories(t *testing.T) {
 // 届くため、途中に挟まっているかを見る必要がある。
 func TestInManagedDirFindsTheDirectoryAnywhereInThePath(t *testing.T) {
 	t.Parallel()
-	require.True(t, synology.InManagedDir("/photos/@eaDir/IMG_0001.jpg/SYNOPHOTO_THUMB_M.jpg"))
-	require.True(t, synology.InManagedDir("/photos/#recycle/deleted.jpg"))
-	require.False(t, synology.InManagedDir("/photos/2026-08-16/IMG_0001.jpg"))
+	require.True(t, synology.InManagedDir("/items/@eaDir/IMG_0001.jpg/SYNOPHOTO_THUMB_M.jpg"))
+	require.True(t, synology.InManagedDir("/items/#recycle/deleted.jpg"))
+	require.False(t, synology.InManagedDir("/items/2026-08-16/IMG_0001.jpg"))
 }

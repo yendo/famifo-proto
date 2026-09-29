@@ -64,7 +64,7 @@ func TestWatcherIndexesNewFile(t *testing.T) {
 	requireCount(t, f, 1)
 }
 
-func TestWatcherIgnoresNonPhotos(t *testing.T) {
+func TestWatcherIgnoresNonMedia(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
@@ -229,10 +229,10 @@ func TestWatcherSkipsSynologyDirsInMovedDirectory(t *testing.T) {
 	require.Equal(t, 1, n, "not taken in late after the move")
 }
 
-// mkfifoPhoto は取り込みを途中で止められる「写真」を作る。名前付きパイプは
+// mkfifoMedia は取り込みを途中で止められる「写真」を作る。名前付きパイプは
 // 拡張子の上では写真なので取り込みの対象になり、読み手は書き手が現れるまで
 // open(2) で止まる。取り込みの進み方を実時間の当て推量なしに操れる。
-func mkfifoPhoto(t *testing.T, dir, name string) string {
+func mkfifoMedia(t *testing.T, dir, name string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
 	require.NoError(t, syscall.Mkfifo(path, 0o600))
@@ -304,14 +304,14 @@ func serveFifo(t *testing.T, path string, data []byte) {
 	})
 }
 
-func TestWatcherKeepsHandlingEventsWhileAPhotoIsStuck(t *testing.T) {
+func TestWatcherKeepsHandlingEventsWhileAFileIsStuck(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
 	// 1枚の取り込みが終わらない状態を作る。取り込みを監視ループの中で
 	// 直列に走らせていると、ここでループごと止まり、以降のイベントを読めない。
-	stuck := mkfifoPhoto(t, f.root, "stuck.jpg")
+	stuck := mkfifoMedia(t, f.root, "stuck.jpg")
 	w := waitForIndexing(t, stuck)
 
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
@@ -329,8 +329,8 @@ func TestWatcherIndexesUpToWorkersInParallel(t *testing.T) {
 	f := newFixtureWorkers(t, 2)
 	startWatcher(t, f)
 
-	a := mkfifoPhoto(t, f.root, "a.jpg")
-	b := mkfifoPhoto(t, f.root, "b.jpg")
+	a := mkfifoMedia(t, f.root, "a.jpg")
+	b := mkfifoMedia(t, f.root, "b.jpg")
 
 	// 2枚が同時に読まれるまで待つ。1枚ずつしか取り込まないなら、先に開いた
 	// ほうを閉じていない以上、もう一方のopenは返らない。
@@ -345,14 +345,14 @@ func TestWatcherIndexesUpToWorkersInParallel(t *testing.T) {
 	requireCount(t, f, 2)
 }
 
-func TestWatcherLeavesNoRowForAPhotoMovedWhileBeingIndexed(t *testing.T) {
+func TestWatcherLeavesNoRowForAFileMovedWhileBeingIndexed(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	startWatcher(t, f)
 
 	// HEICは自前でサムネイルを作らないので原本を1度しか開かない。EXIFの読み取りで
 	// 止めれば、取り込みの途中という状態を保ったまま写真を動かせる。
-	src := mkfifoPhoto(t, f.root, "a.heic")
+	src := mkfifoMedia(t, f.root, "a.heic")
 	w := waitForIndexing(t, src)
 
 	// 取り込み中に別名へ移す。行が生まれるのは取り込みの完了時なので、
@@ -385,7 +385,7 @@ func TestWatcherLeavesNoRowForADirectoryMovedWhileBeingIndexed(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // 監視登録を待つ
 
 	// 単体の移動と同じ仕掛け。止められる写真をディレクトリの中に置く。
-	src := mkfifoPhoto(t, album, "a.heic")
+	src := mkfifoMedia(t, album, "a.heic")
 	w := waitForIndexing(t, src)
 
 	// 取り込み中にディレクトリごと移す。イベントのパスは album で、
@@ -436,14 +436,14 @@ func TestWatcherWatchesRootsBeforeRunStarts(t *testing.T) {
 	requireCount(t, f, 1)
 }
 
-func TestWatcherAsksForAScanWhenAPhotoDisappearsWhileBeingIndexed(t *testing.T) {
+func TestWatcherAsksForAScanWhenAFileDisappearsWhileBeingIndexed(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	w := startWatcher(t, f)
 
 	// 取り込みの最中に消えた写真は、ワーカーが後から Upsert して存在しない
 	// パスの行を残しうる。スキャンだけがそれを回収できるので、次の1回を前倒す。
-	src := mkfifoPhoto(t, f.root, "a.heic")
+	src := mkfifoMedia(t, f.root, "a.heic")
 	fw := waitForIndexing(t, src)
 	t.Cleanup(func() { _ = fw.Close() })
 

@@ -86,7 +86,7 @@ func NewWatcher(ix *Indexer, log *slog.Logger) (*Watcher, error) {
 
 func (w *Watcher) Close() error { return w.fsw.Close() }
 
-// ScanRequests はスキャンの前倒しを求める要求を配る。Indexer.RunScans に渡す。
+// ScanRequests はスキャンの前倒しを求める要求を配る。NewScanner に渡す。
 //
 // 要求は容量1で積み置かれる。取り込みの完了より先に要求が出る経路があるため、
 // この積み置きが要る。取り込み中の写真が消えたことは削除のイベントで分かるが、
