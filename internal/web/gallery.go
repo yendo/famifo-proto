@@ -125,20 +125,20 @@ func (g *Gallery) Handler() http.Handler {
 	// 未認証でもCSSは当たるようにする。ログイン前の画面が崩れる意味がない。
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
-	protected := http.NewServeMux()
-	protected.HandleFunc("GET /{$}", g.handleGallery)
-	protected.HandleFunc("GET /item/{id}", g.handleItem)
-	protected.HandleFunc("GET /tiles", g.handleTiles)
-	protected.HandleFunc("GET /thumb/{id}", g.handleThumb)
-	protected.HandleFunc("GET /file/{id}", g.handleFile)
+	app := http.NewServeMux()
+	app.HandleFunc("GET /{$}", g.handleGallery)
+	app.HandleFunc("GET /item/{id}", g.handleItem)
+	app.HandleFunc("GET /tiles", g.handleTiles)
+	app.HandleFunc("GET /thumb/{id}", g.handleThumb)
+	app.HandleFunc("GET /file/{id}", g.handleFile)
 
 	if g.auth == nil {
-		mux.Handle("/", protected)
-		return securityHeaders(mux)
+		mux.Handle("/", app)
+	} else {
+		session := http.NewServeMux()
+		session.Handle("/", g.auth.requireSignIn(app))
+		g.auth.addRoutes(session)
+		mux.Handle("/", g.auth.sessions.LoadAndSave(session))
 	}
-	inner := http.NewServeMux()
-	inner.Handle("/", g.auth.requireSignIn(protected))
-	g.auth.routes(inner)
-	mux.Handle("/", g.auth.sessions.LoadAndSave(inner))
 	return securityHeaders(mux)
 }

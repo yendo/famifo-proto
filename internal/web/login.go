@@ -80,9 +80,9 @@ func NewAuth(p Provider, sessions *session.Manager, externalURL string, log *slo
 	return &Auth{oidc: p, sessions: sessions, externalURL: externalURL, log: log}
 }
 
-// routes はログインの経路を登録する。登録先のmuxはセッションのミドルウェアの
+// addRoutes はログインの経路を登録する。登録先のmuxはセッションのミドルウェアの
 // 内側になければならない。往復の値もログイン済みの印もセッションに載るためである。
-func (a *Auth) routes(mux *http.ServeMux) {
+func (a *Auth) addRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+loginPath, a.handleLogin)
 	mux.HandleFunc("GET "+callbackPath, a.handleCallback)
 	mux.HandleFunc("POST "+logoutPath, a.handleLogout)
