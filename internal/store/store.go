@@ -73,10 +73,7 @@ func probeReadable(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("cannot read the database: %w", err)
 	}
-	defer rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("cannot read the database: %w", err)
-	}
+	rows.Close()
 	return nil
 }
 
