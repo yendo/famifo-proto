@@ -51,7 +51,7 @@ type Provider struct {
 
 // NewProvider は置き場のディレクトリを用意してProviderを返す。
 func NewProvider(dir string) (*Provider, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("cannot create the thumbnail directory: %w", err)
 	}
 	return &Provider{dir: dir}, nil
@@ -202,7 +202,7 @@ func (pv *Provider) generate(p media.Media, orientation uint16) (string, error) 
 		return "", fmt.Errorf("cannot decode the image: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
 		return "", fmt.Errorf("cannot create the thumbnail destination: %w", err)
 	}
 

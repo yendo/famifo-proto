@@ -38,7 +38,7 @@ func Open(dbPath string) (*Store, error) {
 	// SQLiteは親ディレクトリを作らない。無いまま開くと sql.Open は遅延接続なので
 	// 成功し、db.Ping() が "unable to open database file" で落ちる。原因の読めない
 	// エラーになるうえ、呼び出し順への暗黙の依存を残すのでここで作る。
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
 		return nil, fmt.Errorf("cannot create the database directory: %w", err)
 	}
 

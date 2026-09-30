@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -38,6 +39,20 @@ func TestOpenCreatesTheDirectory(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	require.FileExists(t, filepath.Join(dir, "famifo.db"))
+}
+
+// 索引には取り込んだ写真のパスが並ぶので、置き場を他ユーザに開かない。
+func TestOpenKeepsTheDirectoryPrivate(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "famifo-data")
+
+	s, err := store.Open(filepath.Join(dir, "famifo.db"))
+
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	fi, err := os.Stat(dir)
+	require.NoError(t, err)
+	require.Zero(t, fi.Mode().Perm()&0o007, "the directory must not be open to other users")
 }
 
 func TestOpenEnablesWAL(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -52,6 +53,20 @@ func cookieNamed(resp *http.Response, name string) *http.Cookie {
 		}
 	}
 	return nil
+}
+
+// セッションDBはログイン済みであることの証しなので、置き場を他ユーザに開かない。
+func TestNewKeepsTheDirectoryPrivate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sub")
+
+	st, err := session.New(filepath.Join(dir, "sessions.db"), false,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	fi, err := os.Stat(dir)
+	require.NoError(t, err)
+	require.Zero(t, fi.Mode().Perm()&0o007, "the directory must not be open to other users")
 }
 
 func TestSessionDataSurvivesARoundTrip(t *testing.T) {
