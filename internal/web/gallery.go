@@ -125,26 +125,20 @@ func (g *Gallery) Handler() http.Handler {
 	// 未認証でもCSSは当たるようにする。ログイン前の画面が崩れる意味がない。
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
-	protected := http.NewServeMux()
-	protected.HandleFunc("GET /{$}", g.handleGallery)
-	protected.HandleFunc("GET /item/{id}", g.handleItem)
-	protected.HandleFunc("GET /tiles", g.handleTiles)
-	protected.HandleFunc("GET /thumb/{id}", g.handleThumb)
-	protected.HandleFunc("GET /file/{id}", g.handleFile)
+	app := http.NewServeMux()
+	app.HandleFunc("GET /{$}", g.handleGallery)
+	app.HandleFunc("GET /item/{id}", g.handleItem)
+	app.HandleFunc("GET /tiles", g.handleTiles)
+	app.HandleFunc("GET /thumb/{id}", g.handleThumb)
+	app.HandleFunc("GET /file/{id}", g.handleFile)
 
-	inner := http.NewServeMux()
 	if g.auth == nil {
-		inner.Handle("/", protected)
-		mux.Handle("/", inner)
-		return securityHeaders(mux)
+		mux.Handle("/", app)
+	} else {
+		session := http.NewServeMux()
+		session.Handle("/", g.auth.requireSignIn(app))
+		g.auth.addRoutes(session)
+		mux.Handle("/", g.auth.sessions.LoadAndSave(session))
 	}
-	inner.Handle("/", g.auth.authenticate(protected))
-	inner.HandleFunc("GET /login", g.auth.handleLogin)
-	inner.HandleFunc("GET /auth/callback", g.auth.handleCallback)
-	inner.HandleFunc("POST /logout", g.auth.handleLogout)
-	// RP-Initiated LogoutでIdPが戻ってくる先。/logout自身がend_session_endpoint
-	// を持たないIdPのとき案内ページとして返すのもここ。
-	inner.HandleFunc("GET /signed-out", g.auth.handleSignedOut)
-	mux.Handle("/", g.auth.sessions.LoadAndSave(inner))
 	return securityHeaders(mux)
 }

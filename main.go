@@ -26,7 +26,7 @@ import (
 
 	"github.com/yendo/famifo-proto/internal/config"
 	"github.com/yendo/famifo-proto/internal/index"
-	"github.com/yendo/famifo-proto/internal/oidcauth"
+	"github.com/yendo/famifo-proto/internal/oidc"
 	"github.com/yendo/famifo-proto/internal/session"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -84,13 +84,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// 止める。認証すると宣言しておいて黙って無認証で配信するより、起動しないほうがよい。
 	var auth *web.Auth
 	if cfg.OIDCIssuer != "" {
-		sessions, err := session.New(cfg.SessionDBPath(), cfg.IsExternalURLHTTPS(), log)
-		if err != nil {
-			return err
-		}
-		defer sessions.Close()
-
-		oidcClient, err := oidcauth.New(ctx, oidcauth.Config{
+		oidcClient, err := oidc.New(ctx, oidc.Config{
 			Issuer:       cfg.OIDCIssuer,
 			ClientID:     cfg.OIDCClientID,
 			ClientSecret: cfg.OIDCClientSecret,
@@ -99,6 +93,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
+
+		sessions, err := session.New(cfg.SessionDBPath(), cfg.IsExternalURLHTTPS(), log)
+		if err != nil {
+			return err
+		}
+		defer sessions.Close()
 
 		auth = web.NewAuth(oidcClient, sessions, cfg.ExternalURL, log)
 		log.Info("authentication is on", "issuer", cfg.OIDCIssuer, "redirect", cfg.RedirectURI())
