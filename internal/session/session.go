@@ -59,7 +59,7 @@ type Manager struct {
 func New(dbPath string, secure bool, log *slog.Logger) (*Manager, error) {
 	// SQLiteは親ディレクトリを作らない。無いまま開くと sql.Open は遅延接続なので
 	// 成功し、db.Ping() が "unable to open database file" で落ちる。
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
 		return nil, fmt.Errorf("cannot create the session database directory: %w", err)
 	}
 	dsn := dbPath + "?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL"

@@ -73,6 +73,24 @@ func writeSynoThumb(t *testing.T, srcPath string) {
 	require.NoError(t, os.WriteFile(out, []byte("eadir thumb"), 0o644))
 }
 
+// サムネイルは原本のファイル名を経た名前が付くので、置き場を他ユーザに開かない。
+// 根と、生成のときに掘る枝の両方を見る。
+func TestGeneratedThumbnailsStayInPrivateDirectories(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), "thumbs")
+	pv, err := thumb.NewProvider(root)
+	require.NoError(t, err)
+	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
+
+	require.NoError(t, provide(t, pv, src, 1))
+
+	for _, dir := range []string{root, filepath.Dir(thumbPathFor(t, pv, src))} {
+		fi, err := os.Stat(dir)
+		require.NoError(t, err)
+		require.Zero(t, fi.Mode().Perm()&0o007, "%s must not be open to other users", dir)
+	}
+}
+
 // Prepare の3つの結末を押さえる。借りられるなら借り（何も作らない）、借りられず
 // 自前で作れるなら作り、どちらも駄目なら何も残さない。
 func TestEnsureOnlyGeneratesWhatCannotBeBorrowed(t *testing.T) {

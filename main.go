@@ -121,7 +121,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// listenErrChは1要素バッファ: ListenAndServeの失敗をrunの戻り値まで伝え、
 	// プロセスが異常終了時に0で終了しないようにする。
 	listenErrCh := make(chan error, 1)
-	httpSrv := &http.Server{Addr: cfg.Addr, Handler: gallery.Handler()}
+	// ReadHeaderTimeout を入れておく。既定のゼロ値はヘッダを送り終えない接続を
+	// いつまでも保持するので、細い接続を並べるだけで待ち受けを埋められる。
+	httpSrv := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           gallery.Handler(),
+		ReadHeaderTimeout: readHeaderTimeout,
+	}
 	go func() {
 		log.Info("starting HTTP server", "addr", cfg.Addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -274,6 +280,9 @@ func startupTimezone(t time.Time) string {
 // shutdownTimeout は処理中のリクエストを待つ上限。docker stop は SIGTERM のあと
 // 既定で10秒後に SIGKILL を送るので、DBを閉じるぶんも含めてその枠に収める。
 const shutdownTimeout = 5 * time.Second
+
+// readHeaderTimeout はリクエストヘッダを読み終えるまでの猶予。
+const readHeaderTimeout = 10 * time.Second
 
 // shutdownHTTP は待ち受けを猶予付きで止め、待ち受けの失敗と停止の失敗を
 // 1つのエラーにまとめる。listenErrは停止を待つ前に受け取っていた失敗で、
