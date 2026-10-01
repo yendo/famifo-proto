@@ -100,9 +100,6 @@ func (s *Store) Upsert(ctx context.Context, p media.Media) error {
 	return nil
 }
 
-// idは読まない。パスから導ける値なので、復元は media.Restore に任せる。
-const selectCols = `path, taken_at, mod_time`
-
 // GetByID はIDで1件を引く。見つからない場合は ErrNotFound を返す。
 func (s *Store) GetByID(ctx context.Context, id string) (media.Media, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+selectCols+` FROM media WHERE id = ?`, id)
@@ -133,21 +130,23 @@ func (s *Store) DeleteByPath(ctx context.Context, path string) (media.Media, boo
 }
 
 // DeleteByPathPrefix はディレクトリ配下の登録をまとめて削除し、削除した行を返す。
-// prefixにセパレータを1つ補ってから前方一致させるため、"album" が
-// "album2" のような兄弟ディレクトリを巻き込むことはない。
+// 範囲は dirRange が決める。
 //
 // 前方一致は LIKE ではなく範囲比較で書く。LIKE の前方一致の最適化は
 // ESCAPE 句があると効かず、削除1回ごとに media の全行を舐めることになる。
 // path は UNIQUE なので暗黙の索引があり、範囲比較ならそれが使われる。
+//
+// 空のprefixは拒む。補うと "/" になり、絶対パスの全行が範囲に入るため、
+// インデックスが丸ごと消える。
 func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]media.Media, error) {
-	dirPrefix := prefix
-	if !strings.HasSuffix(dirPrefix, string(filepath.Separator)) {
-		dirPrefix += string(filepath.Separator)
+	if prefix == "" {
+		return nil, errors.New("prefix must not be empty")
 	}
+	lo, hi := dirRange(prefix)
 
 	rows, err := s.db.QueryContext(ctx,
 		`DELETE FROM media WHERE path >= ? AND path < ? RETURNING `+selectCols,
-		dirPrefix, upperBound(dirPrefix))
+		lo, hi)
 	if err != nil {
 		return nil, fmt.Errorf("cannot delete the media under the directory (%s): %w", prefix, err)
 	}
@@ -164,14 +163,25 @@ func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]media.
 	return out, rows.Err()
 }
 
-// upperBound は前方一致の上限を返す。末尾のバイトを1つ進めた値は、
-// prefixで始まるどの文字列よりも大きい最小の値になる。TEXTの既定の照合順序は
-// BINARYなので、バイト単位で進めれば比較と食い違わない。
-// prefixはセパレータで終わっているため、末尾が0xFFで桁上がりすることはない。
-func upperBound(prefix string) string {
-	b := []byte(prefix)
+// dirRange はディレクトリ配下を前方一致で引くための下限と上限を返す。
+// セパレータを1つ補ってから上限を作るため、"album" が "album2" のような
+// 兄弟ディレクトリを巻き込むことはない。
+//
+// 上限は末尾のバイトを1つ進めた値で、下限で始まるどの文字列よりも大きい最小の値に
+// なる。TEXTの既定の照合順序はBINARYなので、バイト単位で進めれば比較と食い違わない。
+// 補ったあとの末尾は必ずセパレータなので、0xFFで桁上がりすることはない。
+//
+// 補う処理と上限の計算を1つにまとめてあるのは、「末尾がセパレータである」という
+// 前提を関数の外に置かないためである。分けると呼び出し側の規約になり、守られて
+// いるかどうかがコードから見えなくなる。
+func dirRange(prefix string) (lo, hi string) {
+	lo = prefix
+	if !strings.HasSuffix(lo, string(filepath.Separator)) {
+		lo += string(filepath.Separator)
+	}
+	b := []byte(lo)
 	b[len(b)-1]++
-	return string(b)
+	return lo, string(b)
 }
 
 // ListRange は撮影日時の新しい順で offset 番目から limit 件を返す。
@@ -297,6 +307,11 @@ func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 	return out, rows.Err()
 }
 
+// selectCols は scanMedia の Scan と列順を合わせるための並び。idは含めない。
+// パスから導ける値なので、復元は media.Restore に任せる。
+const selectCols = `path, taken_at, mod_time`
+
+// scanMedia は1行を復元する。引数の並びは selectCols と一致していなければならない。
 func scanMedia(row interface{ Scan(...any) error }) (media.Media, error) {
 	var path string
 	var takenAt, modTime int64

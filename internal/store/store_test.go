@@ -24,8 +24,10 @@ func openTestStore(t *testing.T) *store.Store {
 	return s
 }
 
+// mtimeは撮影日時とずらす。どちらもINTEGERでGo側もint64なので、SELECTの列順と
+// Scanの並びが入れ替わっても同じ値なら気づけない。別の値なら往復で落ちる。
 func mediaAt(path string, takenAt time.Time) media.Media {
-	return media.Restore(path, takenAt, takenAt)
+	return media.Restore(path, takenAt, takenAt.Add(time.Hour))
 }
 
 // store.Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
@@ -151,6 +153,40 @@ func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
 	n, err := s.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "the album2 row stays")
+}
+
+// 呼び出し側がセパレータを付けていても同じ結果になる。補う処理が二重に働くと
+// "/p/album//" になって1件も消えないが、削除が0件になるだけなので気づきにくい。
+func TestDeleteByPathPrefixAcceptsATrailingSeparator(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	ctx := context.Background()
+	a := mediaAt("/p/album/a.jpg", time.Unix(1600000000, 0))
+	b := mediaAt("/p/album2/b.jpg", time.Unix(1600000001, 0))
+	require.NoError(t, s.Upsert(ctx, a))
+	require.NoError(t, s.Upsert(ctx, b))
+
+	deleted, err := s.DeleteByPathPrefix(ctx, "/p/album/")
+
+	require.NoError(t, err)
+	require.Len(t, deleted, 1)
+	require.Equal(t, a.Path(), deleted[0].Path())
+}
+
+// 空のprefixはセパレータを補うと "/" になり、絶対パスの全行が範囲に入る。
+// 消し過ぎは取り返しがつかないので、問い合わせる前に弾く。
+func TestDeleteByPathPrefixRejectsAnEmptyPrefix(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.Upsert(ctx, mediaAt("/p/album/a.jpg", time.Unix(1600000000, 0))))
+
+	_, err := s.DeleteByPathPrefix(ctx, "")
+
+	require.Error(t, err)
+	n, err := s.Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "nothing is deleted")
 }
 
 // LIKEのワイルドカードは、パスに現れると兄弟を巻き込む。範囲比較へ
