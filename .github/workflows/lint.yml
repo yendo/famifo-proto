@@ -40,7 +40,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VALIDATE_CSS_PRETTIER: false
           VALIDATE_CSS: false
-          VALIDATE_GO_MODULES: false
           VALIDATE_GO: false
           VALIDATE_HTML_PRETTIER: false
           VALIDATE_HTML: false
