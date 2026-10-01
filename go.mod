@@ -8,7 +8,7 @@ require (
 	github.com/chromedp/cdproto v0.0.0-20260714215040-dc233986426f
 	github.com/chromedp/chromedp v0.16.0
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/evanoberholster/imagemeta v1.0.0
+	github.com/evanoberholster/imagemeta v1.1.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/image v0.45.0
