@@ -281,8 +281,14 @@ type DayGroup struct {
 
 // DayGroups は日ごとの件数を新しい順に返す。一覧の区切りとスクラバーの目盛りに使う。
 //
-// SQLの strftime は UTC で日を切るため使わない。ローカルで未明に撮ったものが
-// 前日に分類されてしまう。Go 側で time.Local に変換して数える。
+// 日に切るのは Go 側で、SQLの GROUP BY は使わない。strftime に 'localtime' を
+// 付ければ現地の日で切れるので、UTCになることは理由ではない。使わないのは、式で
+// 束ねると idx_media_order が効かず一時B-treeに積み直すためである（実測で3倍遅い）。
+// 式インデックスで先回りする道も無い。'localtime' はTZ次第で結果が変わるため、
+// SQLiteが非決定的として索引に使わせない。
+//
+// 索引は taken_at の降順なので同じ日は必ず連続する。その前提で1パスで畳んでいる。
+// strftime が単調であることはSQLiteに伝えられないが、呼び出し側は知っている。
 func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT taken_at FROM media ORDER BY taken_at DESC, id DESC`)
