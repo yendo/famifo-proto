@@ -1,6 +1,6 @@
 module github.com/yendo/famifo-proto
 
-go 1.27
+go 1.27.1
 
 require (
 	github.com/alexedwards/scs/sqlite3store v0.0.0-20251002162104-209de6e426de
