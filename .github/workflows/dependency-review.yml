@@ -1,0 +1,27 @@
+---
+name: Dependency Review
+
+on: # yamllint disable-line rule:truthy
+  pull_request: null
+
+permissions: {}
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7 # zizmor: ignore[unpinned-uses]
+        with:
+          persist-credentials: false
+
+      # This runs on pull_request because the action has nothing to compare
+      # otherwise: it diffs the dependency manifests of the base and head
+      # refs, and reports only what the pull request introduces.
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v5 # zizmor: ignore[unpinned-uses]
