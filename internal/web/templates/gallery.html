@@ -13,11 +13,8 @@
      インターネットに出られることが表示の条件になり、届かないとギャラリーが
      何も出なくなる。家庭内LANで完結する構成を崩さない。
 
-     入手元 (0BSD):
-       https://cdn.jsdelivr.net/npm/idiomorph@0.7.4/dist/idiomorph.min.js
-     更新するときはURLのバージョンを上げて取り直す。バージョンは
-     package.json にも書いてある。Dependabot alert に載せるためだけの
-     申告なので、取り直したら必ず両方そろえる。 */}}
+     入手元は jsdelivr の idiomorph (0BSD)。バージョンの出所は package.json
+     で、取り直しは scripts/update-idiomorph.sh が行う。手で置き換えない。 */}}
 <script src="/static/idiomorph.min.js" defer></script>
 <script src="/static/app.js" defer></script>
 </head>
