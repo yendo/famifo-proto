@@ -1,4 +1,5 @@
 {
+	"//": "The dependencies here are bundled under internal/web/static/, not installed. A version bump is only a declaration until scripts/update-idiomorph.sh replaces the bundled copy.",
 	"private": true,
 	"dependencies": {
 		"idiomorph": "0.7.4"
