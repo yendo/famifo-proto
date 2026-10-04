@@ -22,8 +22,8 @@ type Stats struct {
 }
 
 // Scanner は Indexer に全体の突き合わせを繰り返させる。取り込みそのものは
-// Indexer が担い、Scanner はそれを起こす2つの経路のうちの1つである
-// （もう1つが Watcher）。
+// Indexer が担い、Scanner はそれを起こす2つの経路のうちの
+// 1つである（もう1つが Watcher）。
 //
 // fsnotify は取りこぼす。キューが溢れたことは ErrEventOverflow で分かるが、
 // max_user_watches を使い切って監視を張れなかったディレクトリのように、
@@ -91,7 +91,6 @@ func (sc *Scanner) Scan(ctx context.Context) (Stats, error) {
 	s := &scanPass{
 		ix:          ix,
 		log:         sc.log,
-		jobs:        ix.executor.newJobs(),
 		known:       known,
 		foundByRoot: make(map[string]int, len(ix.roots)),
 	}
@@ -116,9 +115,9 @@ func (sc *Scanner) Scan(ctx context.Context) (Stats, error) {
 type scanPass struct {
 	ix  *Indexer
 	log *slog.Logger
-	// jobs はこのスキャンが出した取り込みの集まり。監視が同時に走るため、
-	// 完了を待つ相手を自分が出したぶんに限る。
-	jobs *jobs
+	// wg はこのスキャンが出した取り込みの関門。監視が同時に走るため、完了を待つ
+	// 相手を自分が出したぶんに限る。
+	wg sync.WaitGroup
 
 	// known は登録済みのパスとそのmtime。走査で見つけたぶんを消し込み、
 	// 残ったものが削除されたファイルになる。
@@ -141,7 +140,7 @@ type scanPass struct {
 // 戻る前に、中断であってもワーカーの完了まで待つ。待たずに戻ると、まだ動いて
 // いるワーカーが indexed を書いている最中の値を呼び出し側が読むことになる。
 func (s *scanPass) walkAll(ctx context.Context) error {
-	defer s.jobs.wait()
+	defer s.wg.Wait()
 
 	for _, root := range s.ix.roots {
 		if err := s.walk(ctx, root); err != nil {
@@ -222,10 +221,10 @@ func (s *scanPass) walk(ctx context.Context, root string) error {
 // ワーカーに出すのは取り込み（EXIFの読み取りとサムネイルの生成）だけである。
 // 大半の時間は原本のデコードと縮小で、写真ごとに独立しているため。
 //
-// 持ち場が埋まっていればここで待つ。走査だけが先に走って数千件のパスを
+// 枠が埋まっていればここで待つ。走査だけが先に走って数千件のパスを
 // 溜め込むことがない。
 func (s *scanPass) submit(ctx context.Context, path string) {
-	s.jobs.submit(ctx, path, func(err error) {
+	s.ix.startIndex(ctx, &s.wg, path, func(err error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		switch {

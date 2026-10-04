@@ -290,9 +290,9 @@ func TestScanRemovesMediaOutsideEveryRoot(t *testing.T) {
 	require.NoError(t, err)
 
 	// bob を引数から外して起動し直した状況を模す
-	ix2 := index.New(roots[:1], f.st, f.thumbs, 4, f.log)
+	cat2 := index.New(roots[:1], f.st, f.thumbs, 4, f.log)
 
-	stats, err := index.NewScanner(ix2, time.Hour, nil, f.log).Scan(ctx)
+	stats, err := index.NewScanner(cat2, time.Hour, nil, f.log).Scan(ctx)
 
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Removed, "items under no root are removed")
@@ -408,7 +408,7 @@ func TestScanDoesNotWaitForTheWatchersIndexing(t *testing.T) {
 	t.Cleanup(func() { _ = w.Close() })
 
 	// ルートの外へ移す。スキャンの走査はこれを見つけないので、
-	// executor に残るのはスキャンが自分では出していない仕事だけになる。
+	// 枠に残るのはスキャンが自分では出していない仕事だけになる。
 	moved := filepath.Join(t.TempDir(), "stuck.heic")
 	require.NoError(t, os.Rename(stuck, moved))
 

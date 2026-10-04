@@ -463,7 +463,7 @@ func TestWatcherDoesNotAskForAScanWhenNothingIsBeingIndexed(t *testing.T) {
 	w := startWatcher(t, f)
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	requireCount(t, f, 1)
-	time.Sleep(100 * time.Millisecond) // ワーカーが持ち場を空けるのを待つ
+	time.Sleep(100 * time.Millisecond) // ワーカーが枠を空けるのを待つ
 
 	// 取り込みが走っていない間の削除は、監視だけで正しく反映できる。
 	require.NoError(t, os.Remove(path))

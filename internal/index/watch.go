@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -43,16 +44,16 @@ type Watcher struct {
 	fsw      *fsnotify.Watcher
 	log      *slog.Logger
 	debounce time.Duration
-	// results は終わった取り込みの受け口。ワーカーは通知を渡し終えるまで持ち場を空けない
+	// results は終わった取り込みの受け口。ワーカーは通知を渡し終えるまで枠を空けない
 	// ので、渡し待ちがワーカー数を超えることはない。容量をそれに合わせておけば
 	// ワーカーがここで止まらず、停止時に完了を待つ側と睨み合うこともない。
 	results chan indexResult
 	// inflight は取り込み中のパスと、その最中に消えたかどうか。同じ写真を2つの
 	// ワーカーに渡さないためと、取り込みの完了と削除がすれ違うのを防ぐためにある。
 	inflight map[string]bool
-	// jobs は監視が出した取り込みの集まり。スキャンが同時に走るため、
-	// 停止時に待つ相手を自分が出したぶんに限る。
-	jobs *jobs
+	// wg は監視が出した取り込みの関門。スキャンが同時に走るため、停止時に待つ
+	// 相手を自分が出したぶんに限る。
+	wg sync.WaitGroup
 	// kicks はスキャンの前倒しの要求。容量1で、連続した要求は1回にまとまる。
 	kicks chan struct{}
 }
@@ -72,9 +73,8 @@ func NewWatcher(ix *Indexer, log *slog.Logger) (*Watcher, error) {
 		fsw:      fsw,
 		log:      log,
 		debounce: defaultDebounce,
-		results:  make(chan indexResult, ix.workers),
+		results:  make(chan indexResult, ix.slots.cap()),
 		inflight: make(map[string]bool),
-		jobs:     ix.executor.newJobs(),
 		kicks:    make(chan struct{}, 1),
 	}
 	if err := w.addRoots(); err != nil {
@@ -106,7 +106,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			// 走っている取り込みの完了まで待つ。待たずに戻ると、呼び出し側が
 			// Close やDBの後始末に進んだあとでワーカーが書き込むことになる。
-			w.jobs.wait()
+			w.wg.Wait()
 			return nil
 
 		case ev, ok := <-w.fsw.Events:
@@ -179,7 +179,7 @@ func (w *Watcher) handleEvent(ctx context.Context, ev fsnotify.Event, pending ma
 		if err := w.ix.removeTree(ctx, ev.Name); err != nil {
 			w.log.Warn("failed to apply the deletion of a directory", "path", ev.Name, "err", err)
 		}
-		if w.ix.indexing() {
+		if w.ix.busy() {
 			// 取り込みの最中に消えた写真は、ワーカーが後から Upsert して
 			// 存在しないパスの行を残しうる。監視が出したぶんは上の墓標で
 			// 取り消せるが、スキャンが出したぶんには手が届かない。回収できる
@@ -225,7 +225,7 @@ func (w *Watcher) flush(ctx context.Context, pending map[string]time.Time, now t
 			// 取り込み中に書き換えられた写真。完了を待ってから渡し直す。
 			continue
 		}
-		if !w.jobs.trySubmit(ctx, path, func(err error) {
+		if !w.ix.tryStartIndex(ctx, &w.wg, path, func(err error) {
 			w.results <- indexResult{path: path, err: err}
 		}) {
 			// ワーカーが全部埋まっている。残りは保留のままにして次のtickで渡す。

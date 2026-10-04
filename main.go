@@ -137,7 +137,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}()
 
-	// 取り込みの実行役。この下の監視とスキャンは、どちらもこれを起こす入口になる。
+	// この下の監視とスキャンが、写真をDBに取り込むのに使う。
 	ix := index.New(cfg.MediaDirs, st, thumbs, cfg.ScanWorkers, log)
 
 	// スキャンより先に監視を張る。逆にすると、スキャンが走査を終えてから監視が
