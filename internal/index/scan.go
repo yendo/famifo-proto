@@ -84,14 +84,14 @@ func (sc *Scanner) Run(ctx context.Context) {
 // コンテキストのキャンセルだけが全体を中断させる。
 func (sc *Scanner) Scan(ctx context.Context) (Stats, error) {
 	ix := sc.ix
-	known, err := ix.store.AllPaths(ctx)
+	registered, err := ix.store.AllPaths(ctx)
 	if err != nil {
 		return Stats{}, err
 	}
 	s := &scanPass{
 		ix:          ix,
 		log:         sc.log,
-		known:       known,
+		registered:  registered,
 		foundByRoot: make(map[string]int, len(ix.roots)),
 	}
 
@@ -119,9 +119,9 @@ type scanPass struct {
 	// 相手を自分が出したぶんに限る。
 	wg sync.WaitGroup
 
-	// known は登録済みのパスとそのmtime。走査で見つけたぶんを消し込み、
+	// registered は登録済みのパスとそのmtime。走査で見つけたぶんを消し込み、
 	// 残ったものが削除されたファイルになる。
-	known map[string]int64
+	registered map[string]int64
 	// foundByRoot はルートごとの発見数。空/未マウントかどうかをルート単位で判定する
 	// ために使う。合計で数えると、生きているルートに写真がある限りガードが
 	// 発動しない。
@@ -159,7 +159,7 @@ func (s *scanPass) walkAll(ctx context.Context) error {
 
 // walk は1つのルート以下を走査する。
 //
-// 走査自体は直列のままにする。known の消し込みも foundByRoot の計上も、共有する
+// 走査自体は直列のままにする。registered の消し込みも foundByRoot の計上も、共有する
 // マップの上での帳簿づけであり、並行にしても速くならないのに壊れる余地だけが
 // 増える。時間を食う1枚の取り込みだけを submit でワーカーに出す。
 func (s *scanPass) walk(ctx context.Context, root string) error {
@@ -204,9 +204,9 @@ func (s *scanPass) walk(ctx context.Context, root string) error {
 		}
 
 		// 見つかったパスは消し込む。走査後に残ったものが削除されたファイル。
-		modTime, wasKnown := s.known[path]
-		delete(s.known, path)
-		if wasKnown && modTime == fi.ModTime().Unix() {
+		modTime, wasRegistered := s.registered[path]
+		delete(s.registered, path)
+		if wasRegistered && modTime == fi.ModTime().Unix() {
 			s.stats.Unchanged++
 			return nil
 		}
@@ -245,7 +245,7 @@ func (s *scanPass) purge(ctx context.Context) {
 	empty := s.emptyRoots()
 
 	guarded := 0
-	for path := range s.known {
+	for path := range s.registered {
 		if isUnderAny(empty, path) {
 			guarded++
 			continue
