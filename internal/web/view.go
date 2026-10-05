@@ -55,14 +55,14 @@ func (g *Gallery) buildRange(r *http.Request, offset, limit int) (tilesView, err
 	// タイルのURLは出どころによらず /thumb/ である。どのファイルを出すかは
 	// ハンドラが調べるので、一覧の組み立てではファイルシステムを叩かない。
 	v := tilesView{Media: make([]mediaView, 0, len(items))}
-	for _, p := range items {
+	for _, m := range items {
 		v.Media = append(v.Media, mediaView{
-			ID:       p.ID(),
-			PageURL:  "/item/" + p.ID(),
-			FullURL:  "/file/" + p.ID(),
-			ThumbURL: "/thumb/" + p.ID(),
-			Date:     p.TakenAt().Format("2006-01-02"),
-			IsVideo:  imagefmt.IsVideo(p.Path()),
+			ID:       m.ID(),
+			PageURL:  "/item/" + m.ID(),
+			FullURL:  "/file/" + m.ID(),
+			ThumbURL: "/thumb/" + m.ID(),
+			Date:     m.TakenAt().Format("2006-01-02"),
+			IsVideo:  imagefmt.IsVideo(m.Path()),
 		})
 	}
 	return v, nil

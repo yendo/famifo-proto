@@ -145,7 +145,7 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) error {
 // removeFile はインデックスとサムネイルの両方から写真を消す。
 // 未登録のパスに対しては何もしない。
 func (ix *Indexer) removeFile(ctx context.Context, path string) error {
-	p, ok, err := ix.store.DeleteByPath(ctx, path)
+	m, ok, err := ix.store.DeleteByPath(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -154,9 +154,9 @@ func (ix *Indexer) removeFile(ctx context.Context, path string) error {
 	}
 	// 出どころは見ない。Remove は自分の置き場しか触らないので、@eaDir から
 	// 借りていた写真に対しては何も消さずに終わる。
-	if err := ix.thumbs.Remove(p.ID()); err != nil {
+	if err := ix.thumbs.Remove(m.ID()); err != nil {
 		// DBからは消えているので、サムネイルの消し残しは致命的ではない
-		ix.log.Warn("failed to delete the thumbnail", "id", p.ID(), "err", err)
+		ix.log.Warn("failed to delete the thumbnail", "id", m.ID(), "err", err)
 	}
 	return nil
 }
@@ -170,10 +170,10 @@ func (ix *Indexer) removeTree(ctx context.Context, dir string) error {
 	if err != nil {
 		return err
 	}
-	for _, p := range items {
-		if err := ix.thumbs.Remove(p.ID()); err != nil {
+	for _, m := range items {
+		if err := ix.thumbs.Remove(m.ID()); err != nil {
 			// DBからは消えているので、サムネイルの消し残しは致命的ではない
-			ix.log.Warn("failed to delete the thumbnail", "id", p.ID(), "err", err)
+			ix.log.Warn("failed to delete the thumbnail", "id", m.ID(), "err", err)
 		}
 	}
 	return nil

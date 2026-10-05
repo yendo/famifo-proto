@@ -205,9 +205,9 @@ func TestGenerateFailsOnMissingFile(t *testing.T) {
 	pv := newTestProvider(t)
 	// 消えた直後にイベントを拾った状況。行だけあって原本が無い1枚を組み立てる。
 	missing := filepath.Join(t.TempDir(), "nope.jpg")
-	p := media.Restore(missing, time.Unix(1600000000, 0), time.Unix(1600000000, 0))
+	m := media.Restore(missing, time.Unix(1600000000, 0), time.Unix(1600000000, 0))
 
-	require.Error(t, pv.Prepare(p, 1))
+	require.Error(t, pv.Prepare(m, 1))
 }
 
 func TestRemove(t *testing.T) {

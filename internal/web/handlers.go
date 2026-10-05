@@ -105,11 +105,11 @@ func (g *Gallery) handleTiles(w http.ResponseWriter, r *http.Request) {
 // handleThumb は一覧のタイルを配信する。どのファイルを出すかは thumb が決める。
 // 出せる絵が無ければプレースホルダに差し替えるので、404にはならない。
 func (g *Gallery) handleThumb(w http.ResponseWriter, r *http.Request) {
-	p, ok := g.lookupMedia(w, r)
+	m, ok := g.lookupMedia(w, r)
 	if !ok {
 		return
 	}
-	path, contentType, ok := g.thumbs.SmallPath(p)
+	path, contentType, ok := g.thumbs.SmallPath(m)
 	if !ok {
 		serveNoPreview(w)
 		return
@@ -122,11 +122,11 @@ func (g *Gallery) handleThumb(w http.ResponseWriter, r *http.Request) {
 
 // handleFile は拡大表示用の画像を配信する。
 func (g *Gallery) handleFile(w http.ResponseWriter, r *http.Request) {
-	p, ok := g.lookupMedia(w, r)
+	m, ok := g.lookupMedia(w, r)
 	if !ok {
 		return
 	}
-	path, contentType := g.thumbs.LargePath(p)
+	path, contentType := g.thumbs.LargePath(m)
 	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
 	// 先に設定しておけばServeContentは上書きしない。
 	w.Header().Set("Content-Type", contentType)
@@ -170,7 +170,7 @@ func serveNoPreview(w http.ResponseWriter) {
 // lookupMedia はURLのIDから写真を引く。
 // パスではなくIDを経由することで、インデックスに無いファイルは配信できない。
 func (g *Gallery) lookupMedia(w http.ResponseWriter, r *http.Request) (media.Media, bool) {
-	p, err := g.store.GetByID(r.Context(), r.PathValue("id"))
+	m, err := g.store.GetByID(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return media.Media{}, false
@@ -179,5 +179,5 @@ func (g *Gallery) lookupMedia(w http.ResponseWriter, r *http.Request) (media.Med
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return media.Media{}, false
 	}
-	return p, true
+	return m, true
 }

@@ -14,15 +14,15 @@ import (
 func TestGalleryRendersTiles(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	rec := doGet(t, f.h, "/")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
 	body := rec.Body.String()
-	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`)
-	require.Contains(t, body, `data-full="/file/`+p.ID()+`"`)
+	require.Contains(t, body, `src="/thumb/`+m.ID()+`"`)
+	require.Contains(t, body, `data-full="/file/`+m.ID()+`"`)
 }
 
 func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
@@ -66,13 +66,13 @@ func TestGalleryEmptyLibrary(t *testing.T) {
 func TestGalleryPointsEveryTileAtThumb(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
+	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 
-	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`,
+	require.Contains(t, body, `src="/thumb/`+m.ID()+`"`,
 		"a tile points at /thumb/ even with no thumbnail; the handler falls back to the original")
-	require.NotContains(t, body, `src="/file/`+p.ID()+`"`)
+	require.NotContains(t, body, `src="/file/`+m.ID()+`"`)
 }
 
 func TestGalleryOrdersNewestFirst(t *testing.T) {
@@ -107,8 +107,8 @@ func TestTilesReturnsRequestedWindow(t *testing.T) {
 	f := newWebFixture(t, 60)
 	var ids []string
 	for i := range 5 {
-		p := f.addMedia(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), famifoThumb)
-		ids = append(ids, p.ID())
+		m := f.addMedia(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), famifoThumb)
+		ids = append(ids, m.ID())
 	}
 
 	body := doGet(t, f.h, "/tiles?offset=1&limit=2").Body.String()
@@ -149,11 +149,11 @@ func TestTilesRejectsBadOffset(t *testing.T) {
 func TestTilesDefaultsToFirstWindow(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
-	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	body := doGet(t, f.h, "/tiles").Body.String()
 
-	require.Contains(t, body, p.ID())
+	require.Contains(t, body, m.ID())
 }
 
 // embeddedDayGroups は初回HTMLに埋め込まれた日ごとの表を取り出す。
@@ -247,11 +247,11 @@ func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
 func TestGalleryUsesTheBorrowedThumbForHEIC(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
+	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 
-	require.Contains(t, body, `src="/thumb/`+p.ID()+`"`,
+	require.Contains(t, body, `src="/thumb/`+m.ID()+`"`,
 		"a HEIC that can borrow from @eaDir uses the thumbnail")
 }
 
@@ -262,8 +262,8 @@ func TestItemOpensTheGalleryAtThatItem(t *testing.T) {
 	f := newWebFixture(t, 10)
 	var items []string
 	for i, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
-		p := f.addMedia(t, name, time.Unix(int64(1600000000+i), 0), famifoThumb)
-		items = append(items, p.ID())
+		m := f.addMedia(t, name, time.Unix(int64(1600000000+i), 0), famifoThumb)
+		items = append(items, m.ID())
 	}
 
 	// 新しい順に並ぶので c, b, a。真ん中の b は1番目。
@@ -303,12 +303,12 @@ func TestGalleryOpensNoItem(t *testing.T) {
 func TestTilesLinkToTheItemPage(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 
-	require.Contains(t, body, `href="/item/`+p.ID()+`"`)
-	require.Contains(t, body, `data-full="/file/`+p.ID()+`"`)
+	require.Contains(t, body, `href="/item/`+m.ID()+`"`)
+	require.Contains(t, body, `data-full="/file/`+m.ID()+`"`)
 }
 
 // タイルが動画かどうかはHTMLに出る。app.js が拡大表示の切り替えに使い、
