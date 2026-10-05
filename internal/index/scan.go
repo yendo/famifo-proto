@@ -84,7 +84,7 @@ func (sc *Scanner) Run(ctx context.Context) {
 // コンテキストのキャンセルだけが全体を中断させる。
 func (sc *Scanner) Scan(ctx context.Context) (Stats, error) {
 	ix := sc.ix
-	known, err := ix.st.AllPaths(ctx)
+	known, err := ix.store.AllPaths(ctx)
 	if err != nil {
 		return Stats{}, err
 	}

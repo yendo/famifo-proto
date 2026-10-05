@@ -31,7 +31,7 @@ import (
 // 上限が入口によらず効くのはそのためである。
 type Indexer struct {
 	roots  []string
-	st     *store.Store
+	store  *store.Store
 	thumbs *thumb.Provider
 	// slots は同時に取り込める枠。スキャンも監視も同じ枠から1つ取るので、上限は
 	// 入口によらず効く。入口ごとに持つと合計が上限の2倍になるため、1つを共有する。
@@ -55,7 +55,7 @@ func New(roots []string, st *store.Store, thumbs *thumb.Provider, workers int, l
 	}
 	return &Indexer{
 		roots:  roots,
-		st:     st,
+		store:  st,
 		thumbs: thumbs,
 		slots:  newSlots(workers),
 		log:    log,
@@ -123,13 +123,13 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) error {
 	if err := ix.thumbs.Prepare(m, orientation); err != nil {
 		return err
 	}
-	return ix.st.Upsert(ctx, m)
+	return ix.store.Upsert(ctx, m)
 }
 
 // removeFile はインデックスとサムネイルの両方から写真を消す。
 // 未登録のパスに対しては何もしない。
 func (ix *Indexer) removeFile(ctx context.Context, path string) error {
-	p, ok, err := ix.st.DeleteByPath(ctx, path)
+	p, ok, err := ix.store.DeleteByPath(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -150,7 +150,7 @@ func (ix *Indexer) removeFile(ctx context.Context, path string) error {
 // イベントが来ないため、パスの前方一致で一括削除する必要がある。
 // 該当が無いパスに対しては何もしない。
 func (ix *Indexer) removeTree(ctx context.Context, dir string) error {
-	items, err := ix.st.DeleteByPathPrefix(ctx, dir)
+	items, err := ix.store.DeleteByPathPrefix(ctx, dir)
 	if err != nil {
 		return err
 	}

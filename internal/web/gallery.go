@@ -87,7 +87,7 @@ func securityHeaders(next http.Handler) http.Handler {
 // Gallery はギャラリーのHTTPハンドラが使う依存をまとめる。ハンドラはこの型の
 // メソッドとして handlers.go にある。認証の経路は Auth が持つ。
 type Gallery struct {
-	st        *store.Store
+	store     *store.Store
 	tmpl      *template.Template
 	thumbs    *thumb.Provider
 	chunkSize int
@@ -108,7 +108,7 @@ func NewGallery(st *store.Store, thumbs *thumb.Provider, auth *Auth, log *slog.L
 	if err != nil {
 		return nil, fmt.Errorf("cannot load the templates: %w", err)
 	}
-	return &Gallery{st: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, auth: auth, log: log}, nil
+	return &Gallery{store: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, auth: auth, log: log}, nil
 }
 
 // Handler はルーティング済みのハンドラを返す。

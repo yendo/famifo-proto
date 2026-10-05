@@ -26,7 +26,7 @@ func (g *Gallery) handleGallery(w http.ResponseWriter, r *http.Request) {
 // 消えた写真のURLを共有されることは普通に起きる。404にすると行き止まりになるので、
 // ギャラリーへ送る。
 func (g *Gallery) handleItem(w http.ResponseWriter, r *http.Request) {
-	rank, err := g.st.RankOf(r.Context(), r.PathValue("id"))
+	rank, err := g.store.RankOf(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -47,12 +47,12 @@ func (g *Gallery) renderGallery(w http.ResponseWriter, r *http.Request, openInde
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	total, err := g.st.Count(r.Context())
+	total, err := g.store.Count(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	days, err := g.st.DayGroups(r.Context())
+	days, err := g.store.DayGroups(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -170,7 +170,7 @@ func serveNoPreview(w http.ResponseWriter) {
 // lookupMedia はURLのIDから写真を引く。
 // パスではなくIDを経由することで、インデックスに無いファイルは配信できない。
 func (g *Gallery) lookupMedia(w http.ResponseWriter, r *http.Request) (media.Media, bool) {
-	p, err := g.st.GetByID(r.Context(), r.PathValue("id"))
+	p, err := g.store.GetByID(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return media.Media{}, false
