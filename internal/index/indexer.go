@@ -44,15 +44,12 @@ type Indexer struct {
 // thumbs は配信側と共有する。同じ置き場所を指す設定値を2経路に配ると、
 // ずれても誰も気づけないため、組み立てたものを1つ受け取る。
 //
-// workers は同時に取り込む枚数。1未満は1として扱う。適正値はCPU数とストレージの
-// 待ち時間で決まるため設定から来る。
+// workers は取り込みを同時に走らせるワーカーの数。1以上であること。適正値はCPU数と
+// ストレージの待ち時間の両方で決まるので、呼び出し側が決める。
 //
 // スキャンも監視も同じ枠から1つ取るので、この上限は取り込みの入口に
 // よらず効く。ディレクトリごと移動された場合、監視にも一度に数百件が来る。
 func New(roots []string, st *store.Store, thumbs *thumb.Provider, workers int, log *slog.Logger) *Indexer {
-	if workers < 1 {
-		workers = 1
-	}
 	return &Indexer{
 		roots:  roots,
 		store:  st,
@@ -226,8 +223,19 @@ func (ix *Indexer) busy() bool { return ix.slots.busy() }
 // 一致し、busy の答えが意味を持つ。
 type slots struct{ ch chan struct{} }
 
-// newSlots は上限 n の枠を作る。
-func newSlots(n int) slots { return slots{ch: make(chan struct{}, n)} }
+// newSlots は上限 n の枠を作る。n が1未満なら panic する。
+//
+// 枠が0本の slots は「並行しない」ではなく、take の送信を誰も受け取れないまま
+// 返らなくなる壊れた値である。存在してはいけない値なので、作れた振りをしない。
+//
+// 1未満を1に読み替えもしない。読み替えると、呼び出し側が渡した上限と実際に
+// 走る本数が食い違ったまま動き、気づく手立てが無くなる。
+func newSlots(n int) slots {
+	if n < 1 {
+		panic(fmt.Sprintf("index: slots must be 1 or greater: %d", n))
+	}
+	return slots{ch: make(chan struct{}, n)}
+}
 
 // take は枠が空くまで待って1つ取る。
 func (s slots) take() { s.ch <- struct{}{} }
