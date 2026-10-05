@@ -105,7 +105,7 @@ func TestScanIgnoresASymlinkedDirectory(t *testing.T) {
 func TestScanIgnoresTheTranscodedVideoInEaDir(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	require.NoError(t, os.WriteFile(filepath.Join(f.root, "clip.mp4"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, "clip.mp4"), testMP4Stub(), 0o644))
 
 	entry := filepath.Join(f.root, "@eaDir", "clip.mp4")
 	require.NoError(t, os.MkdirAll(entry, 0o755))
@@ -402,8 +402,9 @@ func TestScanDoesNotWaitForTheWatchersIndexing(t *testing.T) {
 	// 監視の側に終わらない取り込みを1件持たせる。
 	stuck := mkfifoMedia(t, f.root, "stuck.heic")
 	w := waitForIndexing(t, stuck)
-	// 取り込みを解く係を先に登録する。HEICは自前でサムネイルを作らないので、
-	// 書き手を閉じてEOFを返すだけで取り込みは進む。ここで登録しておかないと、
+	// 取り込みを解く係を先に登録する。書き手を閉じればEOFが渡り、中身の検査が
+	// 「写真ではない」と判断して取り込みは終わる。行は入らないが、ここで見たいのは
+	// 詰まった1枚に巻き込まれないことだけである。ここで登録しておかないと、
 	// 検証に失敗して途中で終わったときに監視の停止が取り込みを待って固まる。
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -484,6 +485,11 @@ func TestGhostRowFromAScanIsReclaimedByTheNextScan(t *testing.T) {
 	require.NoError(t, os.Rename(album, filepath.Join(t.TempDir(), "album")))
 	time.Sleep(50 * time.Millisecond) // 削除が取り込みの完了より先に処理される順序を作る
 
+	// 中身の検査がこのFIFOの最初の読み手なので、署名を流してから閉じる。空のまま
+	// 閉じると「写真ではない」と判断され、幽霊行そのものが生まれない。移動済みの
+	// パスを開き直す後続の読み手は、存在しないパスとして空振りする。
+	_, err := fw.Write(testHEIC())
+	require.NoError(t, err)
 	require.NoError(t, fw.Close())
 	<-scanDone
 	requireCount(t, f, 2) // b.jpg と、存在しない album/a.heic の幽霊行

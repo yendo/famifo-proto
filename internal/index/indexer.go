@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gabriel-vasile/mimetype"
 	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/index/exif"
 	"github.com/yendo/famifo-proto/internal/index/videometa"
@@ -79,14 +80,11 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) error {
 	}
 	// シンボリックリンクは載せない。
 	//
-	// 載せると配信できてしまう。自前でサムネイルを作る形式（.jpg など）は
-	// デコードに失敗して indexFile がエラーで終わるので載らないが、
-	// .heic や .mp4 は「自前では作らない」形式なので Prepare が何もせずに
-	// 成功し、行が入る。すると /file/{id} は借りるものが無いぶん原本の
-	// パス――つまりリンクそのもの――を ServeFile に渡し、リンクを追った
-	// 先の中身がブラウザへ出ていく。-data が -dir の外にあることは
-	// config.Validate が確かめているが、リンクの先までは縛れないため、
-	// 写真の共有フォルダに1本置くだけで sessions.db が読めることになる。
+	// 載せると配信できてしまう。行が入れば /file/{id} は原本のパス――つまり
+	// リンクそのもの――を ServeFile に渡し、リンクを追った先の中身がブラウザへ
+	// 出ていく。-data が -dir の外にあることは config.Validate が確かめているが、
+	// リンクの先までは縛れないため、写真の共有フォルダに1本置くだけで
+	// sessions.db が読めることになる。
 	//
 	// ディレクトリへのリンクは、この判定が無くても降りられない。走査も監視も
 	// filepath.WalkDir を使っており、WalkDir はリンクを追わないためである。
@@ -95,6 +93,27 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) error {
 	// 自身でしかない。
 	if fi.Mode()&os.ModeSymlink != 0 {
 		return nil
+	}
+
+	// 中身が拡張子のとおりかを見る。拡張子だけを根拠に行を作ると、名前を
+	// a.heic に変えただけのファイルにIDが振られ、配信される。デコードする形式なら
+	// thumb が弾くと思いがちだが、@eaDir から借りられる場合も、その版のサムネイルが
+	// 既にある場合も原本は開かれない。どの形式にも裏付けが要る。
+	//
+	// 拡張子からのMIMEタイプと中身から判定したMIMEタイプを突き合わせる。判定は
+	// mimetype に任せる。mimetype の型は木になっていて、3GPやHEICはMP4の子として
+	// 出てくるので、親まで遡って比べる。
+	detected, err := mimetype.DetectFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read the file: %w", err)
+	}
+	want := imagefmt.ContentType(path)
+	t := detected
+	for t != nil && !t.Is(want) {
+		t = t.Parent()
+	}
+	if t == nil {
+		return fmt.Errorf("the content of %s is %s, not what its extension says", path, detected)
 	}
 
 	// 撮影日時の出どころは写真と動画で違う。静止画のEXIFは機種によらず時差を

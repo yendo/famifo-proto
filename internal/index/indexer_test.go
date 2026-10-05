@@ -144,9 +144,8 @@ func TestIndexFileAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
 func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	// HEICはデコードしない方針なので、中身が画像でなくても登録される
-	path := filepath.Join(f.root, "a.heic")
-	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
+	// HEICはデコードしない方針なので、画素が無くても署名さえ合えば登録される
+	path := writeTestHEIC(t, f.root, "a.heic")
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
@@ -176,7 +175,7 @@ func TestIndexFileIndexesVideosWithoutAThumbnail(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.root, "clip.mp4")
-	require.NoError(t, os.WriteFile(path, []byte("not a real container"), 0o644))
+	require.NoError(t, os.WriteFile(path, testMP4Stub(), 0o644))
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
@@ -206,7 +205,7 @@ func TestIndexFileFallsBackToModTimeForAnUnreadableVideo(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.root, "clip.mp4")
-	require.NoError(t, os.WriteFile(path, []byte("not a container"), 0o644))
+	require.NoError(t, os.WriteFile(path, testMP4Stub(), 0o644))
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
 
@@ -295,8 +294,7 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	path := filepath.Join(f.root, "a.heic")
-	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
+	path := writeTestHEIC(t, f.root, "a.heic")
 	writeSynoThumb(t, path)
 
 	require.NoError(t, f.ix.IndexFile(context.Background(), path))
@@ -313,8 +311,7 @@ func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	path := filepath.Join(f.root, "a.heic")
-	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
+	path := writeTestHEIC(t, f.root, "a.heic")
 	fail := filepath.Join(filepath.Dir(synology.ThumbMPath(path)), "SYNOPHOTO_THUMB_M.fail")
 	require.NoError(t, os.MkdirAll(filepath.Dir(fail), 0o755))
 	require.NoError(t, os.WriteFile(fail, nil, 0o644))
@@ -343,4 +340,21 @@ func TestRemoveFileKeepsTheSynologyThumbnail(t *testing.T) {
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
+}
+
+// 拡張子を写真のものに付け替えただけのファイルは載せない。
+//
+// 自前でデコードしない形式（HEICや動画）では thumb が原本を開かないため、ここで
+// 中身を見ないと素通りして行が入る。行が入れば /file/{id} が配信する。
+func TestIndexFileRejectsContentThatDoesNotMatchTheExtension(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	path := filepath.Join(f.root, "a.heic")
+	require.NoError(t, os.WriteFile(path, []byte("alert('hi')\n"), 0o644))
+
+	require.Error(t, f.ix.IndexFile(context.Background(), path))
+
+	n, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "no row may be created for a file that is not a photo")
 }

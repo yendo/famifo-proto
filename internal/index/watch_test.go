@@ -86,7 +86,7 @@ func TestWatcherIgnoresTheTranscodedVideoInEaDir(t *testing.T) {
 	require.NoError(t, os.MkdirAll(entry, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(entry, "SYNOPHOTO_FILM_H.mp4"), []byte("x"), 0o644))
 
-	require.NoError(t, os.WriteFile(filepath.Join(f.root, "clip.mp4"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, "clip.mp4"), testMP4Stub(), 0o644))
 
 	requireCount(t, f, 1) // 原本だけが載る
 }
@@ -261,7 +261,7 @@ func waitForIndexing(t *testing.T, path string) *os.File {
 }
 
 // serveFifo は path に読み手が現れるたびにJPEGを流し込む係を置く。
-// 1枚の取り込みは原本を2度開く。EXIFの読み取りとサムネイルの生成である。
+// 1枚の取り込みは原本を3度開く。中身の検査とEXIFの読み取りとサムネイルの生成である。
 // どちらの open(2) にも応じる必要があるうえ、1度目の読み手が閉じる時刻は
 // こちらから見えないので、回数を数えずに応じ続ける。
 //
@@ -318,7 +318,11 @@ func TestWatcherKeepsHandlingEventsWhileAFileIsStuck(t *testing.T) {
 
 	requireCount(t, f, 1) // 止まっている1枚に巻き込まれない
 
-	// 止めていた取り込みを最後まで通してから監視を止める。
+	// 止めていた取り込みを最後まで通してから監視を止める。中身の検査が最初の
+	// 読み手なので、空のまま閉じるとEOFだけが渡り、「写真ではない」と判断されて
+	// そこで終わる。署名を含む先頭を流してから閉じる。
+	_, err := w.Write(testJPEG(t, 40, 20))
+	require.NoError(t, err)
 	require.NoError(t, w.Close())
 	serveFifo(t, stuck, testJPEG(t, 40, 20))
 	requireCount(t, f, 2)
@@ -337,9 +341,13 @@ func TestWatcherIndexesUpToWorkersInParallel(t *testing.T) {
 	wa := waitForIndexing(t, a)
 	wb := waitForIndexing(t, b)
 
-	// 2枚とも最後まで通してから監視を止める。
-	require.NoError(t, wa.Close())
-	require.NoError(t, wb.Close())
+	// 2枚とも最後まで通してから監視を止める。空のまま閉じると中身の検査が
+	// EOFを受け取って終わるので、署名を含む先頭を流してから閉じる。
+	for _, w := range []*os.File{wa, wb} {
+		_, err := w.Write(testJPEG(t, 40, 20))
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+	}
 	serveFifo(t, a, testJPEG(t, 40, 20))
 	serveFifo(t, b, testJPEG(t, 40, 20))
 	requireCount(t, f, 2)
@@ -362,7 +370,7 @@ func TestWatcherLeavesNoRowForAFileMovedWhileBeingIndexed(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // 削除が取り込みの完了より先に処理される順序を作る
 
 	require.NoError(t, w.Close())
-	serveFifo(t, moved, testJPEG(t, 40, 20))
+	serveFifo(t, moved, testHEIC())
 
 	// 移動先の1枚だけが残る。遅れて増えないことの確認なので待ってから数える。
 	time.Sleep(3 * testDebounce)
@@ -395,7 +403,7 @@ func TestWatcherLeavesNoRowForADirectoryMovedWhileBeingIndexed(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // 移動が取り込みの完了より先に処理される順序を作る
 
 	require.NoError(t, w.Close())
-	serveFifo(t, filepath.Join(moved, "a.heic"), testJPEG(t, 40, 20))
+	serveFifo(t, filepath.Join(moved, "a.heic"), testHEIC())
 
 	requireCount(t, f, 1)
 	time.Sleep(3 * testDebounce) // 遅れて移動元の行が増えないこと
