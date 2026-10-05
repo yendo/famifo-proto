@@ -2,6 +2,7 @@ package index_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -110,6 +111,15 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 
 	return &fixture{ix: ix, sc: index.NewScanner(ix, time.Hour, nil, log),
 		st: st, thumbs: thumbs, root: roots[0], thumbDir: thumbDir, log: log}, roots
+}
+
+func TestNewPanicsOnWorkersBelowOne(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, workers := range []int{0, -1} {
+		require.PanicsWithValue(t,
+			fmt.Sprintf("index: workers must be 1 or greater: %d", workers),
+			func() { index.New(nil, nil, nil, workers, log) })
+	}
 }
 
 func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
