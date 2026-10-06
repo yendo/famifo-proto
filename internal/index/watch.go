@@ -179,6 +179,8 @@ func (w *Watcher) handleEvent(ctx context.Context, ev fsnotify.Event, pending ma
 		if err := w.ix.removeTree(ctx, ev.Name); err != nil {
 			w.log.Warn("failed to apply the deletion of a directory", "path", ev.Name, "err", err)
 		}
+		// 消えたのがディレクトリなら、その配下に張ってあった監視を外す。
+		w.unwatchUnder(ev.Name)
 		if w.ix.busy() {
 			// 取り込みの最中に消えた写真は、ワーカーが後から Upsert して
 			// 存在しないパスの行を残しうる。監視が出したぶんは上の墓標で
@@ -245,6 +247,27 @@ func (w *Watcher) addRoots() error {
 		}
 	}
 	return nil
+}
+
+// unwatchUnder は path とその配下に張ってある監視を外す。
+//
+// fsnotify は監視を inode で持ち、張った時点のパスで覚えている。ディレクトリが
+// 移動すると、移動したディレクトリ自身の監視は IN_MOVE_SELF で外れるが、その子の
+// 監視は古いパスのまま残る。移動先で張り直しても inotify が同じ監視を返すため
+// パスは更新されず、移動先の配下のイベントが移動元のパスで届く。ルートの外へ
+// 移した場合は、ルートの外の変更が移動元のパスとして届き続ける。
+//
+// 削除のイベントのたびに監視の一覧をなめる。比較は張ってあるディレクトリの数だけの
+// 文字列の前方一致である。
+//
+// 既に外れている監視を外そうとすると ErrNonExistentWatch が返るが、外したい
+// だけなので見ない。
+func (w *Watcher) unwatchUnder(path string) {
+	for _, p := range w.fsw.WatchList() {
+		if isUnder(path, p) {
+			_ = w.fsw.Remove(p)
+		}
+	}
 }
 
 // addTree は root 以下の全ディレクトリを監視対象に加える。

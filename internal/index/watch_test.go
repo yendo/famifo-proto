@@ -161,6 +161,33 @@ func TestWatcherRemovesRowsWhenDirectoryRenamedWithinTree(t *testing.T) {
 	}
 }
 
+// fsnotify は監視を inode で持ち、張った時点のパスで覚えている。移動した
+// ディレクトリの子の監視を外さずに移動先で張り直すと、inotify が同じ監視を返し、
+// 移動先の配下のイベントが移動元のパスで届く。取り込みは存在しないパスを
+// 開こうとして失敗し、新しい写真が載らない。
+func TestWatcherFollowsADirectoryRenamedWithItsSubdirectories(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	startWatcher(t, f)
+
+	album := filepath.Join(f.root, "album")
+	require.NoError(t, os.MkdirAll(filepath.Join(album, "sub"), 0o755))
+	time.Sleep(50 * time.Millisecond) // 監視登録を待つ
+
+	renamed := filepath.Join(f.root, "album2")
+	require.NoError(t, os.Rename(album, renamed))
+	time.Sleep(50 * time.Millisecond) // 移動先の監視登録と中身の走査を待つ
+
+	// 移動のあとに置く。走査はもう終わっているので、拾えるのは監視だけである。
+	writeTestJPEG(t, filepath.Join(renamed, "sub"), "a.jpg", 40, 20)
+
+	requireCount(t, f, 1)
+	paths, err := f.st.AllPaths(context.Background())
+	require.NoError(t, err)
+	_, ok := paths[filepath.Join(renamed, "sub", "a.jpg")]
+	require.True(t, ok, "the row is under the new path")
+}
+
 func TestWatcherHandlesFileRenameWithinTree(t *testing.T) {
 	t.Parallel()
 	// Remove/RenameでRemoveTreeも呼ぶようになったため、ファイルのリネームでも
