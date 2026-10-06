@@ -26,7 +26,7 @@ const testDebounce = 100 * time.Millisecond
 func startWatcher(t *testing.T, f *fixture) *index.Watcher {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	w, err := index.NewWatcher(f.ix, log)
+	w, err := index.NewWatcher(f.ix, f.slots, log)
 	require.NoError(t, err)
 	w.SetDebounce(testDebounce)
 
@@ -466,7 +466,7 @@ func TestWatcherWatchesRootsBeforeRunStarts(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	w, err := index.NewWatcher(f.ix, log)
+	w, err := index.NewWatcher(f.ix, f.slots, log)
 	require.NoError(t, err)
 	w.SetDebounce(testDebounce)
 

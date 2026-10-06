@@ -351,8 +351,8 @@ func writeTestPhoto(path string, i int, takenAt time.Time) error {
 // 手でMediaを組むと、Mediaの構造が変わるたびにブラウザテストが巻き添えになる。
 func indexAll(st *store.Store, mediaDir string, thumbs *thumb.Provider) (index.Stats, error) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix := index.New([]string{mediaDir}, st, thumbs, 4, log)
-	return index.NewScanner(ix, time.Hour, nil, log).Scan(context.Background())
+	ix := index.New([]string{mediaDir}, st, thumbs, log)
+	return index.NewScanner(ix, index.NewSlots(4), time.Hour, nil, log).Scan(context.Background())
 }
 
 // writeTestJPEG はi番目の写真用に、色だけが違う小さな正方形JPEGを作る。

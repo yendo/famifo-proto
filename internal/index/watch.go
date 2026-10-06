@@ -40,7 +40,9 @@ type indexResult struct {
 // pending を触らせないための受け渡しと、歩行中の削除に備える帳簿が要る。
 // 停止時間に見合わないので、境界は取り込みに引いてある。
 type Watcher struct {
-	ix       *Indexer
+	ix *Indexer
+	// slots は取り込みの枠。スキャンと共有する。
+	slots    *Slots
 	fsw      *fsnotify.Watcher
 	log      *slog.Logger
 	debounce time.Duration
@@ -63,17 +65,18 @@ type Watcher struct {
 // 監視を張るのを Run まで遅らせない。起動時は「監視を張る → スキャン」の順に
 // することで、スキャンが走査を終えたあとに置かれた写真を監視が拾う。Run の
 // 開始を待ってから張ると、その順序が呼び出し側から保証できなくなる。
-func NewWatcher(ix *Indexer, log *slog.Logger) (*Watcher, error) {
+func NewWatcher(ix *Indexer, slots *Slots, log *slog.Logger) (*Watcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("cannot start watching: %w", err)
 	}
 	w := &Watcher{
 		ix:       ix,
+		slots:    slots,
 		fsw:      fsw,
 		log:      log,
 		debounce: defaultDebounce,
-		results:  make(chan indexResult, ix.slots.cap()),
+		results:  make(chan indexResult, slots.size()),
 		inflight: make(map[string]bool),
 		kicks:    make(chan struct{}, 1),
 	}
@@ -190,7 +193,7 @@ func (w *Watcher) handleEvent(ctx context.Context, ev fsnotify.Event, pending ma
 		}
 		// 消えたのがディレクトリなら、その配下に張ってあった監視を外す。
 		w.unwatchUnder(ev.Name)
-		if w.ix.busy() {
+		if w.slots.busy() {
 			// 取り込みの最中に消えた写真は、ワーカーが後から Upsert して
 			// 存在しないパスの行を残しうる。監視が出したぶんは上の墓標で
 			// 取り消せるが、スキャンが出したぶんには手が届かない。回収できる
@@ -236,15 +239,21 @@ func (w *Watcher) flush(ctx context.Context, pending map[string]time.Time, now t
 			// 取り込み中に書き換えられた写真。完了を待ってから渡し直す。
 			continue
 		}
-		if !w.ix.tryStartIndex(ctx, &w.wg, path, func(err error) {
-			w.results <- indexResult{path: path, err: err}
-		}) {
+		if !w.slots.tryAcquire() {
 			// ワーカーが全部埋まっている。残りは保留のままにして次のtickで渡す。
 			// ここで空くのを待つと、その間イベントを読めなくなる。
 			return
 		}
 		delete(pending, path)
 		w.inflight[path] = false
+		w.wg.Go(func() {
+			// 枠は結果を渡し終えてから返す（defer は最初に置いたものが最後に走る）。
+			// 順序が逆だと、渡し待ちの結果が枠の数を超えて results の容量から
+			// あふれうる。使用中の枠を「まだ終わっていない取り込み」と読む
+			// Slots.busy もこの順序に依っている。
+			defer w.slots.release()
+			w.results <- indexResult{path: path, err: w.ix.indexFile(ctx, path)}
+		})
 	}
 }
 

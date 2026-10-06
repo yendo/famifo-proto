@@ -290,9 +290,9 @@ func TestScanRemovesMediaOutsideEveryRoot(t *testing.T) {
 	require.NoError(t, err)
 
 	// bob を引数から外して起動し直した状況を模す
-	cat2 := index.New(roots[:1], f.st, f.thumbs, 4, f.log)
+	ix2 := index.New(roots[:1], f.st, f.thumbs, f.log)
 
-	stats, err := index.NewScanner(cat2, time.Hour, nil, f.log).Scan(ctx)
+	stats, err := index.NewScanner(ix2, f.slots, time.Hour, nil, f.log).Scan(ctx)
 
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Removed, "items under no root are removed")
@@ -441,7 +441,7 @@ func TestScannerRunKeepsReconcilingOnItsInterval(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		index.NewScanner(f.ix, 50*time.Millisecond, nil, f.log).Run(ctx)
+		index.NewScanner(f.ix, f.slots, 50*time.Millisecond, nil, f.log).Run(ctx)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -500,7 +500,7 @@ func TestGhostRowFromAScanIsReclaimedByTheNextScan(t *testing.T) {
 	loopDone := make(chan struct{})
 	go func() {
 		defer close(loopDone)
-		index.NewScanner(f.ix, time.Hour, w.ScanRequests(), f.log).Run(ctx)
+		index.NewScanner(f.ix, f.slots, time.Hour, w.ScanRequests(), f.log).Run(ctx)
 	}()
 	t.Cleanup(func() { cancel(); <-loopDone })
 
@@ -519,7 +519,7 @@ func TestScannerRunIsBroughtForwardByARequest(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		index.NewScanner(f.ix, time.Hour, kicks, f.log).Run(ctx)
+		index.NewScanner(f.ix, f.slots, time.Hour, kicks, f.log).Run(ctx)
 	}()
 	t.Cleanup(func() {
 		cancel()

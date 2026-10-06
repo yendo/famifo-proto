@@ -30,7 +30,9 @@ type Stats struct {
 // 取りこぼしたことを知る手立てが無い経路もある。繰り返し突き合わせ直せば、
 // 検知できたかどうかによらず整合性が戻る。
 type Scanner struct {
-	ix       *Indexer
+	ix *Indexer
+	// slots は取り込みの枠。監視と共有する。
+	slots    *Slots
 	interval time.Duration
 	// kicks は待ちを切り上げる要求である。スキャンの本数は増えず、次の1回が
 	// 早まるだけになる。ループが逐次なのでスキャンが重なることはなく、「今
@@ -40,8 +42,8 @@ type Scanner struct {
 }
 
 // NewScanner はScannerを作る。interval は1回が終わってから次を始めるまでの間隔。
-func NewScanner(ix *Indexer, interval time.Duration, kicks <-chan struct{}, log *slog.Logger) *Scanner {
-	return &Scanner{ix: ix, interval: interval, kicks: kicks, log: log}
+func NewScanner(ix *Indexer, slots *Slots, interval time.Duration, kicks <-chan struct{}, log *slog.Logger) *Scanner {
+	return &Scanner{ix: ix, slots: slots, interval: interval, kicks: kicks, log: log}
 }
 
 // Run はスキャンを繰り返す。ctx がキャンセルされるまで戻らない。
@@ -90,6 +92,7 @@ func (sc *Scanner) Scan(ctx context.Context) (Stats, error) {
 	}
 	s := &scanPass{
 		ix:          ix,
+		slots:       sc.slots,
 		log:         sc.log,
 		registered:  registered,
 		foundByRoot: make(map[string]int, len(ix.roots)),
@@ -113,8 +116,9 @@ func (sc *Scanner) Scan(ctx context.Context) (Stats, error) {
 //
 // 1回のスキャンごとに作って捨てる。Scan の外には出ない。
 type scanPass struct {
-	ix  *Indexer
-	log *slog.Logger
+	ix    *Indexer
+	slots *Slots
+	log   *slog.Logger
 	// wg はこのスキャンが出した取り込みの関門。監視が同時に走るため、完了を待つ
 	// 相手を自分が出したぶんに限る。
 	wg sync.WaitGroup
@@ -223,8 +227,14 @@ func (s *scanPass) walk(ctx context.Context, root string) error {
 //
 // 枠が埋まっていればここで待つ。走査だけが先に走って数千件のパスを
 // 溜め込むことがない。
+//
+// 枠は集計を書き終えてから返す（defer は最初に置いたものが最後に走る）。使用中の枠が
+// あることを「まだ終わっていない取り込みがある」と読めるようにするため（Slots.busy）。
 func (s *scanPass) submit(ctx context.Context, path string) {
-	s.ix.startIndex(ctx, &s.wg, path, func(err error) {
+	s.slots.acquire()
+	s.wg.Go(func() {
+		defer s.slots.release()
+		err := s.ix.indexFile(ctx, path)
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		switch {

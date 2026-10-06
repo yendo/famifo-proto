@@ -22,6 +22,7 @@ import (
 
 type fixture struct {
 	ix       *index.Indexer
+	slots    *index.Slots
 	sc       *index.Scanner
 	st       *store.Store
 	thumbs   *thumb.Provider
@@ -81,9 +82,10 @@ func newFixtureWorkers(t *testing.T, workers int) *fixture {
 	thumbs, err := thumb.NewProvider(thumbDir)
 	require.NoError(t, err)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix := index.New([]string{root}, st, thumbs, workers, log)
+	ix := index.New([]string{root}, st, thumbs, log)
+	slots := index.NewSlots(workers)
 
-	return &fixture{ix: ix, sc: index.NewScanner(ix, time.Hour, nil, log),
+	return &fixture{ix: ix, slots: slots, sc: index.NewScanner(ix, slots, time.Hour, nil, log),
 		st: st, thumbs: thumbs, root: root, thumbDir: thumbDir, log: log}
 }
 
@@ -107,18 +109,18 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 	thumbs, err := thumb.NewProvider(thumbDir)
 	require.NoError(t, err)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix := index.New(roots, st, thumbs, 4, log)
+	ix := index.New(roots, st, thumbs, log)
+	slots := index.NewSlots(4)
 
-	return &fixture{ix: ix, sc: index.NewScanner(ix, time.Hour, nil, log),
+	return &fixture{ix: ix, slots: slots, sc: index.NewScanner(ix, slots, time.Hour, nil, log),
 		st: st, thumbs: thumbs, root: roots[0], thumbDir: thumbDir, log: log}, roots
 }
 
-func TestNewPanicsOnWorkersBelowOne(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	for _, workers := range []int{0, -1} {
+func TestNewSlotsPanicsBelowOne(t *testing.T) {
+	for _, n := range []int{0, -1} {
 		require.PanicsWithValue(t,
-			fmt.Sprintf("index: workers must be 1 or greater: %d", workers),
-			func() { index.New(nil, nil, nil, workers, log) })
+			fmt.Sprintf("index: slots must be 1 or greater: %d", n),
+			func() { index.NewSlots(n) })
 	}
 }
 

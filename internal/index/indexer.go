@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
@@ -26,45 +25,26 @@ import (
 )
 
 // Indexer は写真1枚の変更をインデックスとサムネイルに反映する。どこを見てどこに
-// 書くかと、同時に取り込める枠を持つ。インデックスのデータ自体は store にある。
+// 書くかを持つ。インデックスのデータ自体は store にある。
 //
-// 取り込みを起こす入口は Scanner と Watcher の2つで、どちらもこれを1つ共有する。
-// 上限が入口によらず効くのはそのためである。
+// どれも同期的で、並行について何も知らない。いつ、いくつ同時に走らせるかは
+// 取り込みを起こす入口（Scanner と Watcher）が Slots を使って決める。
 type Indexer struct {
 	roots  []string
 	store  *store.Store
 	thumbs *thumb.Provider
-	// slots は同時に取り込める枠。スキャンも監視も同じ枠から1つ取るので、上限は
-	// 入口によらず効く。入口ごとに持つと合計が上限の2倍になるため、1つを共有する。
-	slots slots
-	log   *slog.Logger
+	log    *slog.Logger
 }
 
 // New はIndexerを作る。rootsは写真を収集するルートディレクトリ。
 //
 // thumbs は配信側と共有する。同じ置き場所を指す設定値を2経路に配ると、
 // ずれても誰も気づけないため、組み立てたものを1つ受け取る。
-//
-// workers は取り込みを同時に走らせるワーカーの数。1未満なら panic する。適正値はCPU数と
-// ストレージの待ち時間の両方で決まるので、呼び出し側が決める。
-//
-// スキャンも監視も同じ枠から1つ取るので、この上限は取り込みの入口に
-// よらず効く。ディレクトリごと移動された場合、監視にも一度に数百件が来る。
-//
-// 枠が0本の slots は「並行しない」ではなく、take の送信を誰も受け取れないまま
-// 返らなくなる壊れた値である。存在してはいけない値なので、作れた振りをしない。
-//
-// 1未満を1に読み替えもしない。読み替えると、呼び出し側が渡した上限と実際に
-// 走る本数が食い違ったまま動き、気づく手立てが無くなる。
-func New(roots []string, st *store.Store, thumbs *thumb.Provider, workers int, log *slog.Logger) *Indexer {
-	if workers < 1 {
-		panic(fmt.Sprintf("index: workers must be 1 or greater: %d", workers))
-	}
+func New(roots []string, st *store.Store, thumbs *thumb.Provider, log *slog.Logger) *Indexer {
 	return &Indexer{
 		roots:  roots,
 		store:  st,
 		thumbs: thumbs,
-		slots:  newSlots(workers),
 		log:    log,
 	}
 }
@@ -187,93 +167,3 @@ func (ix *Indexer) removeTree(ctx context.Context, dir string) error {
 	}
 	return nil
 }
-
-// startIndex は枠が空くまで待ってから1枚の取り込みを始める。終わるのを待たずに返る。
-//
-// wg は呼び出し側の関門である。渡したものが「自分が出したぶん」になり、
-// wg.Wait() は他の入口が出した取り込みを待たない。スキャンと監視が同時に走るため、
-// 相手の完了まで待つと、相手が仕事を足し続ける限り返れなくなる。Add はこの中で
-// 行うので、呼び出し側に作法は残らない。
-//
-// done は取り込みが終わったワーカーの上で呼ばれる。
-func (ix *Indexer) startIndex(ctx context.Context, wg *sync.WaitGroup, path string, done func(error)) {
-	ix.slots.take()
-	ix.run(ctx, wg, path, done)
-}
-
-// tryStartIndex は枠が空いていれば取り込みを始め、埋まっていれば false を返す。
-// 呼び出し側をブロックしない。渡せなかったパスは呼び出し側が持ったままにして、
-// 空いてから渡し直す。
-//
-// 待つ版と待たない版が要るのは、入口で作法が逆になるためである。スキャンは枠が空くまで
-// 待ってよく、むしろ待たないと数千件のパスを先に溜め込んでしまう。監視ループは
-// 決して待てない。待った時間はそのまま fsnotify のイベントを読まない時間になり、
-// カーネルのキューが溢れれば変更そのものを取りこぼす。
-func (ix *Indexer) tryStartIndex(ctx context.Context, wg *sync.WaitGroup, path string, done func(error)) bool {
-	if !ix.slots.tryTake() {
-		return false
-	}
-	ix.run(ctx, wg, path, done)
-	return true
-}
-
-// run は枠を確保済みの前提で1枚の取り込みを走らせる。
-//
-// 枠を空けるのは done を返したあとである。順序を逆にすると、通知を渡し終える
-// 前に次の1枚が走り出せてしまい、通知の待ち行列が同時取り込み数を超えて伸びうる。
-// 呼び出し側が容量をワーカー数で見積もれるよう、ここで閉じておく。
-//
-// defer は LIFO なので枠の返却が wg.Done() より先に走る。wg.Wait() が返った時点で
-// 枠も空いていることが、busy() の意味を支えている。
-func (ix *Indexer) run(ctx context.Context, wg *sync.WaitGroup, path string, done func(error)) {
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer ix.slots.release()
-		done(ix.indexFile(ctx, path))
-	}()
-}
-
-// busy は取り込みが1件でも走っているかを返す。誰が出した仕事かは区別しない。
-//
-// 取り込みの最中に写真が消えると、ワーカーが後から Upsert して存在しない
-// パスの行が残りうる。その気配を監視が知るために使う。
-//
-// 枠は done を返し終えるまで空かないので、埋まっている枠があることは
-// 「まだ Upsert していないワーカーが居る」ことと一致する。
-func (ix *Indexer) busy() bool { return ix.slots.busy() }
-
-// slots は同時に取り込める枠。容量が上限で、入っているぶんが使用中である。
-// 中身はチャネル1本なので値で持ち回る。
-//
-// 枠を返すのは取り込みの完了通知を渡し終えたあとである（run を見よ）。この順序が
-// あるので、使用中の枠があることは「まだ Upsert していないワーカーが居る」ことと
-// 一致し、busy の答えが意味を持つ。
-type slots struct{ ch chan struct{} }
-
-// newSlots は上限 n の枠を作る。n は1以上であること（New が確かめる）。
-func newSlots(n int) slots {
-	return slots{ch: make(chan struct{}, n)}
-}
-
-// take は枠が空くまで待って1つ取る。
-func (s slots) take() { s.ch <- struct{}{} }
-
-// tryTake は枠が空いていれば1つ取り、埋まっていれば false を返す。待たない。
-func (s slots) tryTake() bool {
-	select {
-	case s.ch <- struct{}{}:
-		return true
-	default:
-		return false
-	}
-}
-
-// release は取った枠を1つ返す。
-func (s slots) release() { <-s.ch }
-
-// busy は使用中の枠が1つでもあるかを返す。
-func (s slots) busy() bool { return len(s.ch) > 0 }
-
-// cap は上限を返す。
-func (s slots) cap() int { return cap(s.ch) }
