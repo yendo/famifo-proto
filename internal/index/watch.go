@@ -156,6 +156,15 @@ func (w *Watcher) handleEvent(ctx context.Context, ev fsnotify.Event, pending ma
 	}
 	switch {
 	case ev.Has(fsnotify.Remove), ev.Has(fsnotify.Rename):
+		if w.isRoot(ev.Name) {
+			// ルートそのものが消えた。名前の変更か削除かは区別できない。スキャンが
+			// 「空に見えるルート」の配下を消さないのと同じ理由で、ここでも消さない。
+			// 消すと、戻したときに全部を取り込み直すことになる。扱いはスキャンの
+			// 判断にそろえ、走査を前倒しする。
+			w.log.Warn("a root disappeared; keeping its items", "root", ev.Name)
+			w.requestScan()
+			return
+		}
 		// Renameは「この名前から消えた」を意味する。移動先は別途Createで届く。
 		// この時点では消えたのがファイルかディレクトリか os.Stat では判別できないため
 		// 両方呼ぶ。該当しない方は何もマッチせずno-opになるだけなので安全。
@@ -247,6 +256,17 @@ func (w *Watcher) addRoots() error {
 		}
 	}
 	return nil
+}
+
+// isRoot は path がルートそのものかを返す。
+func (w *Watcher) isRoot(path string) bool {
+	path = filepath.Clean(path)
+	for _, root := range w.ix.roots {
+		if filepath.Clean(root) == path {
+			return true
+		}
+	}
+	return false
 }
 
 // unwatchUnder は path とその配下に張ってある監視を外す。

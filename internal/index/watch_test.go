@@ -188,6 +188,25 @@ func TestWatcherFollowsADirectoryRenamedWithItsSubdirectories(t *testing.T) {
 	require.True(t, ok, "the row is under the new path")
 }
 
+// ルートそのものが消えたとき、配下の行を消さない。スキャンが「空に見える
+// ルート」の配下を消さないのと同じ扱いにそろえる。消してしまうと、戻したときに
+// 全部を取り込み直し、サムネイルを作り直すことになる。
+func TestWatcherKeepsRowsWhenARootIsRenamed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	startWatcher(t, f)
+	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+	requireCount(t, f, 1)
+
+	require.NoError(t, os.Rename(f.root, f.root+".away"))
+
+	// 減らないことの確認なので、イベントが処理されるのを待ってから数える。
+	time.Sleep(3 * testDebounce)
+	n, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "the items under a root that disappeared are kept")
+}
+
 func TestWatcherHandlesFileRenameWithinTree(t *testing.T) {
 	t.Parallel()
 	// Remove/RenameでRemoveTreeも呼ぶようになったため、ファイルのリネームでも
