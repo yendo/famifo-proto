@@ -290,7 +290,7 @@ func TestScanRemovesMediaOutsideEveryRoot(t *testing.T) {
 	require.NoError(t, err)
 
 	// bob を引数から外して起動し直した状況を模す
-	ix2 := index.New(roots[:1], f.st, f.thumbs, f.log)
+	ix2 := index.NewIndexer(roots[:1], f.st, f.thumbs, f.log)
 
 	stats, err := index.NewScanner(ix2, f.slots, time.Hour, nil, f.log).Scan(ctx)
 

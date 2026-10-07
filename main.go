@@ -138,7 +138,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}()
 
 	// この下の監視とスキャンが、写真をDBに取り込むのに使う。
-	ix := index.New(cfg.MediaDirs, st, thumbs, log)
+	ix := index.NewIndexer(cfg.MediaDirs, st, thumbs, log)
 	// 同時に取り込める枠。監視とスキャンが1つを共有するので、上限は入口によらず効く。
 	slots := index.NewSlots(cfg.ScanWorkers)
 

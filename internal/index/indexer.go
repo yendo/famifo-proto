@@ -36,11 +36,11 @@ type Indexer struct {
 	log    *slog.Logger
 }
 
-// New はIndexerを作る。rootsは写真を収集するルートディレクトリ。
+// NewIndexer はIndexerを作る。rootsは写真を収集するルートディレクトリ。
 //
 // thumbs は配信側と共有する。同じ置き場所を指す設定値を2経路に配ると、
 // ずれても誰も気づけないため、組み立てたものを1つ受け取る。
-func New(roots []string, st *store.Store, thumbs *thumb.Provider, log *slog.Logger) *Indexer {
+func NewIndexer(roots []string, st *store.Store, thumbs *thumb.Provider, log *slog.Logger) *Indexer {
 	return &Indexer{
 		roots:  roots,
 		store:  st,

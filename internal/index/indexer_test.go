@@ -82,7 +82,7 @@ func newFixtureWorkers(t *testing.T, workers int) *fixture {
 	thumbs, err := thumb.NewProvider(thumbDir)
 	require.NoError(t, err)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix := index.New([]string{root}, st, thumbs, log)
+	ix := index.NewIndexer([]string{root}, st, thumbs, log)
 	slots := index.NewSlots(workers)
 
 	return &fixture{ix: ix, slots: slots, sc: index.NewScanner(ix, slots, time.Hour, nil, log),
@@ -109,7 +109,7 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 	thumbs, err := thumb.NewProvider(thumbDir)
 	require.NoError(t, err)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix := index.New(roots, st, thumbs, log)
+	ix := index.NewIndexer(roots, st, thumbs, log)
 	slots := index.NewSlots(4)
 
 	return &fixture{ix: ix, slots: slots, sc: index.NewScanner(ix, slots, time.Hour, nil, log),

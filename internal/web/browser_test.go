@@ -352,7 +352,7 @@ func writeTestPhoto(path string, i int, takenAt time.Time) error {
 // 起動直後の1回目で全件が載るのを待つ。間隔は長くして2回目を走らせない。
 func indexAll(st *store.Store, mediaDir string, thumbs *thumb.Provider, want int) error {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix := index.New([]string{mediaDir}, st, thumbs, log)
+	ix := index.NewIndexer([]string{mediaDir}, st, thumbs, log)
 	sc := index.NewScanner(ix, index.NewSlots(4), time.Hour, nil, log)
 
 	ctx, cancel := context.WithCancel(context.Background())
