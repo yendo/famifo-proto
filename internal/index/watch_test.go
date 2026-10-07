@@ -169,8 +169,8 @@ func TestWatcherRemovesRowsWhenDirectoryRenamedWithinTree(t *testing.T) {
 	requireCount(t, f, 2)
 
 	// ディレクトリ内でのリネーム: 子ファイルには個別イベントが来ない。
-	// RemoveTreeでの前方一致削除が無いと、古いパスの行が残ったまま
-	// 新しいパスの行が二重に増える。
+	// ディレクトリが消えたときに配下の行をまとめて消さないと、古いパスの行が
+	// 残ったまま新しいパスの行が二重に増える。
 	renamed := filepath.Join(f.root, "album2")
 	require.NoError(t, os.Rename(album, renamed))
 	time.Sleep(50 * time.Millisecond) // 監視登録を待つ
@@ -232,8 +232,9 @@ func TestWatcherKeepsRowsWhenARootIsRenamed(t *testing.T) {
 
 func TestWatcherHandlesFileRenameWithinTree(t *testing.T) {
 	t.Parallel()
-	// Remove/RenameでRemoveTreeも呼ぶようになったため、ファイルのリネームでも
-	// RemoveFileとRemoveTreeの両方が呼ばれる。該当の無い方は静かにno-opであることを確認する。
+	// 消えたのがファイルかディレクトリかは、消えたあとでは見分けられない。ファイルの
+	// リネームでも、ディレクトリが消えたときと同じ扱いを受ける。それでも元の名前の
+	// 行だけが消え、新しい名前で1件が残ることを確かめる。
 	f := newFixture(t)
 	startWatcher(t, f)
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)

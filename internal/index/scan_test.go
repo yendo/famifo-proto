@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/index"
+	"github.com/yendo/famifo-proto/internal/media"
 )
 
 func TestScanIndexesNestedMedia(t *testing.T) {
@@ -19,10 +20,8 @@ func TestScanIndexesNestedMedia(t *testing.T) {
 	writeTestJPEG(t, filepath.Join(f.root, "2020"), "b.jpg", 40, 20)
 	writeTestJPEG(t, filepath.Join(f.root, "2020", "trip"), "c.jpg", 40, 20)
 
-	stats, err := f.sc.Scan(context.Background())
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	require.NoError(t, err)
-	require.Equal(t, 3, stats.Indexed, "subdirectories are walked recursively")
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 3, n)
@@ -35,11 +34,11 @@ func TestScanIgnoresNonMedia(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(f.root, "notes.txt"), []byte("x"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(f.root, "clip.avi"), []byte("x"), 0o644))
 
-	stats, err := f.sc.Scan(context.Background())
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
+	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 1, stats.Indexed)
-	require.Equal(t, 0, stats.Skipped, "an unsupported extension is not counted as skipped")
+	require.Equal(t, 1, n)
 }
 
 // TestScanIgnoresSymlinks は写真ディレクトリに置かれたシンボリックリンクを
@@ -68,11 +67,8 @@ func TestScanIgnoresSymlinks(t *testing.T) {
 		require.NoError(t, os.Symlink(secret, filepath.Join(f.root, name)))
 	}
 
-	stats, err := f.sc.Scan(context.Background())
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	require.NoError(t, err)
-	require.Equal(t, 1, stats.Indexed, "only the real item is taken in")
-	require.Equal(t, 0, stats.Skipped, "a symlink is ignored, not counted as broken")
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
@@ -90,10 +86,8 @@ func TestScanIgnoresASymlinkedDirectory(t *testing.T) {
 	writeTestJPEG(t, outside, "elsewhere.jpg", 40, 20)
 	require.NoError(t, os.Symlink(outside, filepath.Join(f.root, "album")))
 
-	stats, err := f.sc.Scan(context.Background())
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	require.NoError(t, err)
-	require.Equal(t, 0, stats.Indexed)
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
@@ -112,10 +106,8 @@ func TestScanIgnoresTheTranscodedVideoInEaDir(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(entry, "SYNOPHOTO_FILM_H.mp4"), []byte("x"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(entry, "SYNOPHOTO_THUMB_M.jpg"), []byte("x"), 0o644))
 
-	stats, err := f.sc.Scan(context.Background())
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	require.NoError(t, err)
-	require.Equal(t, 1, stats.Indexed, "only the original is indexed")
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
@@ -128,11 +120,11 @@ func TestScanSkipsBrokenFilesAndContinues(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(f.root, "broken.jpg"), []byte("nope"), 0o644))
 	writeTestJPEG(t, f.root, "good2.jpg", 40, 20)
 
-	stats, err := f.sc.Scan(context.Background())
+	require.NoError(t, f.sc.ScanOnce(context.Background()), "one broken file does not stop the whole scan")
 
-	require.NoError(t, err, "one broken file does not stop the whole scan")
-	require.Equal(t, 2, stats.Indexed)
-	require.Equal(t, 1, stats.Skipped)
+	n, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
 }
 
 // 登録済みの写真が取り込めない中身に変わったら、行を残さない。走査は見つけた時点で
@@ -143,55 +135,67 @@ func TestScanRemovesTheRowWhenARegisteredFileCanNoLongerBeIndexed(t *testing.T) 
 	t.Parallel()
 	f := newFixture(t)
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
-	_, err := f.sc.Scan(context.Background())
-	require.NoError(t, err)
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
 	require.NoError(t, os.WriteFile(path, []byte("not an image any more"), 0o644))
 	later := time.Now().Add(time.Hour)
 	require.NoError(t, os.Chtimes(path, later, later))
-	stats, err := f.sc.Scan(context.Background())
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	require.NoError(t, err)
-	require.Equal(t, 1, stats.Skipped)
 	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
 }
 
+// 変わっていない写真は原本を読みに行かない。スキャンは定期的に全体を回るので、
+// 毎回デコードしてサムネイルを作り直すと数千枚で毎回数分かかる。
+//
+// 読みに行かなかったことは、mtime を保ったまま中身を壊して確かめる。読みに
+// 行けば取り込みが断って行が消えるので、行が残ることが読まなかった証拠になる。
 func TestScanSkipsUnchangedFiles(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
-	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
-	first, err := f.sc.Scan(ctx)
+	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+	require.NoError(t, f.sc.ScanOnce(ctx))
+	fi, err := os.Stat(path)
 	require.NoError(t, err)
-	require.Equal(t, 1, first.Indexed)
 
-	second, err := f.sc.Scan(ctx)
+	require.NoError(t, os.WriteFile(path, []byte("not an image any more"), 0o644))
+	require.NoError(t, os.Chtimes(path, fi.ModTime(), fi.ModTime()))
 
-	require.NoError(t, err)
-	require.Equal(t, 0, second.Indexed)
-	require.Equal(t, 1, second.Unchanged, "not reindexed while the mtime is unchanged")
+	require.NoError(t, f.sc.ScanOnce(ctx))
+
+	_, err = f.st.GetByID(ctx, media.IDFor(path))
+	require.NoError(t, err, "not reread while the mtime is unchanged")
+	require.Len(t, f.generatedThumbs(t), 1)
 }
 
+// 変わった写真は新しい中身で載せ直す。行の版とサムネイルが新しいものになる。
 func TestScanReindexesModifiedFiles(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
-	_, err := f.sc.Scan(ctx)
+	require.NoError(t, f.sc.ScanOnce(ctx))
+	before, err := f.st.GetByID(ctx, media.IDFor(path))
 	require.NoError(t, err)
+	beforeThumb, _, ok := f.thumbs.SmallPath(before)
+	require.True(t, ok)
 
 	// 内容とmtimeを変える
 	writeTestJPEG(t, f.root, "a.jpg", 80, 40)
 	future := time.Now().Add(time.Hour)
 	require.NoError(t, os.Chtimes(path, future, future))
 
-	stats, err := f.sc.Scan(ctx)
+	require.NoError(t, f.sc.ScanOnce(ctx))
 
+	after, err := f.st.GetByID(ctx, media.IDFor(path))
 	require.NoError(t, err)
-	require.Equal(t, 1, stats.Indexed)
-	require.Equal(t, 0, stats.Unchanged)
+	require.Equal(t, future.Unix(), after.ModTime().Unix(), "the row carries the new version")
+	afterThumb, _, ok := f.thumbs.SmallPath(after)
+	require.True(t, ok)
+	require.NotEqual(t, beforeThumb, afterThumb, "the thumbnail is made again for the new version")
 }
 
 func TestScanRemovesDeletedMedia(t *testing.T) {
@@ -200,17 +204,14 @@ func TestScanRemovesDeletedMedia(t *testing.T) {
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
-	_, err := f.sc.Scan(ctx)
-	require.NoError(t, err)
+	require.NoError(t, f.sc.ScanOnce(ctx))
 	require.Len(t, f.generatedThumbs(t), 2)
 
 	// アプリ停止中に消されたことを模す
 	require.NoError(t, os.Remove(path))
 
-	stats, err := f.sc.Scan(ctx)
+	require.NoError(t, f.sc.ScanOnce(ctx))
 
-	require.NoError(t, err)
-	require.Equal(t, 1, stats.Removed)
 	require.Len(t, f.generatedThumbs(t), 1, "the thumbnail is hard-deleted too")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
@@ -224,9 +225,7 @@ func TestScanStopsOnCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := f.sc.Scan(ctx)
-
-	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, f.sc.ScanOnce(ctx), context.Canceled)
 }
 
 func TestScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
@@ -235,8 +234,7 @@ func TestScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 	ctx := context.Background()
 	pathA := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	pathB := writeTestJPEG(t, f.root, "b.jpg", 40, 20)
-	_, err := f.sc.Scan(ctx)
-	require.NoError(t, err)
+	require.NoError(t, f.sc.ScanOnce(ctx))
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
@@ -246,10 +244,8 @@ func TestScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 	require.NoError(t, os.Remove(pathA))
 	require.NoError(t, os.Remove(pathB))
 
-	stats, err := f.sc.Scan(ctx)
+	require.NoError(t, f.sc.ScanOnce(ctx))
 
-	require.NoError(t, err)
-	require.Equal(t, 0, stats.Removed, "an empty scan does not clear the index")
 	n2, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n2, "existing entries stay, since the root may be unmounted")
@@ -263,10 +259,8 @@ func TestScanIndexesEveryRoot(t *testing.T) {
 	writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
 	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
 
-	stats, err := f.sc.Scan(ctx)
+	require.NoError(t, f.sc.ScanOnce(ctx))
 
-	require.NoError(t, err)
-	require.Equal(t, 2, stats.Indexed, "every root is walked")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
@@ -283,18 +277,14 @@ func TestScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
 	ctx := context.Background()
 	gone := writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
 	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
-	_, err := f.sc.Scan(ctx)
-	require.NoError(t, err)
+	require.NoError(t, f.sc.ScanOnce(ctx))
 	require.Len(t, f.generatedThumbs(t), 2)
 
 	// aliceのドライブが未マウントになった状況を模す：中身だけ消してルートは残す
 	require.NoError(t, os.Remove(gone))
 
-	stats, err := f.sc.Scan(ctx)
+	require.NoError(t, f.sc.ScanOnce(ctx))
 
-	require.NoError(t, err)
-	require.Equal(t, 0, stats.Removed,
-		"items under a root that looks empty are kept, even with bob's items still there")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
@@ -309,16 +299,13 @@ func TestScanRemovesMediaOutsideEveryRoot(t *testing.T) {
 	ctx := context.Background()
 	writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
 	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
-	_, err := f.sc.Scan(ctx)
-	require.NoError(t, err)
+	require.NoError(t, f.sc.ScanOnce(ctx))
 
 	// bob を引数から外して起動し直した状況を模す
 	ix2 := index.NewIndexer(roots[:1], f.st, f.thumbs, f.log)
 
-	stats, err := index.NewScanner(ix2, f.slots, time.Hour, nil, f.log).Scan(ctx)
+	require.NoError(t, index.NewScanner(ix2, f.slots, time.Hour, nil, f.log).ScanOnce(ctx))
 
-	require.NoError(t, err)
-	require.Equal(t, 1, stats.Removed, "items under no root are removed")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
@@ -334,19 +321,15 @@ func TestScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
 	ctx := context.Background()
 	writeTestJPEG(t, roots[0], "a.jpg", 40, 20)
 	writeTestJPEG(t, roots[1], "b.jpg", 40, 20)
-	_, err := f.sc.Scan(ctx)
-	require.NoError(t, err)
+	require.NoError(t, f.sc.ScanOnce(ctx))
 
 	// aliceのルートごと消す
 	require.NoError(t, os.RemoveAll(roots[0]))
 	// bobに新しい写真を足す
 	writeTestJPEG(t, roots[1], "c.jpg", 40, 20)
 
-	stats, err := f.sc.Scan(ctx)
+	require.NoError(t, f.sc.ScanOnce(ctx), "an unreadable root does not fail the whole scan")
 
-	require.NoError(t, err, "an unreadable root does not fail the whole scan")
-	require.Equal(t, 1, stats.Indexed, "new items under a healthy root are taken in")
-	require.Equal(t, 0, stats.Removed, "items under an unreadable root are kept")
 	require.Len(t, f.generatedThumbs(t), 3)
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
@@ -366,11 +349,7 @@ func TestScanSkipsSynologyMetadataDirs(t *testing.T) {
 	// ゴミ箱に残った写真も復活させない。
 	writeTestJPEG(t, filepath.Join(f.root, "#recycle"), "deleted.jpg", 40, 20)
 
-	stats, err := f.sc.Scan(context.Background())
-
-	require.NoError(t, err)
-	require.Equal(t, 1, stats.Indexed, "only the one real item is taken in")
-	require.Equal(t, 0, stats.Skipped, "an exclusion is not counted as skipped")
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
 	paths, err := f.st.AllPaths(context.Background())
 	require.NoError(t, err)
@@ -380,8 +359,8 @@ func TestScanSkipsSynologyMetadataDirs(t *testing.T) {
 }
 
 // 並行してサムネイルを作っても取りこぼしが出ないことを確かめる。ワーカーの完了を
-// 待たずに走査を終えると Indexed が実際より少なくなり、Stats の更新の競合は
-// -race で現れる。1枚ずつでは同時に走る窓が開かないので、まとまった枚数を置く。
+// 待たずに走査を終えると、戻った時点で載っている枚数が実際より少なくなる。
+// 1枚ずつでは同時に走る窓が開かないので、まとまった枚数を置く。
 func TestScanIndexesEveryFileWithConcurrentWorkers(t *testing.T) {
 	t.Parallel()
 	f := newFixtureWorkers(t, 8)
@@ -390,11 +369,8 @@ func TestScanIndexesEveryFileWithConcurrentWorkers(t *testing.T) {
 		writeTestJPEG(t, f.root, fmt.Sprintf("p%02d.jpg", i), 40, 20)
 	}
 
-	stats, err := f.sc.Scan(context.Background())
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	require.NoError(t, err)
-	require.Equal(t, n, stats.Indexed)
-	require.Equal(t, 0, stats.Skipped)
 	count, err := f.st.Count(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, n, count)
@@ -408,10 +384,11 @@ func TestScanWorksWithASingleWorker(t *testing.T) {
 	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	writeTestJPEG(t, f.root, "b.jpg", 40, 20)
 
-	stats, err := f.sc.Scan(context.Background())
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
+	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 2, stats.Indexed)
+	require.Equal(t, 2, n)
 }
 
 func TestScanDoesNotWaitForTheWatchersIndexing(t *testing.T) {
@@ -436,20 +413,13 @@ func TestScanDoesNotWaitForTheWatchersIndexing(t *testing.T) {
 	moved := filepath.Join(t.TempDir(), "stuck.heic")
 	require.NoError(t, os.Rename(stuck, moved))
 
-	type scanResult struct {
-		stats index.Stats
-		err   error
-	}
-	done := make(chan scanResult, 1)
-	go func() {
-		stats, err := f.sc.Scan(context.Background())
-		done <- scanResult{stats, err}
-	}()
+	done := make(chan error, 1)
+	go func() { done <- f.sc.ScanOnce(context.Background()) }()
 
 	select {
-	case r := <-done:
-		require.NoError(t, r.err)
-		require.Equal(t, 1, r.stats.Indexed)
+	case err := <-done:
+		require.NoError(t, err)
+		requireCount(t, f, 1)
 	case <-time.After(2 * time.Second):
 		t.Fatal("Scan is waiting for the watcher to finish indexing")
 	}
@@ -498,7 +468,7 @@ func TestGhostRowFromAScanIsReclaimedByTheNextScan(t *testing.T) {
 	scanDone := make(chan struct{})
 	go func() {
 		defer close(scanDone)
-		_, _ = f.sc.Scan(ctx)
+		_ = f.sc.ScanOnce(ctx)
 	}()
 	fw := waitForIndexing(t, src)
 	t.Cleanup(func() { _ = fw.Close() })

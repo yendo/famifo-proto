@@ -13,8 +13,8 @@ import (
 	"github.com/yendo/famifo-proto/internal/synology"
 )
 
-// Stats はスキャンの結果。
-type Stats struct {
+// scanStats は1回のスキャンの件数。ログに出すためだけに数える。
+type scanStats struct {
 	Indexed   int // 新規登録または更新した枚数
 	Unchanged int // mtimeが変わらず再処理しなかった枚数
 	Removed   int // ディスクから消えていたためインデックスから消した枚数
@@ -99,7 +99,7 @@ type scanOnce struct {
 	// 発動しない。
 	foundByRoot map[string]int
 	// stats は走査側だけが書く。ワーカー側の集計は下の indexed/failed に分けてある。
-	stats Stats
+	stats scanStats
 
 	// ワーカーは stats を直接触らない。走査側も Unchanged と Skipped を数えており、
 	// 同じ構造体を両側から書くと、片方だけロックを忘れたときに気づけないため。
@@ -121,10 +121,10 @@ func newScanOnce(ix *Indexer, slots *Slots, log *slog.Logger) *scanOnce {
 //
 // 個々のファイルのエラーは記録して走査を続け、コンテキストのキャンセルだけが
 // 全体を中断させる。
-func (s *scanOnce) scanAllRoots(ctx context.Context) (Stats, error) {
+func (s *scanOnce) scanAllRoots(ctx context.Context) (scanStats, error) {
 	registered, err := s.ix.store.AllPaths(ctx)
 	if err != nil {
-		return Stats{}, err
+		return scanStats{}, err
 	}
 	s.registered = registered
 
