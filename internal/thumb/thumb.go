@@ -56,20 +56,40 @@ func NewProvider(dir string) (*Provider, error) {
 	return &Provider{dir: dir}, nil
 }
 
-// famifoThumbPath は自前で生成したサムネイルの置き場所を返す。実在するとは限らない。
-// Prepare が書き込む先であり、Path が引き当てる先でもある。
+// Prepare は写真1枚ぶんのサムネイルを配信できる状態にする。
 //
-// 名前に元画像の版（mtimeのUnix秒）を含める。写真が差し替われば別のファイルに
-// なるので、鮮度の判定が「サムネイルのほうが新しいか」という順序の比較ではなく
-// 「その版の名前があるか」という一致の確認で済む。mtimeは前にしか進むとは
-// 限らず（cp -p や rsync -t でバックアップから戻すと過去へ動く）、順序で
-// 判定すると作り直しを見送ってしまうため。
+// 呼び終わると、自分の置き場にはこの写真の現在の版が1つだけあるか、1つも無い。
+// 「サムネイルがある」ことは保証しない。
 //
-// 秒に丸めるのは、DBが mod_time を Unix 秒で持っているのに合わせるためと、
-// ファイルシステムによって時刻の粒度が違うのを避けるため。
-func (pv *Provider) famifoThumbPath(m media.Media) string {
-	name := fmt.Sprintf("%s-%d.jpg", m.ID(), m.ModTime().Unix())
-	return filepath.Join(pv.shardDir(m.ID()), name)
+// Synologyが作ったものがあれば借りる。デコードもリサイズもせずに済み、famifoが
+// デコードできないHEICも一覧に出せるようになる。@eaDir は読むだけで、書き込みも
+// 削除もしない。
+//
+// 借りられず自前でも作れない写真（サムネイルの無いHEIC等）には何も残さない。
+// 出せるものが無いことはエラーではなく、配信側が原本に落ちる。
+//
+// 生成に失敗した場合だけエラーを返す。インデックスに載せるかどうかは呼び出し側の
+// 判断である。
+//
+// 古い版の掃除の失敗は握りつぶす。消し残しは表示にも正しさにも影響せず、
+// 数KBのファイルが残るだけなので、これで取り込み全体を失敗させる価値がない。
+func (pv *Provider) Prepare(m media.Media, orientation uint16) error {
+	switch {
+	case synology.HasThumbM(m.Path()):
+		// 借りるほうへ切り替わったら、自前で作ったものは用済みになる。
+		_ = pv.sweepFamifoThumbs(m.ID(), "")
+	case imagefmt.IsDecodable(m.Path()):
+		out, err := pv.generateFamifoThumb(m, orientation)
+		if err != nil {
+			// 失敗しても古い版は消さない。新しいのができるまでの控えとして
+			// 働いており、先に消すと一覧のタイルが割れるため。
+			return err
+		}
+		_ = pv.sweepFamifoThumbs(m.ID(), out)
+	default:
+		_ = pv.sweepFamifoThumbs(m.ID(), "")
+	}
+	return nil
 }
 
 // Path は一覧のタイルに配信するサムネイルのパスと、そのMIMEタイプを返す。
@@ -111,40 +131,30 @@ func (pv *Provider) Path(m media.Media) (path, contentType string, ok bool) {
 	return "", "", false
 }
 
-// Prepare は写真1枚ぶんのサムネイルを配信できる状態にする。
+// RemoveFamifoThumbs は id のサムネイルを版によらず全て削除する。
+// 存在しない場合はエラーにしない。
+func (pv *Provider) RemoveFamifoThumbs(id string) error { return pv.sweepFamifoThumbs(id, "") }
+
+// famifoThumbPath は自前で生成したサムネイルの置き場所を返す。実在するとは限らない。
+// Prepare が書き込む先であり、Path が引き当てる先でもある。
 //
-// 呼び終わると、自分の置き場にはこの写真の現在の版が1つだけあるか、1つも無い。
-// 「サムネイルがある」ことは保証しない。
+// 名前に元画像の版（mtimeのUnix秒）を含める。写真が差し替われば別のファイルに
+// なるので、鮮度の判定が「サムネイルのほうが新しいか」という順序の比較ではなく
+// 「その版の名前があるか」という一致の確認で済む。mtimeは前にしか進むとは
+// 限らず（cp -p や rsync -t でバックアップから戻すと過去へ動く）、順序で
+// 判定すると作り直しを見送ってしまうため。
 //
-// Synologyが作ったものがあれば借りる。デコードもリサイズもせずに済み、famifoが
-// デコードできないHEICも一覧に出せるようになる。@eaDir は読むだけで、書き込みも
-// 削除もしない。
-//
-// 借りられず自前でも作れない写真（サムネイルの無いHEIC等）には何も残さない。
-// 出せるものが無いことはエラーではなく、配信側が原本に落ちる。
-//
-// 生成に失敗した場合だけエラーを返す。インデックスに載せるかどうかは呼び出し側の
-// 判断である。
-//
-// 古い版の掃除の失敗は握りつぶす。消し残しは表示にも正しさにも影響せず、
-// 数KBのファイルが残るだけなので、これで取り込み全体を失敗させる価値がない。
-func (pv *Provider) Prepare(m media.Media, orientation uint16) error {
-	switch {
-	case synology.HasThumbM(m.Path()):
-		// 借りるほうへ切り替わったら、自前で作ったものは用済みになる。
-		_ = pv.sweepFamifoThumbs(m.ID(), "")
-	case imagefmt.IsDecodable(m.Path()):
-		out, err := pv.generateFamifoThumb(m, orientation)
-		if err != nil {
-			// 失敗しても古い版は消さない。新しいのができるまでの控えとして
-			// 働いており、先に消すと一覧のタイルが割れるため。
-			return err
-		}
-		_ = pv.sweepFamifoThumbs(m.ID(), out)
-	default:
-		_ = pv.sweepFamifoThumbs(m.ID(), "")
-	}
-	return nil
+// 秒に丸めるのは、DBが mod_time を Unix 秒で持っているのに合わせるためと、
+// ファイルシステムによって時刻の粒度が違うのを避けるため。
+func (pv *Provider) famifoThumbPath(m media.Media) string {
+	name := fmt.Sprintf("%s-%d.jpg", m.ID(), m.ModTime().Unix())
+	return filepath.Join(pv.shardDir(m.ID()), name)
+}
+
+// shardDir は id のサムネイルを置くディレクトリを返す。
+// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
+func (pv *Provider) shardDir(id string) string {
+	return filepath.Join(pv.dir, id[:2])
 }
 
 // generateFamifoThumb は m の原本からサムネイルを作る。
@@ -208,20 +218,6 @@ func (pv *Provider) generateFamifoThumb(m media.Media, orientation uint16) (stri
 	return out, nil
 }
 
-// isRegularFile はそのパスに通常ファイルがあるかを返す。
-//
-// 名前に元画像の版が入っているので、存在すればその版から作られたものである。
-// 「元より新しいか」を確かめる必要はない。出力は一時ファイルへ書いてから
-// renameしているため、中途半端な内容が残っていることもない。
-func isRegularFile(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.Mode().IsRegular()
-}
-
-// RemoveFamifoThumbs は id のサムネイルを版によらず全て削除する。
-// 存在しない場合はエラーにしない。
-func (pv *Provider) RemoveFamifoThumbs(id string) error { return pv.sweepFamifoThumbs(id, "") }
-
 // sweepFamifoThumbs は id のサムネイルのうち keep 以外を削除する。keep が空なら全て消す。
 //
 // 同じ写真の古い版はここでまとめて片づく。前回の異常終了で取り残されたものも
@@ -250,10 +246,14 @@ func (pv *Provider) sweepFamifoThumbs(id, keep string) error {
 	return nil
 }
 
-// shardDir は id のサムネイルを置くディレクトリを返す。
-// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
-func (pv *Provider) shardDir(id string) string {
-	return filepath.Join(pv.dir, id[:2])
+// isRegularFile はそのパスに通常ファイルがあるかを返す。
+//
+// 名前に元画像の版が入っているので、存在すればその版から作られたものである。
+// 「元より新しいか」を確かめる必要はない。出力は一時ファイルへ書いてから
+// renameしているため、中途半端な内容が残っていることもない。
+func isRegularFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // scaleToFit は長辺が maxEdge 以下になるよう縮小する。元より大きくは引き伸ばさない。
