@@ -72,6 +72,15 @@ func writeImage(t *testing.T, dir, name string, w, h int) string {
 	return path
 }
 
+// writeOriginal は中身を見ない原本を置く。Path は原本を開かないので、
+// 画像として妥当である必要はない。
+func writeOriginal(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, []byte("original"), 0o644))
+	return path
+}
+
 // newTestProvider は空の置き場を持つ Provider を返す。
 func newTestProvider(t *testing.T) *thumb.Provider {
 	t.Helper()
@@ -441,4 +450,125 @@ func TestEnsureRemovesTheOwnThumbWhenSwitchingToEaDir(t *testing.T) {
 	require.NoError(t, provide(t, pv, src, 1))
 
 	require.NoFileExists(t, own, "its own copy goes once it switches to the borrowed one")
+}
+
+// 以下は配信するファイルの選択を確かめる。出どころはDBに持たずディスクの状態で
+// 決めるので、@eaDir と自前の置き場に実際にファイルを置いて確かめる。
+
+func TestPathPrefersTheBorrowedThumb(t *testing.T) {
+	t.Parallel()
+	pv := newTestProvider(t)
+	src := writeImage(t, t.TempDir(), "a.jpg", 40, 20)
+	require.NoError(t, provide(t, pv, src, 1))
+	own := requireFamifoThumb(t, pv, src)
+	writeSynoThumb(t, src)
+
+	got, contentType, ok := pv.Path(mediaOf(t, src))
+
+	require.True(t, ok)
+	require.Equal(t, synology.ThumbMPath(src), got,
+		"in a real library nearly every item has @eaDir, so it is looked at first")
+	require.NotEqual(t, own, got)
+	require.Equal(t, "image/jpeg", contentType)
+}
+
+func TestPathUsesTheGeneratedThumbWhenNothingToBorrow(t *testing.T) {
+	t.Parallel()
+	pv := newTestProvider(t)
+	src := writeImage(t, t.TempDir(), "a.jpg", 40, 20)
+	require.NoError(t, provide(t, pv, src, 1))
+
+	got, contentType, ok := pv.Path(mediaOf(t, src))
+
+	require.True(t, ok)
+	require.NotEqual(t, src, got, "the generated thumbnail, not the original")
+	require.NotEqual(t, synology.ThumbMPath(src), got)
+	require.Equal(t, "image/jpeg", contentType)
+	decodeThumb(t, got)
+}
+
+// ブラウザが表示できる形式なら、サムネイルが無くても原本を出せばタイルになる。
+func TestPathFallsBackToTheOriginal(t *testing.T) {
+	t.Parallel()
+	pv := newTestProvider(t)
+	src := writeOriginal(t, t.TempDir(), "a.jpg")
+
+	got, contentType, ok := pv.Path(mediaOf(t, src))
+
+	require.True(t, ok)
+	require.Equal(t, src, got)
+	require.Equal(t, "image/jpeg", contentType)
+}
+
+// HEICはブラウザが表示できないので、原本を出しても割れたタイルになるだけである。
+// 出せるものが無いことを伝えて、配信側にプレースホルダを出させる。
+func TestPathHasNothingToShowForAnUnborrowedHEIC(t *testing.T) {
+	t.Parallel()
+	pv := newTestProvider(t)
+	src := writeOriginal(t, t.TempDir(), "a.heic")
+
+	got, contentType, ok := pv.Path(mediaOf(t, src))
+
+	require.False(t, ok)
+	require.Empty(t, got)
+	require.Empty(t, contentType)
+}
+
+// 取り込みのあとでDSMがサムネイルを作った場合。出どころをDBに焼いていたころは、
+// 原本のmtimeが動かない限り再取り込みされないため、永久に反映されなかった。
+func TestPathSeesAThumbThatAppearsAfterIndexing(t *testing.T) {
+	t.Parallel()
+	pv := newTestProvider(t)
+	m := mediaOf(t, writeOriginal(t, t.TempDir(), "a.heic"))
+	_, _, ok := pv.Path(m)
+	require.False(t, ok, "there is nothing to serve yet")
+
+	writeSynoThumb(t, m.Path())
+
+	got, _, ok := pv.Path(m)
+	require.True(t, ok)
+	require.Equal(t, synology.ThumbMPath(m.Path()), got,
+		"the next request serves the borrowed one without reindexing")
+}
+
+// 名前に版が入っているので、写真が差し替わったあと取り込み直す前に、
+// 古い版のサムネイルが引き当たることはない。
+func TestPathIgnoresAThumbFromAnotherVersion(t *testing.T) {
+	t.Parallel()
+	pv := newTestProvider(t)
+	src := writeImage(t, t.TempDir(), "a.jpg", 40, 20)
+	require.NoError(t, provide(t, pv, src, 1))
+	future := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(src, future, future))
+
+	got, _, ok := pv.Path(mediaOf(t, src))
+
+	require.True(t, ok)
+	require.Equal(t, src, got, "a different version counts as missing and falls back to the original")
+}
+
+// 動画のタイルは借りたサムネイルになる。写真と同じ経路が拡張子を見ずに効く。
+func TestPathBorrowsTheVideoThumbnail(t *testing.T) {
+	t.Parallel()
+	pv := newTestProvider(t)
+	src := writeOriginal(t, t.TempDir(), "clip.mp4")
+	writeSynoThumb(t, src)
+
+	path, ct, ok := pv.Path(mediaOf(t, src))
+
+	require.True(t, ok)
+	require.Equal(t, synology.ThumbMPath(src), path)
+	require.Equal(t, "image/jpeg", ct)
+}
+
+// 借りるものが無い動画には出せる絵が無い。原本を出しても再生はされないので、
+// 配信側がプレースホルダに差し替える。
+func TestPathHasNothingForAVideoWithoutABorrowedThumbnail(t *testing.T) {
+	t.Parallel()
+	pv := newTestProvider(t)
+	src := writeOriginal(t, t.TempDir(), "clip.mp4")
+
+	_, _, ok := pv.Path(mediaOf(t, src))
+
+	require.False(t, ok)
 }
