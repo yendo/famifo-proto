@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"image"
+	"image/jpeg"
 	"io"
 	"log/slog"
 	"net/http"
@@ -60,22 +62,38 @@ const (
 )
 
 // addMedia は原本ファイルとDB行を用意する。kind に応じてサムネイルも置く。
+//
+// 原本の中身は "original-<name>" で、応答がどのファイルから来たかを本文で見分けられる。
+// ただし famifoThumb では、自前のサムネイルを Prepare に作らせるため原本を本物の
+// JPEGにする。置き場の規則は thumb の外から見えないので、偽のファイルは置けない。
 func (f *webFixture) addMedia(t *testing.T, name string, takenAt time.Time, kind thumbKind) media.Media {
 	t.Helper()
 	path := filepath.Join(f.mediaDir, name)
-	require.NoError(t, os.WriteFile(path, []byte("original-"+name), 0o644))
+	body := []byte("original-" + name)
+	if kind == famifoThumb {
+		body = jpegBytes(t)
+	}
+	require.NoError(t, os.WriteFile(path, body, 0o644))
 
 	m := media.Restore(path, takenAt, takenAt)
 	require.NoError(t, f.st.Upsert(context.Background(), m))
 
 	switch kind {
 	case famifoThumb:
-		writeFileAt(t, f.thumbs.GeneratedPath(m), "thumb-"+name)
+		require.NoError(t, f.thumbs.Prepare(m, 1))
 	case eadirThumb:
 		writeFileAt(t, synology.ThumbMPath(path), "eadir-"+name)
 		writeFileAt(t, synology.ThumbXLPath(path), "eadir-xl-"+name)
 	}
 	return m
+}
+
+// jpegBytes は原本として使う小さなJPEGを返す。
+func jpegBytes(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 40, 20)), nil))
+	return buf.Bytes()
 }
 
 // writeFileAt は親ディレクトリごとファイルを書く。
@@ -114,7 +132,13 @@ func TestServeThumb(t *testing.T) {
 	rec := doGet(t, f.h, "/thumb/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "thumb-a.jpg", rec.Body.String())
+	require.Equal(t, "image/jpeg", rec.Header().Get("Content-Type"))
+	original, err := os.ReadFile(m.Path())
+	require.NoError(t, err)
+	require.NotEqual(t, original, rec.Body.Bytes(), "the generated thumbnail is served, not the original")
+	_, format, err := image.DecodeConfig(rec.Body)
+	require.NoError(t, err)
+	require.Equal(t, "jpeg", format)
 }
 
 func TestServeThumbNotFoundForUnknownID(t *testing.T) {
@@ -184,7 +208,9 @@ func TestServeOriginal(t *testing.T) {
 	rec := doGet(t, f.h, "/file/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "original-a.jpg", rec.Body.String())
+	original, err := os.ReadFile(m.Path())
+	require.NoError(t, err)
+	require.Equal(t, original, rec.Body.Bytes())
 	require.Equal(t, "image/jpeg", rec.Header().Get("Content-Type"))
 }
 
@@ -262,6 +288,49 @@ func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String(),
 		"a format that displays as it is gets the original at full resolution; borrowing is only for what cannot be shown")
+}
+
+// HEVCの原本はハードウェアデコーダを持たない端末で再生できない。Synologyが作った
+// H.264版があるならそれを配る。HEICで XL を借りているのと同じ構えである。
+func TestServeVideoBorrowsTheTranscode(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addMedia(t, "clip.mp4", time.Unix(1600000000, 0), noThumb)
+	writeFileAt(t, synology.FilmPath(m.Path()), "film-clip.mp4")
+
+	rec := doGet(t, f.h, "/file/"+m.ID())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "film-clip.mp4", rec.Body.String())
+	require.Equal(t, "video/mp4", rec.Header().Get("Content-Type"))
+}
+
+// 借りるものが無ければ原本に落ちる。再生できるかは端末次第になる。
+func TestServeOriginalVideoWithoutATranscode(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addMedia(t, "clip.mov", time.Unix(1600000000, 0), noThumb)
+
+	rec := doGet(t, f.h, "/file/"+m.ID())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "original-clip.mov", rec.Body.String())
+	require.Equal(t, "video/quicktime", rec.Header().Get("Content-Type"))
+}
+
+// サムネイルがあっても変換版があるとは限らない。実測した @eaDir には
+// SYNOPHOTO_THUMB_M.jpg があるのに SYNOPHOTO_FILM.fail があった。写真のXLのように
+// 一方から他方を導けないので、動画では静止画のXLを掴んでしまってもいけない。
+func TestServeVideoDoesNotBorrowTheXL(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addMedia(t, "clip.mp4", time.Unix(1600000000, 0), eadirThumb)
+
+	rec := doGet(t, f.h, "/file/"+m.ID())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "original-clip.mp4", rec.Body.String(), "an XL still is not what you play")
+	require.Equal(t, "video/mp4", rec.Header().Get("Content-Type"))
 }
 
 // TestResponsesCarryTheSecurityHeaders は、どの経路の応答にも方針とnosniffが

@@ -26,11 +26,33 @@ func mediaOf(t *testing.T, src string) media.Media {
 	return media.Restore(src, fi.ModTime(), fi.ModTime())
 }
 
-// thumbPathFor は src のサムネイルが置かれるパスを返す。IDと版はどちらも
-// srcから導かれるので、テスト側も同じ規則で引き当てる。
-func thumbPathFor(t *testing.T, pv *thumb.Provider, src string) string {
+// famifoThumbOf は src の自前のサムネイルを Path 経由で引き当てる。置き場の規則は
+// テストから見えないので、Path が借りたものでも原本でもないファイルを返したら、
+// それを自前のものとみなす。@eaDir があると Path はそちらを返すため、借りられる
+// 状態では使えない。
+func famifoThumbOf(t *testing.T, pv *thumb.Provider, src string) (string, bool) {
 	t.Helper()
-	return pv.GeneratedPath(mediaOf(t, src))
+	m := mediaOf(t, src)
+	got, _, ok := pv.Path(m)
+	if !ok || got == m.Path() || got == synology.ThumbMPath(src) {
+		return "", false
+	}
+	return got, true
+}
+
+// requireFamifoThumb は src の自前のサムネイルのパスを返す。無ければ失敗する。
+func requireFamifoThumb(t *testing.T, pv *thumb.Provider, src string) string {
+	t.Helper()
+	got, ok := famifoThumbOf(t, pv, src)
+	require.True(t, ok, "%s has no thumbnail of famifo's own", src)
+	return got
+}
+
+// requireNoFamifoThumb は src の自前のサムネイルが無いことを確かめる。
+func requireNoFamifoThumb(t *testing.T, pv *thumb.Provider, src string, msgAndArgs ...any) {
+	t.Helper()
+	_, ok := famifoThumbOf(t, pv, src)
+	require.False(t, ok, msgAndArgs...)
 }
 
 func writeImage(t *testing.T, dir, name string, w, h int) string {
@@ -84,7 +106,7 @@ func TestGeneratedThumbnailsStayInPrivateDirectories(t *testing.T) {
 
 	require.NoError(t, provide(t, pv, src, 1))
 
-	for _, dir := range []string{root, filepath.Dir(thumbPathFor(t, pv, src))} {
+	for _, dir := range []string{root, filepath.Dir(requireFamifoThumb(t, pv, src))} {
 		fi, err := os.Stat(dir)
 		require.NoError(t, err)
 		require.Zero(t, fi.Mode().Perm()&0o007, "%s must not be open to other users", dir)
@@ -102,8 +124,9 @@ func TestEnsureOnlyGeneratesWhatCannotBeBorrowed(t *testing.T) {
 
 		require.NoError(t, provide(t, pv, src, 1))
 
-		require.NoFileExists(t, thumbPathFor(t, pv, src),
-			"makes none of its own when it can borrow")
+		// 借りられる間は Path が @eaDir を返すので、片づけてから自前の分を見る。
+		require.NoError(t, os.RemoveAll(filepath.Dir(filepath.Dir(synology.ThumbMPath(src)))))
+		requireNoFamifoThumb(t, pv, src, "makes none of its own when it can borrow")
 	})
 
 	t.Run("makes its own when there is nothing to borrow", func(t *testing.T) {
@@ -112,7 +135,7 @@ func TestEnsureOnlyGeneratesWhatCannotBeBorrowed(t *testing.T) {
 
 		require.NoError(t, provide(t, pv, src, 1))
 
-		require.FileExists(t, thumbPathFor(t, pv, src))
+		requireFamifoThumb(t, pv, src)
 	})
 
 	t.Run("a HEIC with nothing to borrow leaves nothing behind", func(t *testing.T) {
@@ -122,7 +145,7 @@ func TestEnsureOnlyGeneratesWhatCannotBeBorrowed(t *testing.T) {
 
 		require.NoError(t, provide(t, pv, src, 1), "no decode is attempted, so it is not an error")
 
-		require.NoFileExists(t, thumbPathFor(t, pv, src))
+		requireNoFamifoThumb(t, pv, src)
 	})
 }
 
@@ -144,7 +167,7 @@ func TestGenerateScalesLandscapeByLongEdge(t *testing.T) {
 
 	require.NoError(t, provide(t, pv, src, 1))
 
-	cfg := decodeThumb(t, thumbPathFor(t, pv, src))
+	cfg := decodeThumb(t, requireFamifoThumb(t, pv, src))
 	require.Equal(t, thumb.MaxEdge, cfg.Width)
 	require.Equal(t, thumb.MaxEdge/2, cfg.Height, "the aspect ratio is kept")
 }
@@ -156,7 +179,7 @@ func TestGenerateScalesPortraitByLongEdge(t *testing.T) {
 
 	require.NoError(t, provide(t, pv, src, 1))
 
-	cfg := decodeThumb(t, thumbPathFor(t, pv, src))
+	cfg := decodeThumb(t, requireFamifoThumb(t, pv, src))
 	require.Equal(t, thumb.MaxEdge/2, cfg.Width)
 	require.Equal(t, thumb.MaxEdge, cfg.Height)
 }
@@ -168,7 +191,7 @@ func TestGenerateDoesNotUpscale(t *testing.T) {
 
 	require.NoError(t, provide(t, pv, src, 1))
 
-	cfg := decodeThumb(t, thumbPathFor(t, pv, src))
+	cfg := decodeThumb(t, requireFamifoThumb(t, pv, src))
 	require.Equal(t, 40, cfg.Width)
 	require.Equal(t, 20, cfg.Height)
 }
@@ -183,7 +206,7 @@ func TestGenerateAcceptsPNGAndGIF(t *testing.T) {
 
 			require.NoError(t, provide(t, pv, src, 1))
 
-			require.Equal(t, thumb.MaxEdge, decodeThumb(t, thumbPathFor(t, pv, src)).Width)
+			require.Equal(t, thumb.MaxEdge, decodeThumb(t, requireFamifoThumb(t, pv, src)).Width)
 		})
 	}
 }
@@ -197,7 +220,7 @@ func TestGenerateFailsOnUndecodableFile(t *testing.T) {
 	err := provide(t, pv, src, 1)
 
 	require.Error(t, err)
-	require.NoFileExists(t, thumbPathFor(t, pv, src), "no half-written file is left behind on failure")
+	requireNoFamifoThumb(t, pv, src, "no half-written file is left behind on failure")
 }
 
 func TestGenerateFailsOnMissingFile(t *testing.T) {
@@ -210,16 +233,16 @@ func TestGenerateFailsOnMissingFile(t *testing.T) {
 	require.Error(t, pv.Prepare(m, 1))
 }
 
-func TestRemove(t *testing.T) {
+func TestRemoveFamifoThumbs(t *testing.T) {
 	t.Parallel()
 	pv := newTestProvider(t)
 	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 	require.NoError(t, provide(t, pv, src, 1))
 
-	require.NoError(t, pv.Remove(media.IDFor(src)))
+	require.NoError(t, pv.RemoveFamifoThumbs(media.IDFor(src)))
 
-	require.NoFileExists(t, thumbPathFor(t, pv, src))
-	require.NoError(t, pv.Remove(media.IDFor(src)), "deleting a thumbnail that does not exist is not an error")
+	requireNoFamifoThumb(t, pv, src)
+	require.NoError(t, pv.RemoveFamifoThumbs(media.IDFor(src)), "deleting a thumbnail that does not exist is not an error")
 }
 
 // TestGenerateAppliesOrientation は、渡されたOrientationがサムネイルの
@@ -262,7 +285,7 @@ func TestGenerateAppliesOrientation(t *testing.T) {
 
 			require.NoError(t, provide(t, pv, src, tt.orientation))
 
-			img := decodeThumbImage(t, thumbPathFor(t, pv, src))
+			img := decodeThumbImage(t, requireFamifoThumb(t, pv, src))
 			b := img.Bounds()
 			require.Equalf(t, tt.wantW, b.Dx(),
 				"width of the Orientation=%d thumbnail; width and height look unswapped (actually %dx%d)",
@@ -313,12 +336,13 @@ func TestGenerateSkipsWhenTheThumbnailIsUpToDate(t *testing.T) {
 	require.NoError(t, provide(t, pv, src, 1))
 
 	// 中身を見分けられる印を置く。版が同じなら中身は問わず、そのまま使う。
+	own := requireFamifoThumb(t, pv, src)
 	marker := []byte("not a real thumbnail")
-	require.NoError(t, os.WriteFile(thumbPathFor(t, pv, src), marker, 0o644))
+	require.NoError(t, os.WriteFile(own, marker, 0o644))
 
 	require.NoError(t, provide(t, pv, src, 1))
 
-	got, err := os.ReadFile(thumbPathFor(t, pv, src))
+	got, err := os.ReadFile(requireFamifoThumb(t, pv, src))
 	require.NoError(t, err)
 	require.Equal(t, marker, got, "not rebuilt while the source file is unchanged")
 }
@@ -330,7 +354,7 @@ func TestGenerateRebuildsWhenTheSourceIsNewer(t *testing.T) {
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.jpg", 40, 20)
 	require.NoError(t, provide(t, pv, src, 1))
-	require.NoError(t, os.WriteFile(thumbPathFor(t, pv, src), []byte("stale"), 0o644))
+	require.NoError(t, os.WriteFile(requireFamifoThumb(t, pv, src), []byte("stale"), 0o644))
 
 	// 元ファイルをサムネイルより新しくする
 	future := time.Now().Add(time.Hour)
@@ -338,7 +362,7 @@ func TestGenerateRebuildsWhenTheSourceIsNewer(t *testing.T) {
 
 	require.NoError(t, provide(t, pv, src, 1))
 
-	cfg := decodeThumb(t, thumbPathFor(t, pv, src))
+	cfg := decodeThumb(t, requireFamifoThumb(t, pv, src))
 	require.Equal(t, 40, cfg.Width, "rebuilt when the source is newer")
 }
 
@@ -359,7 +383,7 @@ func TestGenerateRebuildsWhenTheSourceMtimeMovesBackwards(t *testing.T) {
 
 	require.NoError(t, provide(t, pv, src, 1))
 
-	cfg := decodeThumb(t, thumbPathFor(t, pv, src))
+	cfg := decodeThumb(t, requireFamifoThumb(t, pv, src))
 	require.Equal(t, 20, cfg.Width, "rebuilt even when the mtime goes back")
 	require.Equal(t, 40, cfg.Height)
 }
@@ -372,14 +396,14 @@ func TestEnsureRemovesOlderVersions(t *testing.T) {
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.jpg", 400, 200)
 	require.NoError(t, provide(t, pv, src, 1))
-	older := thumbPathFor(t, pv, src)
+	older := requireFamifoThumb(t, pv, src)
 
 	src = writeImage(t, dir, "a.jpg", 200, 400)
 	future := time.Now().Add(time.Hour)
 	require.NoError(t, os.Chtimes(src, future, future))
 	require.NoError(t, provide(t, pv, src, 1))
 
-	require.FileExists(t, thumbPathFor(t, pv, src), "the new version stays")
+	require.NotEqual(t, older, requireFamifoThumb(t, pv, src), "the new version stays")
 	require.NoFileExists(t, older, "the old version is cleaned up")
 }
 
@@ -391,7 +415,7 @@ func TestEnsureKeepsTheOlderVersionWhenGenerationFails(t *testing.T) {
 	dir := t.TempDir()
 	src := writeImage(t, dir, "a.jpg", 400, 200)
 	require.NoError(t, provide(t, pv, src, 1))
-	older := thumbPathFor(t, pv, src)
+	older := requireFamifoThumb(t, pv, src)
 
 	// コピー途中の壊れたファイルを掴んだ状況を模す
 	require.NoError(t, os.WriteFile(src, []byte("this is not an image"), 0o644))
@@ -410,8 +434,7 @@ func TestEnsureRemovesTheOwnThumbWhenSwitchingToEaDir(t *testing.T) {
 	pv := newTestProvider(t)
 	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 	require.NoError(t, provide(t, pv, src, 1))
-	own := thumbPathFor(t, pv, src)
-	require.FileExists(t, own)
+	own := requireFamifoThumb(t, pv, src)
 
 	writeSynoThumb(t, src)
 

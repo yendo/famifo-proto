@@ -180,7 +180,7 @@ func TestScanReindexesModifiedFiles(t *testing.T) {
 	require.NoError(t, f.sc.ScanOnce(ctx))
 	before, err := f.st.GetByID(ctx, media.IDFor(path))
 	require.NoError(t, err)
-	beforeThumb, _, ok := f.thumbs.SmallPath(before)
+	beforeThumb, _, ok := f.thumbs.Path(before)
 	require.True(t, ok)
 
 	// 内容とmtimeを変える
@@ -193,7 +193,7 @@ func TestScanReindexesModifiedFiles(t *testing.T) {
 	after, err := f.st.GetByID(ctx, media.IDFor(path))
 	require.NoError(t, err)
 	require.Equal(t, future.Unix(), after.ModTime().Unix(), "the row carries the new version")
-	afterThumb, _, ok := f.thumbs.SmallPath(after)
+	afterThumb, _, ok := f.thumbs.Path(after)
 	require.True(t, ok)
 	require.NotEqual(t, beforeThumb, afterThumb, "the thumbnail is made again for the new version")
 }

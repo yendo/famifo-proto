@@ -248,8 +248,8 @@ func TestScanBorrowsTheSynologyThumbnail(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Empty(t, f.generatedThumbs(t), "makes none of its own when it can borrow")
-	small, _, _ := f.thumbs.SmallPath(got)
-	require.Equal(t, synology.ThumbMPath(path), small, "the gallery shows the borrowed one")
+	served, _, _ := f.thumbs.Path(got)
+	require.Equal(t, synology.ThumbMPath(path), served, "the gallery shows the borrowed one")
 }
 
 // HEICはGoでデコードできないが、Synologyのサムネイルがあれば一覧に出せる。
@@ -263,8 +263,8 @@ func TestScanBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
-	small, _, _ := f.thumbs.SmallPath(got)
-	require.Equal(t, synology.ThumbMPath(path), small,
+	served, _, _ := f.thumbs.Path(got)
+	require.Equal(t, synology.ThumbMPath(path), served,
 		"borrowing puts it in the gallery even when it cannot be decoded")
 }
 
@@ -283,7 +283,7 @@ func TestScanLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Empty(t, f.generatedThumbs(t))
-	_, _, ok := f.thumbs.SmallPath(got)
+	_, _, ok := f.thumbs.Path(got)
 	require.False(t, ok, "with only .fail there is nothing to show in the gallery")
 }
 
