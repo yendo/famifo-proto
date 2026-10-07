@@ -57,7 +57,7 @@ func (sc *Scanner) Run(ctx context.Context) {
 		// 止まっているのかがログから読めない。
 		sc.log.Info("scan started", "dirs", sc.ix.roots)
 		start := time.Now()
-		stats, err := newScanOnce(sc.ix, sc.slots, sc.log).run(ctx)
+		stats, err := newScanOnce(sc.ix, sc.slots, sc.log).walkAll(ctx)
 		if ctx.Err() != nil {
 			return
 		}
@@ -116,40 +116,21 @@ func newScanOnce(ix *Indexer, slots *Slots, log *slog.Logger) *scanOnce {
 	}
 }
 
-// run はルートディレクトリを1回走査してインデックスをディスクの実態に合わせる。
+// walkAll はルートディレクトリを1回走査してインデックスをディスクの実態に合わせる。
 //
 // fsnotifyはアプリが停止していた間の変更を検知できないため、起動のたびにこれを
 // 実行して整合性を取り直す。個々のファイルのエラーは記録して走査を続け、
 // コンテキストのキャンセルだけが全体を中断させる。
-func (s *scanOnce) run(ctx context.Context) (Stats, error) {
+func (s *scanOnce) walkAll(ctx context.Context) (Stats, error) {
 	registered, err := s.ix.store.AllPaths(ctx)
 	if err != nil {
 		return Stats{}, err
 	}
 	s.registered = registered
 
-	walkErr := s.walkAll(ctx)
-
-	// 中断であっても、出した取り込みの完了まで待つ。待たずに進むと、まだ動いて
-	// いるワーカーが indexed を書いている最中の値を読むことになる。
-	s.wg.Wait()
-	s.stats.Indexed = s.indexed
-	s.stats.Skipped += s.failed
-	if walkErr != nil {
-		return s.stats, walkErr
-	}
-
-	s.purge(ctx)
-	return s.stats, nil
-}
-
-// walkAll はすべてのルートを走査する。
-func (s *scanOnce) walkAll(ctx context.Context) error {
 	for _, root := range s.ix.roots {
-		if err := s.walk(ctx, root); err != nil {
-			if ctx.Err() != nil {
-				return err
-			}
+		// 中断されたら walk は最初の1件で戻るので、残りのルートも即座に終わる。
+		if err := s.walk(ctx, root); err != nil && ctx.Err() == nil {
 			// ルート自体を読めない（ボリュームが外れた等）。1つのドライブが
 			// 外れただけで走査全体を止めると、生きているルートの更新まで
 			// 反映されなくなる。このルートは foundByRoot が0のままなので、配下の
@@ -157,7 +138,18 @@ func (s *scanOnce) walkAll(ctx context.Context) error {
 			s.log.Warn("skipped an unreadable root", "root", root, "err", err)
 		}
 	}
-	return nil
+
+	// 中断であっても、出した取り込みの完了まで待つ。待たずに進むと、まだ動いて
+	// いるワーカーが indexed を書いている最中の値を読むことになる。
+	s.wg.Wait()
+	s.stats.Indexed = s.indexed
+	s.stats.Skipped += s.failed
+	if err := ctx.Err(); err != nil {
+		return s.stats, err
+	}
+
+	s.purge(ctx)
+	return s.stats, nil
 }
 
 // walk は1つのルート以下を走査する。
