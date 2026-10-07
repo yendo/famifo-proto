@@ -10,6 +10,7 @@ package index
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -49,23 +50,42 @@ func NewIndexer(roots []string, st *store.Store, thumbs *thumb.Provider, log *sl
 	}
 }
 
-// indexFile は1ファイルをインデックスに反映する。
+// indexFile は1ファイルをインデックスに反映する。載せられなかったときはエラーを
+// 返し、そのパスの行とサムネイルを残さない。
 //
-// 対象外の拡張子とディレクトリは黙って無視する（エラーではない）。
-// 自前で作るしかないファイルでサムネイルを作れなかった場合はエラーを返し、
-// DBには登録しない。壊れた画像を登録すると一覧に読み込めない <img> が並ぶため。
-func (ix *Indexer) indexFile(ctx context.Context, path string) error {
-	if !imagefmt.IsSupported(path) {
-		return nil
-	}
+// 渡すのは、パスだけで決まる条件を入口が確かめたものに限る。拡張子が対応形式で
+// あること、Synologyの管理用ディレクトリの下に無いことである。入口はどのみち
+// これで絞っている（枠や保留を写真でないものに使わないため）ので、ここでは
+// 見直さない。中身の照合はこの前提に依っている。対応外の拡張子では照合の相手が
+// application/octet-stream になり、どんな中身も通ってしまう。
+//
+// ここで見るのはファイルの今の状態で決まる条件である。入口が見てから読むまでの
+// 間に変わりうるので、読む直前にしか確かめられない。
+//
+// 自前で作るしかないファイルでサムネイルを作れなかった場合もエラーにする。壊れた
+// 画像を登録すると一覧に読み込めない <img> が並ぶため。
+func (ix *Indexer) indexFile(ctx context.Context, path string) (err error) {
+	// 断ったら行を消す。登録済みのパスが取り込めない状態に変わったとき、行を
+	// 消せるのはここしかない。走査は見つけた時点で消し込んでおり、監視には
+	// rename で被せられたときの Remove が来ない。残すと、照合を通っていない
+	// 中身が元のIDのまま配信される。
+	//
+	// 中断で落ちたものは、断ったのではないので消さない。消すと次の起動で
+	// 全部を取り込み直すことになる。
+	defer func() {
+		if err != nil && ctx.Err() == nil {
+			err = errors.Join(err, ix.removeFile(ctx, path))
+		}
+	}()
+
 	// Lstat で見る。Stat はリンクを追うので、写真ディレクトリに置かれた
 	// シンボリックリンクを、その先にあるファイルとして取り込んでしまう。
+	//
+	// ディレクトリかどうかは見ない。入口はディレクトリを渡さず、読むまでの間に
+	// 置き換わったとしても、下の中身の読み取りが失敗する。
 	fi, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("cannot stat the file: %w", err)
-	}
-	if fi.IsDir() {
-		return nil
 	}
 	// シンボリックリンクは載せない。
 	//
@@ -81,7 +101,7 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) error {
 	// 同じ危険を持たないからである。指す先が無いので、読めるのはそのファイル
 	// 自身でしかない。
 	if fi.Mode()&os.ModeSymlink != 0 {
-		return nil
+		return errors.New("the file is a symbolic link")
 	}
 
 	// 中身が拡張子のとおりかを見る。拡張子だけを根拠に行を作ると、名前を

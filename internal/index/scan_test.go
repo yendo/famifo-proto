@@ -135,6 +135,29 @@ func TestScanSkipsBrokenFilesAndContinues(t *testing.T) {
 	require.Equal(t, 1, stats.Skipped)
 }
 
+// 登録済みの写真が取り込めない中身に変わったら、行を残さない。走査は見つけた時点で
+// 消し込むので、取り込みが断ったあとに行を消す者が他にいない。残すと、次の走査でも
+// 同じことを繰り返して行はいつまでも消えず、中身の照合を通っていないファイルが
+// 元のIDで配信され続ける。
+func TestScanRemovesTheRowWhenARegisteredFileCanNoLongerBeIndexed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+	_, err := f.sc.Scan(context.Background())
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(path, []byte("not an image any more"), 0o644))
+	later := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(path, later, later))
+	stats, err := f.sc.Scan(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Skipped)
+	n, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, n)
+}
+
 func TestScanSkipsUnchangedFiles(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

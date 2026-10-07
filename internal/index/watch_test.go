@@ -103,6 +103,29 @@ func TestWatcherRemovesDeletedFile(t *testing.T) {
 	requireCount(t, f, 0)
 }
 
+// 登録済みの動画にシンボリックリンクを rename で被せたら、行を残さない。届くのは
+// Create だけで Remove は来ないので、行を消せるのは取り込みが断ったときしかない。
+// 残すと /file/{id} がリンクを ServeFile に渡し、ルートの外の中身が出ていく。
+//
+// リンクの先は本物の動画にする。中身の照合を通るので、シンボリックリンクの
+// ガードを外すと行が残り、このテストが落ちる。
+func TestWatcherRemovesTheRowWhenASymlinkIsRenamedOverAFile(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	startWatcher(t, f)
+	path := filepath.Join(f.root, "clip.mp4")
+	require.NoError(t, os.WriteFile(path, testMP4Stub(), 0o644))
+	requireCount(t, f, 1)
+
+	outside := filepath.Join(t.TempDir(), "elsewhere.mp4")
+	require.NoError(t, os.WriteFile(outside, testMP4Stub(), 0o644))
+	link := filepath.Join(f.root, "link") // 対象外の名前なので、作った時点では拾われない
+	require.NoError(t, os.Symlink(outside, link))
+	require.NoError(t, os.Rename(link, path))
+
+	requireCount(t, f, 0)
+}
+
 func TestWatcherPicksUpNewSubdirectory(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

@@ -167,19 +167,6 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 	require.Empty(t, f.generatedThumbs(t), "HEIC cannot be decoded")
 }
 
-func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	path := filepath.Join(f.root, "a.avi")
-	require.NoError(t, os.WriteFile(path, []byte("video"), 0o644))
-
-	require.NoError(t, f.ix.IndexFile(context.Background(), path), "an unsupported file is not an error")
-
-	n, err := f.st.Count(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, 0, n)
-}
-
 // 動画は自前でサムネイルを作れないが、インデックスには載る。壊れているかどうかは
 // デコードして初めて分かることで、famifoにデコーダが無い以上、載せる前に判定する
 // 手段が無い。黙って消えるより、絵の無いタイルとして出るほうを選ぶ。
@@ -227,19 +214,6 @@ func TestIndexFileFallsBackToModTimeForAnUnreadableVideo(t *testing.T) {
 	require.NoError(t, err)
 	// インデックスは撮影日時をUnix秒で持つので、mtimeのナノ秒までは残らない。
 	require.Equal(t, fi.ModTime().Unix(), got.TakenAt().Unix())
-}
-
-func TestIndexFileIgnoresDirectories(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	dir := filepath.Join(f.root, "sub.jpg") // 拡張子付きディレクトリという嫌がらせ
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-
-	require.NoError(t, f.ix.IndexFile(context.Background(), dir))
-
-	n, err := f.st.Count(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, 0, n)
 }
 
 func TestIndexFileRejectsBrokenRasterImage(t *testing.T) {
