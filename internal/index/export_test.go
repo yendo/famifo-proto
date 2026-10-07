@@ -38,3 +38,12 @@ func (ix *Indexer) RemoveFile(ctx context.Context, path string) error {
 func (ix *Indexer) RemoveTree(ctx context.Context, dir string) error {
 	return ix.removeTree(ctx, dir)
 }
+
+// Scan はスキャンを1回だけ走らせて結果を返す。テスト専用で、本番のビルドには
+// 含まれない。
+//
+// 本番のスキャンは Run が繰り返すだけで、1回ぶんを外から呼ぶ口は要らない。
+// テストは1回ぶんの件数（Stats）を確かめたいため、ここで名前を与える。
+func (sc *Scanner) Scan(ctx context.Context) (Stats, error) {
+	return newScanOnce(sc.ix, sc.slots, sc.log).run(ctx)
+}

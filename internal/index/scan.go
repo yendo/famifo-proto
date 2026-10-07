@@ -57,7 +57,7 @@ func (sc *Scanner) Run(ctx context.Context) {
 		// 止まっているのかがログから読めない。
 		sc.log.Info("scan started", "dirs", sc.ix.roots)
 		start := time.Now()
-		stats, err := sc.Scan(ctx)
+		stats, err := newScanOnce(sc.ix, sc.slots, sc.log).run(ctx)
 		if ctx.Err() != nil {
 			return
 		}
@@ -79,43 +79,11 @@ func (sc *Scanner) Run(ctx context.Context) {
 	}
 }
 
-// Scan はルートディレクトリを1回走査してインデックスをディスクの実態に合わせる。
-//
-// fsnotifyはアプリが停止していた間の変更を検知できないため、起動のたびにこれを
-// 実行して整合性を取り直す。個々のファイルのエラーは記録して走査を続け、
-// コンテキストのキャンセルだけが全体を中断させる。
-func (sc *Scanner) Scan(ctx context.Context) (Stats, error) {
-	ix := sc.ix
-	registered, err := ix.store.AllPaths(ctx)
-	if err != nil {
-		return Stats{}, err
-	}
-	s := &scanPass{
-		ix:          ix,
-		slots:       sc.slots,
-		log:         sc.log,
-		registered:  registered,
-		foundByRoot: make(map[string]int, len(ix.roots)),
-	}
-
-	walkErr := s.walkAll(ctx)
-
-	// 取り込みの完了を待ったあとなので、ワーカーの書き込みはすべて見えている。
-	s.stats.Indexed = s.indexed
-	s.stats.Skipped += s.failed
-	if walkErr != nil {
-		return s.stats, walkErr
-	}
-
-	s.purge(ctx)
-	return s.stats, nil
-}
-
-// scanPass は1回のスキャンが持ち回る帳簿。走査・集計・削除の3フェーズが同じ
+// scanOnce は1回のスキャンが持ち回る帳簿。走査・集計・削除の3フェーズが同じ
 // マップを見るため、フェーズをメソッドに割ってもこれらが共有され続ける。
 //
-// 1回のスキャンごとに作って捨てる。Scan の外には出ない。
-type scanPass struct {
+// 1回のスキャンごとに作って捨てる。前の回の帳簿が次の回に残らない。
+type scanOnce struct {
 	ix    *Indexer
 	slots *Slots
 	log   *slog.Logger
@@ -139,13 +107,44 @@ type scanPass struct {
 	indexed, failed int
 }
 
-// walkAll はすべてのルートを走査する。
-//
-// 戻る前に、中断であってもワーカーの完了まで待つ。待たずに戻ると、まだ動いて
-// いるワーカーが indexed を書いている最中の値を呼び出し側が読むことになる。
-func (s *scanPass) walkAll(ctx context.Context) error {
-	defer s.wg.Wait()
+func newScanOnce(ix *Indexer, slots *Slots, log *slog.Logger) *scanOnce {
+	return &scanOnce{
+		ix:          ix,
+		slots:       slots,
+		log:         log,
+		foundByRoot: make(map[string]int, len(ix.roots)),
+	}
+}
 
+// run はルートディレクトリを1回走査してインデックスをディスクの実態に合わせる。
+//
+// fsnotifyはアプリが停止していた間の変更を検知できないため、起動のたびにこれを
+// 実行して整合性を取り直す。個々のファイルのエラーは記録して走査を続け、
+// コンテキストのキャンセルだけが全体を中断させる。
+func (s *scanOnce) run(ctx context.Context) (Stats, error) {
+	registered, err := s.ix.store.AllPaths(ctx)
+	if err != nil {
+		return Stats{}, err
+	}
+	s.registered = registered
+
+	walkErr := s.walkAll(ctx)
+
+	// 中断であっても、出した取り込みの完了まで待つ。待たずに進むと、まだ動いて
+	// いるワーカーが indexed を書いている最中の値を読むことになる。
+	s.wg.Wait()
+	s.stats.Indexed = s.indexed
+	s.stats.Skipped += s.failed
+	if walkErr != nil {
+		return s.stats, walkErr
+	}
+
+	s.purge(ctx)
+	return s.stats, nil
+}
+
+// walkAll はすべてのルートを走査する。
+func (s *scanOnce) walkAll(ctx context.Context) error {
 	for _, root := range s.ix.roots {
 		if err := s.walk(ctx, root); err != nil {
 			if ctx.Err() != nil {
@@ -166,7 +165,7 @@ func (s *scanPass) walkAll(ctx context.Context) error {
 // 走査自体は直列のままにする。registered の消し込みも foundByRoot の計上も、共有する
 // マップの上での帳簿づけであり、並行にしても速くならないのに壊れる余地だけが
 // 増える。時間を食う1枚の取り込みだけを submit でワーカーに出す。
-func (s *scanPass) walk(ctx context.Context, root string) error {
+func (s *scanOnce) walk(ctx context.Context, root string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -230,7 +229,7 @@ func (s *scanPass) walk(ctx context.Context, root string) error {
 //
 // 枠は集計を書き終えてから返す（defer は最初に置いたものが最後に走る）。使用中の枠が
 // あることを「まだ終わっていない取り込みがある」と読めるようにするため（Slots.busy）。
-func (s *scanPass) submit(ctx context.Context, path string) {
+func (s *scanOnce) submit(ctx context.Context, path string) {
 	s.slots.acquire()
 	s.wg.Go(func() {
 		defer s.slots.release()
@@ -251,7 +250,7 @@ func (s *scanPass) submit(ctx context.Context, path string) {
 }
 
 // purge は走査で見つからなかった写真をインデックスから消す。
-func (s *scanPass) purge(ctx context.Context) {
+func (s *scanOnce) purge(ctx context.Context) {
 	empty := s.emptyRoots()
 
 	guarded := 0
@@ -276,7 +275,7 @@ func (s *scanPass) purge(ctx context.Context) {
 //
 // そのルートは、ドライブが未マウントで「たまたま空に見える」のか、本当に全部
 // 消されたのかを区別できない。安全側に倒して、配下の削除を見送るために使う。
-func (s *scanPass) emptyRoots() []string {
+func (s *scanOnce) emptyRoots() []string {
 	var empty []string
 	for _, root := range s.ix.roots {
 		if s.foundByRoot[root] == 0 {

@@ -17,16 +17,17 @@
 > **監視ループはイベントの受信と帳簿づけだけを行い、実行時間が写真の枚数や
 > サイズに依存する仕事を自分では走らせない。**
 
-これを担うのが `internal/index/indexer.go` の `Indexer.startIndex` /
-`Indexer.tryStartIndex` である。
+これを担うのは取り込みを起こす入口（`Scanner` と `Watcher`）で、共有の枠
+`Slots`（`slots.go`）から1つ取ってから goroutine を起こす。
 
 | 名前 | 場所 | 役割 |
 |---|---|---|
-| `Indexer` | `indexer.go` | 1枚の変更をインデックスとサムネイルに反映する。どこを見てどこに書くかと、同時取り込みの枠（`slots`）を持つ |
-| `slots` | `indexer.go` | 同時に取り込める枠。`Indexer` が1つ持ち、入口をまたいで共有する |
-| `startIndex` | `indexer.go` | 枠が空くまで待つ。`Scan` 用（走査への背圧） |
-| `tryStartIndex` | `indexer.go` | 待たずに false を返す。`Watcher` 用（待つと取りこぼす） |
-| `scanPass` | `scan.go` | 1回のスキャンが持ち回る帳簿。`Scan` の中だけで生きる |
+| `Indexer` | `indexer.go` | 1枚の変更をインデックスとサムネイルに反映する。同期的で、並行について何も知らない |
+| `Slots` | `slots.go` | 同時に取り込める枠。`main.go` が1つ作り、スキャンと監視が共有する |
+| `acquire` | `slots.go` | 枠が空くまで待つ。スキャン用（走査への背圧） |
+| `tryAcquire` | `slots.go` | 待たずに false を返す。監視用（待つと取りこぼす） |
+| `Scanner` | `scan.go` | スキャンを繰り返す（`Run`）。1回ごとに `scanOnce` を作る |
+| `scanOnce` | `scan.go` | 1回のスキャンが持ち回る帳簿。1回ごとに作って捨てる |
 | `Watcher` | `watch.go` | fsnotify の追従。`pending`（debounce）と `inflight` を持つ |
 
 以下の問題は、この不変条件が**取り込みについてしか適用されていない**ことと、
