@@ -261,7 +261,7 @@ func TestWatcherSkipsSynologyDirsInMovedDirectory(t *testing.T) {
 	startWatcher(t, f)
 
 	// ディレクトリごと移動した場合、中身には個別のイベントが来ないため
-	// enqueueTree が自前で走査する。そこにも除外が要る。
+	// addPendingTree が自前で走査する。そこにも除外が要る。
 	staging := filepath.Join(t.TempDir(), "album")
 	writeTestJPEG(t, staging, "IMG_0001.jpg", 40, 20)
 	writeTestJPEG(t, filepath.Join(staging, "@eaDir", "IMG_0001.jpg"),

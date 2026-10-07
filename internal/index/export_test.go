@@ -45,5 +45,5 @@ func (ix *Indexer) RemoveTree(ctx context.Context, dir string) error {
 // 本番のスキャンは Run が繰り返すだけで、1回ぶんを外から呼ぶ口は要らない。
 // テストは1回ぶんの件数（Stats）を確かめたいため、ここで名前を与える。
 func (sc *Scanner) Scan(ctx context.Context) (Stats, error) {
-	return newScanOnce(sc.ix, sc.slots, sc.log).walkAll(ctx)
+	return newScanOnce(sc.ix, sc.slots, sc.log).scanAllRoots(ctx)
 }

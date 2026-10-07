@@ -28,34 +28,37 @@ type indexResult struct {
 
 // Watcher はfsnotifyでディレクトリツリーを監視し、変更をインデックスに反映する。
 //
-// Run のループは写真の取り込みそのものを決して自分では走らせない。取り込みには
+// Run のループは写真の取り込みそのものを自分では走らせない。取り込みには
 // 原本のデコードと縮小が含まれ、1枚で数百ミリ秒かかる。ループの中で待てばその間
 // fsnotify のイベントを読めず、カーネルのキューが溢れて変更を取りこぼす。
 //
-// 一方、ディレクトリ配下の走査（addTree と enqueueTree）はループの中で行う。
+// 一方、ディレクトリ配下の走査（addTree と addPendingTree）はループの中で行う。
 // 所要時間はディレクトリの項目数に比例するが、1件あたりが取り込みとは桁違いに
 // 安い。実測で7,403件のディレクトリを両方歩いて10ms（ローカルディスク、
 // 2026-09-07）。inotify の既定のキューは16,384件なので、この停止で溢れることは
 // 考えにくい。避けるには歩きを別の goroutine に逃がすことになるが、ロックの無い
-// pending を触らせないための受け渡しと、歩行中の削除に備える帳簿が要る。
+// pendingPaths を触らせないための受け渡しと、歩行中の削除に備える帳簿が要る。
 // 停止時間に見合わないので、境界は取り込みに引いてある。
 type Watcher struct {
 	ix *Indexer
 	// slots は取り込みの枠。スキャンと共有する。
-	slots    *Slots
-	fsw      *fsnotify.Watcher
-	log      *slog.Logger
+	slots *Slots
+	fsw   *fsnotify.Watcher
+	log   *slog.Logger
+	// debounce は本番では常に defaultDebounce。テストが SetDebounce で縮める
+	// ためだけにフィールドにしてある。
 	debounce time.Duration
-	// pending は取り込みを待っているパスと、最後にイベントを受けた時刻。debounce を
-	// 過ぎたものから flush がワーカーに渡す。
-	pending map[string]time.Time
+	// pendingPaths は取り込みを待っているパスと、最後にイベントを受けた時刻。
+	// debounce を過ぎたものから flush がワーカーに渡す。
+	pendingPaths map[string]time.Time
+	// inProgressPaths は取り込み中のパスと、その最中に消えたかどうか。同じ写真を
+	// 2つのワーカーに渡さないためと、取り込みの完了と削除がすれ違うのを防ぐために
+	// ある。
+	inProgressPaths map[string]bool
 	// results は終わった取り込みの受け口。ワーカーは通知を渡し終えるまで枠を空けない
 	// ので、渡し待ちがワーカー数を超えることはない。容量をそれに合わせておけば
 	// ワーカーがここで止まらず、停止時に完了を待つ側と睨み合うこともない。
 	results chan indexResult
-	// inflight は取り込み中のパスと、その最中に消えたかどうか。同じ写真を2つの
-	// ワーカーに渡さないためと、取り込みの完了と削除がすれ違うのを防ぐためにある。
-	inflight map[string]bool
 	// wg は監視が出した取り込みの関門。スキャンが同時に走るため、停止時に待つ
 	// 相手を自分が出したぶんに限る。
 	wg sync.WaitGroup
@@ -74,20 +77,17 @@ func NewWatcher(ix *Indexer, slots *Slots, log *slog.Logger) (*Watcher, error) {
 		return nil, fmt.Errorf("cannot start watching: %w", err)
 	}
 	w := &Watcher{
-		ix:       ix,
-		slots:    slots,
-		fsw:      fsw,
-		log:      log,
-		debounce: defaultDebounce,
-		pending:  make(map[string]time.Time),
-		results:  make(chan indexResult, slots.size()),
-		inflight: make(map[string]bool),
-		kicks:    make(chan struct{}, 1),
+		ix:              ix,
+		slots:           slots,
+		fsw:             fsw,
+		log:             log,
+		debounce:        defaultDebounce,
+		pendingPaths:    make(map[string]time.Time),
+		inProgressPaths: make(map[string]bool),
+		results:         make(chan indexResult, slots.size()),
+		kicks:           make(chan struct{}, 1),
 	}
-	if err := w.addRoots(); err != nil {
-		fsw.Close()
-		return nil, err
-	}
+	w.addRoots()
 	return w, nil
 }
 
@@ -131,8 +131,8 @@ loop:
 			}
 
 		case r := <-w.results:
-			removed := w.inflight[r.path]
-			delete(w.inflight, r.path)
+			removed := w.inProgressPaths[r.path]
+			delete(w.inProgressPaths, r.path)
 			if removed {
 				// 取り込んでいる間に消えていた。今しがた入った行を取り消す。
 				if err := w.ix.removeFile(ctx, r.path); err != nil {
@@ -146,8 +146,8 @@ loop:
 			}
 			w.log.Info("index updated", "path", r.path)
 
-		case now := <-tick.C:
-			w.flush(ctx, now)
+		case <-tick.C:
+			w.flush(ctx)
 		}
 	}
 
@@ -171,22 +171,20 @@ func (w *Watcher) handleEvent(ctx context.Context, ev fsnotify.Event) {
 		if err != nil {
 			return // すぐ消された等。何もしない
 		}
-		if !fi.IsDir() {
-			if imagefmt.IsSupported(ev.Name) {
-				w.pending[ev.Name] = time.Now()
-			}
+		if fi.IsDir() {
+			// 新しいディレクトリ: 監視に加えたうえで、既に入っている中身も拾う。
+			// ディレクトリごとmvされた場合、中のファイルには個別のイベントが来ない。
+			w.addTree(ev.Name)
+			w.addPendingTree(ev.Name)
 			return
 		}
-		// 新しいディレクトリ: 監視に加えたうえで、既に入っている中身も拾う。
-		// ディレクトリごとmvされた場合、中のファイルには個別のイベントが来ない。
-		if err := w.addTree(ev.Name); err != nil {
-			w.log.Warn("failed to add a watch", "path", ev.Name, "err", err)
+		if imagefmt.IsSupported(ev.Name) {
+			w.pendingPaths[ev.Name] = time.Now()
 		}
-		w.enqueueTree(ev.Name)
 
 	case ev.Has(fsnotify.Write):
 		if imagefmt.IsSupported(ev.Name) {
-			w.pending[ev.Name] = time.Now()
+			w.pendingPaths[ev.Name] = time.Now()
 		}
 	}
 }
@@ -209,15 +207,15 @@ func (w *Watcher) handleGone(ctx context.Context, path string) {
 	// ディレクトリの場合、中の個々のファイルにはイベントが来ない
 	//（mv album ../elsewhere や mv album album2 のケース）ので、
 	// removeTreeで配下の行をパスの前方一致でまとめて消す。
-	delete(w.pending, path)
+	delete(w.pendingPaths, path)
 	// 取り込み中に消えた写真には印を付ける。行が生まれるのは取り込みの
 	// 完了時なので、ここで消しても空振りする。完了を受けてから消す。
 	// ディレクトリが消えた場合、イベントのパスはディレクトリのもので、
 	// 控えてあるのは配下の個々のパスなので前方一致で拾う。
-	// inflight はワーカー数を超えないので、毎回回しても高が知れている。
-	for p := range w.inflight {
+	// inProgressPaths はワーカー数を超えないので、毎回回しても高が知れている。
+	for p := range w.inProgressPaths {
 		if isUnder(path, p) {
-			w.inflight[p] = true
+			w.inProgressPaths[p] = true
 		}
 	}
 	if err := w.ix.removeFile(ctx, path); err != nil {
@@ -241,12 +239,13 @@ func (w *Watcher) handleGone(ctx context.Context, path string) {
 
 // flush はdebounce時間が経過した保留中のファイルをワーカーに渡す。
 // 取り込みの完了は待たず、結果は w.results で受ける。
-func (w *Watcher) flush(ctx context.Context, now time.Time) {
-	for path, last := range w.pending {
+func (w *Watcher) flush(ctx context.Context) {
+	now := time.Now()
+	for path, last := range w.pendingPaths {
 		if now.Sub(last) < w.debounce {
 			continue
 		}
-		if _, ok := w.inflight[path]; ok {
+		if _, ok := w.inProgressPaths[path]; ok {
 			// 取り込み中に書き換えられた写真。完了を待ってから渡し直す。
 			continue
 		}
@@ -255,8 +254,8 @@ func (w *Watcher) flush(ctx context.Context, now time.Time) {
 			// ここで空くのを待つと、その間イベントを読めなくなる。
 			return
 		}
-		delete(w.pending, path)
-		w.inflight[path] = false
+		delete(w.pendingPaths, path)
+		w.inProgressPaths[path] = false
 		w.wg.Go(func() {
 			// 枠は結果を渡し終えてから返す（defer は最初に置いたものが最後に走る）。
 			// 順序が逆だと、渡し待ちの結果が枠の数を超えて results の容量から
@@ -269,13 +268,55 @@ func (w *Watcher) flush(ctx context.Context, now time.Time) {
 }
 
 // addRoots はすべてのルート以下を監視対象に加える。
-func (w *Watcher) addRoots() error {
+func (w *Watcher) addRoots() {
 	for _, root := range w.ix.roots {
-		if err := w.addTree(root); err != nil {
-			return err
-		}
+		w.addTree(root)
 	}
-	return nil
+}
+
+// addTree は root 以下の全ディレクトリを監視対象に加える。
+// fsnotifyは再帰監視をしないため自前で降りていく。
+func (w *Watcher) addTree(root string) {
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			w.log.Warn("skipped a watch", "path", path, "err", err)
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		// 中のイベントはどのみち無視するので、監視枠を消費しない。
+		// inotifyは再帰監視をしないぶん1ディレクトリ=1枠で、@eaDirは
+		// 写真1枚につき1つできる。max_user_watches(既定8192)を容易に超える。
+		if synology.IsManagedDir(d.Name()) {
+			return fs.SkipDir
+		}
+		if err := w.fsw.Add(path); err != nil {
+			w.log.Warn("cannot add a watch", "path", path, "err", err)
+		}
+		return nil
+	})
+}
+
+// addPendingTree は root 以下の対象ファイルを保留に加える。
+func (w *Watcher) addPendingTree(root string) {
+	now := time.Now()
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if synology.IsManagedDir(d.Name()) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !imagefmt.IsSupported(path) {
+			return nil
+		}
+		w.pendingPaths[path] = now
+		return nil
+	})
 }
 
 // isRoot は path がルートそのものかを返す。
@@ -308,51 +349,6 @@ func (w *Watcher) unwatchUnder(path string) {
 			_ = w.fsw.Remove(p)
 		}
 	}
-}
-
-// addTree は root 以下の全ディレクトリを監視対象に加える。
-// fsnotifyは再帰監視をしないため自前で降りていく。
-func (w *Watcher) addTree(root string) error {
-	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			w.log.Warn("skipped a watch", "path", path, "err", err)
-			return nil
-		}
-		if !d.IsDir() {
-			return nil
-		}
-		// 中のイベントはどのみち無視するので、監視枠を消費しない。
-		// inotifyは再帰監視をしないぶん1ディレクトリ=1枠で、@eaDirは
-		// 写真1枚につき1つできる。max_user_watches(既定8192)を容易に超える。
-		if synology.IsManagedDir(d.Name()) {
-			return fs.SkipDir
-		}
-		if err := w.fsw.Add(path); err != nil {
-			w.log.Warn("cannot add a watch", "path", path, "err", err)
-		}
-		return nil
-	})
-}
-
-// enqueueTree は root 以下の対象ファイルを保留キューに積む。
-func (w *Watcher) enqueueTree(root string) {
-	now := time.Now()
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if synology.IsManagedDir(d.Name()) {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !imagefmt.IsSupported(path) {
-			return nil
-		}
-		w.pending[path] = now
-		return nil
-	})
 }
 
 // requestScan はスキャンの前倒しを要求する。

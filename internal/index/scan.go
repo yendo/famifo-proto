@@ -57,7 +57,7 @@ func (sc *Scanner) Run(ctx context.Context) {
 		// 止まっているのかがログから読めない。
 		sc.log.Info("scan started", "dirs", sc.ix.roots)
 		start := time.Now()
-		stats, err := newScanOnce(sc.ix, sc.slots, sc.log).walkAll(ctx)
+		stats, err := newScanOnce(sc.ix, sc.slots, sc.log).scanAllRoots(ctx)
 		if ctx.Err() != nil {
 			return
 		}
@@ -116,12 +116,12 @@ func newScanOnce(ix *Indexer, slots *Slots, log *slog.Logger) *scanOnce {
 	}
 }
 
-// walkAll はルートディレクトリを1回走査してインデックスをディスクの実態に合わせる。
+// scanAllRoots はすべてのルートを1回走査し、インデックスをディスクの実態に合わせる。
+// 変わったファイルを取り込み、見つからなかったファイルを消す。
 //
-// fsnotifyはアプリが停止していた間の変更を検知できないため、起動のたびにこれを
-// 実行して整合性を取り直す。個々のファイルのエラーは記録して走査を続け、
-// コンテキストのキャンセルだけが全体を中断させる。
-func (s *scanOnce) walkAll(ctx context.Context) (Stats, error) {
+// 個々のファイルのエラーは記録して走査を続け、コンテキストのキャンセルだけが
+// 全体を中断させる。
+func (s *scanOnce) scanAllRoots(ctx context.Context) (Stats, error) {
 	registered, err := s.ix.store.AllPaths(ctx)
 	if err != nil {
 		return Stats{}, err
@@ -129,8 +129,8 @@ func (s *scanOnce) walkAll(ctx context.Context) (Stats, error) {
 	s.registered = registered
 
 	for _, root := range s.ix.roots {
-		// 中断されたら walk は最初の1件で戻るので、残りのルートも即座に終わる。
-		if err := s.walk(ctx, root); err != nil && ctx.Err() == nil {
+		// 中断されたら scanRoot は最初の1件で戻るので、残りのルートも即座に終わる。
+		if err := s.scanRoot(ctx, root); err != nil && ctx.Err() == nil {
 			// ルート自体を読めない（ボリュームが外れた等）。1つのドライブが
 			// 外れただけで走査全体を止めると、生きているルートの更新まで
 			// 反映されなくなる。このルートは foundByRoot が0のままなので、配下の
@@ -152,12 +152,12 @@ func (s *scanOnce) walkAll(ctx context.Context) (Stats, error) {
 	return s.stats, nil
 }
 
-// walk は1つのルート以下を走査する。
+// scanRoot は1つのルート以下を走査する。
 //
 // 走査自体は直列のままにする。registered の消し込みも foundByRoot の計上も、共有する
 // マップの上での帳簿づけであり、並行にしても速くならないのに壊れる余地だけが
 // 増える。時間を食う1枚の取り込みだけを submit でワーカーに出す。
-func (s *scanOnce) walk(ctx context.Context, root string) error {
+func (s *scanOnce) scanRoot(ctx context.Context, root string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
