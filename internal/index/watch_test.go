@@ -34,7 +34,7 @@ func startWatcher(t *testing.T, f *fixture) *index.Watcher {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = w.Run(ctx)
+		w.Run(ctx)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -479,7 +479,7 @@ func TestWatcherWatchesRootsBeforeRunStarts(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = w.Run(ctx)
+		w.Run(ctx)
 	}()
 	t.Cleanup(func() {
 		cancel()

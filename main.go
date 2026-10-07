@@ -165,9 +165,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := watcher.Run(ctx); err != nil {
-			log.Error("watcher stopped", "err", err)
-		}
+		watcher.Run(ctx)
 	}()
 
 	// スキャンは間隔をおいて繰り返す。1回目は起動直後に走り、止まっていた間の
