@@ -94,13 +94,13 @@ func TestUpsertReplacesExistingRow(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	p := mediaAt("/items/a.jpg", time.Unix(1600000000, 0))
-	require.NoError(t, s.Upsert(ctx, p))
+	m := mediaAt("/items/a.jpg", time.Unix(1600000000, 0))
+	require.NoError(t, s.Upsert(ctx, m))
 
-	p = mediaAt(p.Path(), time.Unix(1700000000, 0))
-	require.NoError(t, s.Upsert(ctx, p))
+	m = mediaAt(m.Path(), time.Unix(1700000000, 0))
+	require.NoError(t, s.Upsert(ctx, m))
 
-	got, err := s.GetByID(ctx, p.ID())
+	got, err := s.GetByID(ctx, m.ID())
 	require.NoError(t, err)
 	require.Equal(t, int64(1700000000), got.TakenAt().Unix())
 
@@ -122,15 +122,15 @@ func TestDeleteByPath(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	p := mediaAt("/items/a.jpg", time.Unix(1600000000, 0))
-	require.NoError(t, s.Upsert(ctx, p))
+	m := mediaAt("/items/a.jpg", time.Unix(1600000000, 0))
+	require.NoError(t, s.Upsert(ctx, m))
 
-	got, ok, err := s.DeleteByPath(ctx, p.Path())
+	got, ok, err := s.DeleteByPath(ctx, m.Path())
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, p.ID(), got.ID()) // 呼び出し側はこのIDでサムネイルを消す
+	require.Equal(t, m.ID(), got.ID()) // 呼び出し側はこのIDでサムネイルを消す
 
-	_, ok, err = s.DeleteByPath(ctx, p.Path())
+	_, ok, err = s.DeleteByPath(ctx, m.Path())
 	require.NoError(t, err)
 	require.False(t, ok, "a second delete reports not found")
 }
@@ -224,9 +224,9 @@ func TestAllPaths(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	p := media.Restore("/items/a.jpg",
+	m := media.Restore("/items/a.jpg",
 		time.Unix(1600000000, 0), time.Unix(1650000000, 0))
-	require.NoError(t, s.Upsert(ctx, p))
+	require.NoError(t, s.Upsert(ctx, m))
 
 	got, err := s.AllPaths(ctx)
 
@@ -328,18 +328,18 @@ func TestRankOfLocatesTheItemInListRange(t *testing.T) {
 		mediaAt("/items/tie-b.jpg", same),
 		mediaAt("/items/old.jpg", time.Unix(1600000000, 0)),
 	}
-	for _, p := range items {
-		require.NoError(t, s.Upsert(ctx, p))
+	for _, m := range items {
+		require.NoError(t, s.Upsert(ctx, m))
 	}
 
-	for _, p := range items {
-		rank, err := s.RankOf(ctx, p.ID())
+	for _, m := range items {
+		rank, err := s.RankOf(ctx, m.ID())
 		require.NoError(t, err)
 
 		at, err := s.ListRange(ctx, rank, 1)
 		require.NoError(t, err)
 		require.Len(t, at, 1)
-		require.Equal(t, p.Path(), at[0].Path(), "the item at rank %d", rank)
+		require.Equal(t, m.Path(), at[0].Path(), "the item at rank %d", rank)
 	}
 }
 

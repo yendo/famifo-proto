@@ -65,17 +65,17 @@ func (f *webFixture) addMedia(t *testing.T, name string, takenAt time.Time, kind
 	path := filepath.Join(f.mediaDir, name)
 	require.NoError(t, os.WriteFile(path, []byte("original-"+name), 0o644))
 
-	p := media.Restore(path, takenAt, takenAt)
-	require.NoError(t, f.st.Upsert(context.Background(), p))
+	m := media.Restore(path, takenAt, takenAt)
+	require.NoError(t, f.st.Upsert(context.Background(), m))
 
 	switch kind {
 	case famifoThumb:
-		writeFileAt(t, f.thumbs.GeneratedPath(p), "thumb-"+name)
+		writeFileAt(t, f.thumbs.GeneratedPath(m), "thumb-"+name)
 	case eadirThumb:
 		writeFileAt(t, synology.ThumbMPath(path), "eadir-"+name)
 		writeFileAt(t, synology.ThumbXLPath(path), "eadir-xl-"+name)
 	}
-	return p
+	return m
 }
 
 // writeFileAt は親ディレクトリごとファイルを書く。
@@ -109,9 +109,9 @@ func doGet(t *testing.T, h http.Handler, target string) *httptest.ResponseRecord
 func TestServeThumb(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	rec := doGet(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "thumb-a.jpg", rec.Body.String())
@@ -130,9 +130,9 @@ func TestServeThumbNotFoundForUnknownID(t *testing.T) {
 func TestServeThumbFallsBackToTheOriginal(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), noThumb)
+	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), noThumb)
 
-	rec := doGet(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String())
@@ -145,9 +145,9 @@ func TestServeThumbFallsBackToTheOriginal(t *testing.T) {
 func TestServeThumbServesAPlaceholderWhenNothingCanBeShown(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
+	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
-	rec := doGet(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "image/svg+xml", rec.Header().Get("Content-Type"))
@@ -164,13 +164,13 @@ func TestServeThumbServesAPlaceholderWhenNothingCanBeShown(t *testing.T) {
 func TestServeThumbPicksUpAThumbThatAppearsAfterIndexing(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
+	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 	require.Equal(t, "image/svg+xml",
-		doGet(t, f.h, "/thumb/"+p.ID()).Header().Get("Content-Type"), "there is nothing to serve yet")
+		doGet(t, f.h, "/thumb/"+m.ID()).Header().Get("Content-Type"), "there is nothing to serve yet")
 
-	writeFileAt(t, synology.ThumbMPath(p.Path()), "eadir-a.heic")
+	writeFileAt(t, synology.ThumbMPath(m.Path()), "eadir-a.heic")
 
-	rec := doGet(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-a.heic", rec.Body.String(), "it switches over without reindexing")
@@ -179,9 +179,9 @@ func TestServeThumbPicksUpAThumbThatAppearsAfterIndexing(t *testing.T) {
 func TestServeOriginal(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	rec := doGet(t, f.h, "/file/"+p.ID())
+	rec := doGet(t, f.h, "/file/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String())
@@ -191,9 +191,9 @@ func TestServeOriginal(t *testing.T) {
 func TestServeOriginalSetsHEICContentType(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
+	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
-	rec := doGet(t, f.h, "/file/"+p.ID())
+	rec := doGet(t, f.h, "/file/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.heic", rec.Body.String(),
@@ -230,9 +230,9 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 func TestServeThumbFromEaDir(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
+	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := doGet(t, f.h, "/thumb/"+p.ID())
+	rec := doGet(t, f.h, "/thumb/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-a.heic", rec.Body.String())
@@ -241,9 +241,9 @@ func TestServeThumbFromEaDir(t *testing.T) {
 func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
+	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := doGet(t, f.h, "/file/"+p.ID())
+	rec := doGet(t, f.h, "/file/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-xl-a.heic", rec.Body.String(),
@@ -255,9 +255,9 @@ func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), eadirThumb)
+	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := doGet(t, f.h, "/file/"+p.ID())
+	rec := doGet(t, f.h, "/file/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String(),
@@ -271,9 +271,9 @@ func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 func TestResponsesCarryTheSecurityHeaders(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
-	p := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	for _, target := range []string{"/", "/tiles", "/static/app.css", "/thumb/" + p.ID(), "/file/" + p.ID()} {
+	for _, target := range []string{"/", "/tiles", "/static/app.css", "/thumb/" + m.ID(), "/file/" + m.ID()} {
 		t.Run(target, func(t *testing.T) {
 			rec := doGet(t, f.h, target)
 

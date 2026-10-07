@@ -137,14 +137,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}()
 
-	// 取り込みの実行役。この下の監視とスキャンは、どちらもこれを起こす入口になる。
-	ix := index.New(cfg.MediaDirs, st, thumbs, cfg.ScanWorkers, log)
+	// この下の監視とスキャンが、写真をDBに取り込むのに使う。
+	ix := index.NewIndexer(cfg.MediaDirs, st, thumbs, log)
+	// 同時に取り込める枠。監視とスキャンが1つを共有するので、上限は入口によらず効く。
+	slots := index.NewSlots(cfg.ScanWorkers)
 
 	// スキャンより先に監視を張る。逆にすると、スキャンが走査を終えてから監視が
 	// 張られるまでの間に置かれた写真を、どちらも拾えない。数千枚でスキャンが
 	// 数分かかる構成では、その窓のあいだの変更が次の起動まで反映されなくなる。
 	// NewWatcher が戻った時点で監視は張れている。
-	watcher, err := index.NewWatcher(ix, log)
+	watcher, err := index.NewWatcher(ix, slots, log)
 	if err != nil {
 		return err
 	}
@@ -163,14 +165,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := watcher.Run(ctx); err != nil {
-			log.Error("watcher stopped", "err", err)
-		}
+		watcher.Run(ctx)
 	}()
 
 	// スキャンは間隔をおいて繰り返す。1回目は起動直後に走り、止まっていた間の
 	// 変更を取り戻す。2回目以降は監視の取りこぼしを回復する。
-	scanner := index.NewScanner(ix, cfg.ScanInterval, watcher.ScanRequests(), log)
+	scanner := index.NewScanner(ix, slots, cfg.ScanInterval, watcher.ScanRequests(), log)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

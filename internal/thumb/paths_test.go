@@ -40,16 +40,16 @@ func (f *pathFixture) addMedia(t *testing.T, name string) media.Media {
 }
 
 // borrowable は Synologyが作った体のMとXLを写真の隣に置く。
-func (f *pathFixture) borrowable(t *testing.T, p media.Media) {
+func (f *pathFixture) borrowable(t *testing.T, m media.Media) {
 	t.Helper()
-	writeFileAt(t, synology.ThumbMPath(p.Path()), "eadir m")
-	writeFileAt(t, synology.ThumbXLPath(p.Path()), "eadir xl")
+	writeFileAt(t, synology.ThumbMPath(m.Path()), "eadir m")
+	writeFileAt(t, synology.ThumbXLPath(m.Path()), "eadir xl")
 }
 
 // generated は自前で生成した体のサムネイルを、その版の置き場に置く。
-func (f *pathFixture) generated(t *testing.T, p media.Media) string {
+func (f *pathFixture) generated(t *testing.T, m media.Media) string {
 	t.Helper()
-	out := f.pv.GeneratedPath(p)
+	out := f.pv.GeneratedPath(m)
 	writeFileAt(t, out, "generated thumb")
 	return out
 }
@@ -63,14 +63,14 @@ func writeFileAt(t *testing.T, path, body string) {
 func TestSmallPathPrefersTheBorrowedThumb(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addMedia(t, "a.jpg")
-	own := f.generated(t, p)
-	f.borrowable(t, p)
+	m := f.addMedia(t, "a.jpg")
+	own := f.generated(t, m)
+	f.borrowable(t, m)
 
-	got, contentType, ok := f.pv.SmallPath(p)
+	got, contentType, ok := f.pv.SmallPath(m)
 
 	require.True(t, ok)
-	require.Equal(t, synology.ThumbMPath(p.Path()), got,
+	require.Equal(t, synology.ThumbMPath(m.Path()), got,
 		"in a real library nearly every item has @eaDir, so it is looked at first")
 	require.NotEqual(t, own, got)
 	require.Equal(t, "image/jpeg", contentType)
@@ -79,10 +79,10 @@ func TestSmallPathPrefersTheBorrowedThumb(t *testing.T) {
 func TestSmallPathUsesTheGeneratedThumbWhenNothingToBorrow(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addMedia(t, "a.jpg")
-	own := f.generated(t, p)
+	m := f.addMedia(t, "a.jpg")
+	own := f.generated(t, m)
 
-	got, contentType, ok := f.pv.SmallPath(p)
+	got, contentType, ok := f.pv.SmallPath(m)
 
 	require.True(t, ok)
 	require.Equal(t, own, got)
@@ -93,12 +93,12 @@ func TestSmallPathUsesTheGeneratedThumbWhenNothingToBorrow(t *testing.T) {
 func TestSmallPathFallsBackToTheOriginal(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addMedia(t, "a.jpg")
+	m := f.addMedia(t, "a.jpg")
 
-	got, contentType, ok := f.pv.SmallPath(p)
+	got, contentType, ok := f.pv.SmallPath(m)
 
 	require.True(t, ok)
-	require.Equal(t, p.Path(), got)
+	require.Equal(t, m.Path(), got)
 	require.Equal(t, "image/jpeg", contentType)
 }
 
@@ -107,9 +107,9 @@ func TestSmallPathFallsBackToTheOriginal(t *testing.T) {
 func TestSmallPathHasNothingToShowForAnUnborrowedHEIC(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addMedia(t, "a.heic")
+	m := f.addMedia(t, "a.heic")
 
-	got, contentType, ok := f.pv.SmallPath(p)
+	got, contentType, ok := f.pv.SmallPath(m)
 
 	require.False(t, ok)
 	require.Empty(t, got)
@@ -121,15 +121,15 @@ func TestSmallPathHasNothingToShowForAnUnborrowedHEIC(t *testing.T) {
 func TestSmallPathSeesAThumbThatAppearsAfterIndexing(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addMedia(t, "a.heic")
-	_, _, ok := f.pv.SmallPath(p)
+	m := f.addMedia(t, "a.heic")
+	_, _, ok := f.pv.SmallPath(m)
 	require.False(t, ok, "there is nothing to serve yet")
 
-	f.borrowable(t, p)
+	f.borrowable(t, m)
 
-	got, _, ok := f.pv.SmallPath(p)
+	got, _, ok := f.pv.SmallPath(m)
 	require.True(t, ok)
-	require.Equal(t, synology.ThumbMPath(p.Path()), got,
+	require.Equal(t, synology.ThumbMPath(m.Path()), got,
 		"the next request serves the borrowed one without reindexing")
 }
 
@@ -137,25 +137,25 @@ func TestSmallPathSeesAThumbThatAppearsAfterIndexing(t *testing.T) {
 func TestSmallPathIgnoresAThumbFromAnotherVersion(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addMedia(t, "a.jpg")
-	stale := media.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour))
+	m := f.addMedia(t, "a.jpg")
+	stale := media.Restore(m.Path(), m.TakenAt(), m.ModTime().Add(-time.Hour))
 	writeFileAt(t, f.pv.GeneratedPath(stale), "a thumbnail of an older version")
 
-	got, _, ok := f.pv.SmallPath(p)
+	got, _, ok := f.pv.SmallPath(m)
 
 	require.True(t, ok)
-	require.Equal(t, p.Path(), got, "a different version counts as missing and falls back to the original")
+	require.Equal(t, m.Path(), got, "a different version counts as missing and falls back to the original")
 }
 
 // 1ディレクトリにファイルが集中しないよう、IDの先頭2文字で分割する。
 func TestGeneratedPathShardsByTheFirstTwoCharsOfTheID(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addMedia(t, "a.jpg")
+	m := f.addMedia(t, "a.jpg")
 
-	got := f.pv.GeneratedPath(p)
+	got := f.pv.GeneratedPath(m)
 
-	require.Equal(t, p.ID()[:2], filepath.Base(filepath.Dir(got)))
+	require.Equal(t, m.ID()[:2], filepath.Base(filepath.Dir(got)))
 	require.Equal(t, ".jpg", filepath.Ext(got), "its own output is always JPEG")
 }
 
@@ -164,13 +164,13 @@ func TestGeneratedPathShardsByTheFirstTwoCharsOfTheID(t *testing.T) {
 func TestGeneratedPathVariesWithTheSourceVersion(t *testing.T) {
 	t.Parallel()
 	f := newPathFixture(t)
-	p := f.addMedia(t, "a.jpg")
-	older := media.Restore(p.Path(), p.TakenAt(), p.ModTime().Add(-time.Hour))
+	m := f.addMedia(t, "a.jpg")
+	older := media.Restore(m.Path(), m.TakenAt(), m.ModTime().Add(-time.Hour))
 
-	require.NotEqual(t, f.pv.GeneratedPath(p), f.pv.GeneratedPath(older),
+	require.NotEqual(t, f.pv.GeneratedPath(m), f.pv.GeneratedPath(older),
 		"a different version gets a different name")
 	require.Equal(t,
-		filepath.Dir(f.pv.GeneratedPath(p)), filepath.Dir(f.pv.GeneratedPath(older)),
+		filepath.Dir(f.pv.GeneratedPath(m)), filepath.Dir(f.pv.GeneratedPath(older)),
 		"the directory is the same")
 }
 
@@ -194,16 +194,16 @@ func TestLargePathSwapsInTheXLOnlyForBorrowedOpaquePhotos(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newPathFixture(t)
-			p := f.addMedia(t, tt.file)
+			m := f.addMedia(t, tt.file)
 			if tt.borrowed {
-				f.borrowable(t, p)
+				f.borrowable(t, m)
 			}
 
-			got, contentType := f.pv.LargePath(p)
+			got, contentType := f.pv.LargePath(m)
 
-			want := p.Path()
+			want := m.Path()
 			if tt.wantXL {
-				want = synology.ThumbXLPath(p.Path())
+				want = synology.ThumbXLPath(m.Path())
 			}
 			require.Equal(t, want, got)
 			require.Equal(t, tt.wantType, contentType)

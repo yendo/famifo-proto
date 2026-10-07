@@ -68,9 +68,9 @@ func NewProvider(dir string) (*Provider, error) {
 //
 // 秒に丸めるのは、DBが mod_time を Unix 秒で持っているのに合わせるためと、
 // ファイルシステムによって時刻の粒度が違うのを避けるため。
-func (pv *Provider) GeneratedPath(p media.Media) string {
-	name := fmt.Sprintf("%s-%d.jpg", p.ID(), p.ModTime().Unix())
-	return filepath.Join(pv.shardDir(p.ID()), name)
+func (pv *Provider) GeneratedPath(m media.Media) string {
+	name := fmt.Sprintf("%s-%d.jpg", m.ID(), m.ModTime().Unix())
+	return filepath.Join(pv.shardDir(m.ID()), name)
 }
 
 // SmallPath は一覧のタイルに配信するファイルのパスと、そのMIMEタイプを返す。
@@ -91,18 +91,18 @@ func (pv *Provider) GeneratedPath(p media.Media) string {
 // 「famifoがデコードできる形式」と「ブラウザが表示できる形式」が一致しているためで、
 // 別の問いである。両者が食い違う形式（Goがデコードできないがブラウザは表示できる
 // AVIFなど）を表に足すときは、ここを分ける必要がある。
-func (pv *Provider) SmallPath(p media.Media) (path, contentType string, ok bool) {
-	if synology.HasThumbM(p.Path()) {
-		m := synology.ThumbMPath(p.Path())
-		return m, imagefmt.ContentType(m), true
+func (pv *Provider) SmallPath(m media.Media) (path, contentType string, ok bool) {
+	if synology.HasThumbM(m.Path()) {
+		borrowed := synology.ThumbMPath(m.Path())
+		return borrowed, imagefmt.ContentType(borrowed), true
 	}
-	if out := pv.GeneratedPath(p); isRegularFile(out) {
+	if out := pv.GeneratedPath(m); isRegularFile(out) {
 		return out, imagefmt.ContentType(out), true
 	}
-	if imagefmt.IsDecodable(p.Path()) {
+	if imagefmt.IsDecodable(m.Path()) {
 		// 借りるものが無いことは上で確かめてあるので、LargePath に訊き直しても
 		// 原本しか返らない。@eaDir をもう一度 stat せずに済ませる。
-		return p.Path(), imagefmt.ContentType(p.Path()), true
+		return m.Path(), imagefmt.ContentType(m.Path()), true
 	}
 	return "", "", false
 }
@@ -123,8 +123,8 @@ func (pv *Provider) SmallPath(p media.Media) (path, contentType string, ok bool)
 //
 // 借りたXLは .jpg、借りたフィルムは .mp4 なので、選ばれたパスからMIMEを引き直せる。
 // 呼び出し側が引き直さずに済むよう、ここで一緒に返す。
-func (pv *Provider) LargePath(p media.Media) (path, contentType string) {
-	path = p.Path()
+func (pv *Provider) LargePath(m media.Media) (path, contentType string) {
+	path = m.Path()
 	switch {
 	case imagefmt.IsVideo(path):
 		if synology.HasFilm(path) {
@@ -150,26 +150,26 @@ func (pv *Provider) LargePath(p media.Media) (path, contentType string) {
 //
 // 生成に失敗した場合だけエラーを返す。インデックスに載せるかどうかは呼び出し側の
 // 判断である。
-func (pv *Provider) Prepare(p media.Media, orientation uint16) error {
+func (pv *Provider) Prepare(m media.Media, orientation uint16) error {
 	switch {
-	case synology.HasThumbM(p.Path()):
+	case synology.HasThumbM(m.Path()):
 		// 借りるほうへ切り替わったら、自前で作ったものは用済みになる。
-		pv.sweepQuietly(p.ID(), "")
-	case imagefmt.IsDecodable(p.Path()):
-		out, err := pv.generate(p, orientation)
+		pv.sweepQuietly(m.ID(), "")
+	case imagefmt.IsDecodable(m.Path()):
+		out, err := pv.generate(m, orientation)
 		if err != nil {
 			// 失敗しても古い版は消さない。新しいのができるまでの控えとして
 			// 働いており、先に消すと一覧のタイルが割れるため。
 			return err
 		}
-		pv.sweepQuietly(p.ID(), out)
+		pv.sweepQuietly(m.ID(), out)
 	default:
-		pv.sweepQuietly(p.ID(), "")
+		pv.sweepQuietly(m.ID(), "")
 	}
 	return nil
 }
 
-// generate は p の原本からサムネイルを作る。
+// generate は m の原本からサムネイルを作る。
 // デコードできないファイルはエラーを返し、サムネイルは何も残さない。
 //
 // orientation はEXIFの向き（Orientation、1..8）。image.Decode はEXIFを見ずに
@@ -180,18 +180,18 @@ func (pv *Provider) Prepare(p media.Media, orientation uint16) error {
 // 4,495枚で37分（NASなら数時間）かかるが、その大半は中身の変わらないサムネイルの
 // 再生成である。既にある場合は原本を開きもしない。
 //
-// 版は p.ModTime() から取る。自分で stat し直すと、その1回とインデックスに載る
+// 版は m.ModTime() から取る。自分で stat し直すと、その1回とインデックスに載る
 // 版とが食い違い、配信側が存在しない名前を引くことになるため。
 //
 // 作った（または既にあった）サムネイルのパスを返す。呼び出し側が、それ以外の版を
 // 掃除するために使う。
-func (pv *Provider) generate(p media.Media, orientation uint16) (string, error) {
-	out := pv.GeneratedPath(p)
+func (pv *Provider) generate(m media.Media, orientation uint16) (string, error) {
+	out := pv.GeneratedPath(m)
 	if isRegularFile(out) {
 		return out, nil
 	}
 
-	f, err := os.Open(p.Path())
+	f, err := os.Open(m.Path())
 	if err != nil {
 		return "", fmt.Errorf("cannot open the image: %w", err)
 	}

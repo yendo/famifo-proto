@@ -26,7 +26,7 @@ const testDebounce = 100 * time.Millisecond
 func startWatcher(t *testing.T, f *fixture) *index.Watcher {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	w, err := index.NewWatcher(f.ix, log)
+	w, err := index.NewWatcher(f.ix, f.slots, log)
 	require.NoError(t, err)
 	w.SetDebounce(testDebounce)
 
@@ -34,7 +34,7 @@ func startWatcher(t *testing.T, f *fixture) *index.Watcher {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = w.Run(ctx)
+		w.Run(ctx)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -86,7 +86,7 @@ func TestWatcherIgnoresTheTranscodedVideoInEaDir(t *testing.T) {
 	require.NoError(t, os.MkdirAll(entry, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(entry, "SYNOPHOTO_FILM_H.mp4"), []byte("x"), 0o644))
 
-	require.NoError(t, os.WriteFile(filepath.Join(f.root, "clip.mp4"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, "clip.mp4"), testMP4Stub(), 0o644))
 
 	requireCount(t, f, 1) // 原本だけが載る
 }
@@ -99,6 +99,29 @@ func TestWatcherRemovesDeletedFile(t *testing.T) {
 	requireCount(t, f, 1)
 
 	require.NoError(t, os.Remove(path))
+
+	requireCount(t, f, 0)
+}
+
+// 登録済みの動画にシンボリックリンクを rename で被せたら、行を残さない。届くのは
+// Create だけで Remove は来ないので、行を消せるのは取り込みが断ったときしかない。
+// 残すと /file/{id} がリンクを ServeFile に渡し、ルートの外の中身が出ていく。
+//
+// リンクの先は本物の動画にする。中身の照合を通るので、シンボリックリンクの
+// ガードを外すと行が残り、このテストが落ちる。
+func TestWatcherRemovesTheRowWhenASymlinkIsRenamedOverAFile(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	startWatcher(t, f)
+	path := filepath.Join(f.root, "clip.mp4")
+	require.NoError(t, os.WriteFile(path, testMP4Stub(), 0o644))
+	requireCount(t, f, 1)
+
+	outside := filepath.Join(t.TempDir(), "elsewhere.mp4")
+	require.NoError(t, os.WriteFile(outside, testMP4Stub(), 0o644))
+	link := filepath.Join(f.root, "link") // 対象外の名前なので、作った時点では拾われない
+	require.NoError(t, os.Symlink(outside, link))
+	require.NoError(t, os.Rename(link, path))
 
 	requireCount(t, f, 0)
 }
@@ -146,8 +169,8 @@ func TestWatcherRemovesRowsWhenDirectoryRenamedWithinTree(t *testing.T) {
 	requireCount(t, f, 2)
 
 	// ディレクトリ内でのリネーム: 子ファイルには個別イベントが来ない。
-	// RemoveTreeでの前方一致削除が無いと、古いパスの行が残ったまま
-	// 新しいパスの行が二重に増える。
+	// ディレクトリが消えたときに配下の行をまとめて消さないと、古いパスの行が
+	// 残ったまま新しいパスの行が二重に増える。
 	renamed := filepath.Join(f.root, "album2")
 	require.NoError(t, os.Rename(album, renamed))
 	time.Sleep(50 * time.Millisecond) // 監視登録を待つ
@@ -161,10 +184,57 @@ func TestWatcherRemovesRowsWhenDirectoryRenamedWithinTree(t *testing.T) {
 	}
 }
 
+// fsnotify は監視を inode で持ち、張った時点のパスで覚えている。移動した
+// ディレクトリの子の監視を外さずに移動先で張り直すと、inotify が同じ監視を返し、
+// 移動先の配下のイベントが移動元のパスで届く。取り込みは存在しないパスを
+// 開こうとして失敗し、新しい写真が載らない。
+func TestWatcherFollowsADirectoryRenamedWithItsSubdirectories(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	startWatcher(t, f)
+
+	album := filepath.Join(f.root, "album")
+	require.NoError(t, os.MkdirAll(filepath.Join(album, "sub"), 0o755))
+	time.Sleep(50 * time.Millisecond) // 監視登録を待つ
+
+	renamed := filepath.Join(f.root, "album2")
+	require.NoError(t, os.Rename(album, renamed))
+	time.Sleep(50 * time.Millisecond) // 移動先の監視登録と中身の走査を待つ
+
+	// 移動のあとに置く。走査はもう終わっているので、拾えるのは監視だけである。
+	writeTestJPEG(t, filepath.Join(renamed, "sub"), "a.jpg", 40, 20)
+
+	requireCount(t, f, 1)
+	paths, err := f.st.AllPaths(context.Background())
+	require.NoError(t, err)
+	_, ok := paths[filepath.Join(renamed, "sub", "a.jpg")]
+	require.True(t, ok, "the row is under the new path")
+}
+
+// ルートそのものが消えたとき、配下の行を消さない。スキャンが「空に見える
+// ルート」の配下を消さないのと同じ扱いにそろえる。消してしまうと、戻したときに
+// 全部を取り込み直し、サムネイルを作り直すことになる。
+func TestWatcherKeepsRowsWhenARootIsRenamed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	startWatcher(t, f)
+	writeTestJPEG(t, f.root, "a.jpg", 40, 20)
+	requireCount(t, f, 1)
+
+	require.NoError(t, os.Rename(f.root, f.root+".away"))
+
+	// 減らないことの確認なので、イベントが処理されるのを待ってから数える。
+	time.Sleep(3 * testDebounce)
+	n, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "the items under a root that disappeared are kept")
+}
+
 func TestWatcherHandlesFileRenameWithinTree(t *testing.T) {
 	t.Parallel()
-	// Remove/RenameでRemoveTreeも呼ぶようになったため、ファイルのリネームでも
-	// RemoveFileとRemoveTreeの両方が呼ばれる。該当の無い方は静かにno-opであることを確認する。
+	// 消えたのがファイルかディレクトリかは、消えたあとでは見分けられない。ファイルの
+	// リネームでも、ディレクトリが消えたときと同じ扱いを受ける。それでも元の名前の
+	// 行だけが消え、新しい名前で1件が残ることを確かめる。
 	f := newFixture(t)
 	startWatcher(t, f)
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
@@ -215,7 +285,7 @@ func TestWatcherSkipsSynologyDirsInMovedDirectory(t *testing.T) {
 	startWatcher(t, f)
 
 	// ディレクトリごと移動した場合、中身には個別のイベントが来ないため
-	// enqueueTree が自前で走査する。そこにも除外が要る。
+	// addPendingTree が自前で走査する。そこにも除外が要る。
 	staging := filepath.Join(t.TempDir(), "album")
 	writeTestJPEG(t, staging, "IMG_0001.jpg", 40, 20)
 	writeTestJPEG(t, filepath.Join(staging, "@eaDir", "IMG_0001.jpg"),
@@ -261,7 +331,7 @@ func waitForIndexing(t *testing.T, path string) *os.File {
 }
 
 // serveFifo は path に読み手が現れるたびにJPEGを流し込む係を置く。
-// 1枚の取り込みは原本を2度開く。EXIFの読み取りとサムネイルの生成である。
+// 1枚の取り込みは原本を3度開く。中身の検査とEXIFの読み取りとサムネイルの生成である。
 // どちらの open(2) にも応じる必要があるうえ、1度目の読み手が閉じる時刻は
 // こちらから見えないので、回数を数えずに応じ続ける。
 //
@@ -318,7 +388,11 @@ func TestWatcherKeepsHandlingEventsWhileAFileIsStuck(t *testing.T) {
 
 	requireCount(t, f, 1) // 止まっている1枚に巻き込まれない
 
-	// 止めていた取り込みを最後まで通してから監視を止める。
+	// 止めていた取り込みを最後まで通してから監視を止める。中身の検査が最初の
+	// 読み手なので、空のまま閉じるとEOFだけが渡り、「写真ではない」と判断されて
+	// そこで終わる。署名を含む先頭を流してから閉じる。
+	_, err := w.Write(testJPEG(t, 40, 20))
+	require.NoError(t, err)
 	require.NoError(t, w.Close())
 	serveFifo(t, stuck, testJPEG(t, 40, 20))
 	requireCount(t, f, 2)
@@ -337,9 +411,13 @@ func TestWatcherIndexesUpToWorkersInParallel(t *testing.T) {
 	wa := waitForIndexing(t, a)
 	wb := waitForIndexing(t, b)
 
-	// 2枚とも最後まで通してから監視を止める。
-	require.NoError(t, wa.Close())
-	require.NoError(t, wb.Close())
+	// 2枚とも最後まで通してから監視を止める。空のまま閉じると中身の検査が
+	// EOFを受け取って終わるので、署名を含む先頭を流してから閉じる。
+	for _, w := range []*os.File{wa, wb} {
+		_, err := w.Write(testJPEG(t, 40, 20))
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+	}
 	serveFifo(t, a, testJPEG(t, 40, 20))
 	serveFifo(t, b, testJPEG(t, 40, 20))
 	requireCount(t, f, 2)
@@ -362,7 +440,7 @@ func TestWatcherLeavesNoRowForAFileMovedWhileBeingIndexed(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // 削除が取り込みの完了より先に処理される順序を作る
 
 	require.NoError(t, w.Close())
-	serveFifo(t, moved, testJPEG(t, 40, 20))
+	serveFifo(t, moved, testHEIC())
 
 	// 移動先の1枚だけが残る。遅れて増えないことの確認なので待ってから数える。
 	time.Sleep(3 * testDebounce)
@@ -395,7 +473,7 @@ func TestWatcherLeavesNoRowForADirectoryMovedWhileBeingIndexed(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // 移動が取り込みの完了より先に処理される順序を作る
 
 	require.NoError(t, w.Close())
-	serveFifo(t, filepath.Join(moved, "a.heic"), testJPEG(t, 40, 20))
+	serveFifo(t, filepath.Join(moved, "a.heic"), testHEIC())
 
 	requireCount(t, f, 1)
 	time.Sleep(3 * testDebounce) // 遅れて移動元の行が増えないこと
@@ -412,7 +490,7 @@ func TestWatcherWatchesRootsBeforeRunStarts(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	w, err := index.NewWatcher(f.ix, log)
+	w, err := index.NewWatcher(f.ix, f.slots, log)
 	require.NoError(t, err)
 	w.SetDebounce(testDebounce)
 
@@ -425,7 +503,7 @@ func TestWatcherWatchesRootsBeforeRunStarts(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = w.Run(ctx)
+		w.Run(ctx)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -463,7 +541,7 @@ func TestWatcherDoesNotAskForAScanWhenNothingIsBeingIndexed(t *testing.T) {
 	w := startWatcher(t, f)
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	requireCount(t, f, 1)
-	time.Sleep(100 * time.Millisecond) // ワーカーが持ち場を空けるのを待つ
+	time.Sleep(100 * time.Millisecond) // ワーカーが枠を空けるのを待つ
 
 	// 取り込みが走っていない間の削除は、監視だけで正しく反映できる。
 	require.NoError(t, os.Remove(path))

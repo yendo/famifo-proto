@@ -2,6 +2,7 @@ package index_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 
 type fixture struct {
 	ix       *index.Indexer
+	slots    *index.Slots
 	sc       *index.Scanner
 	st       *store.Store
 	thumbs   *thumb.Provider
@@ -80,9 +82,10 @@ func newFixtureWorkers(t *testing.T, workers int) *fixture {
 	thumbs, err := thumb.NewProvider(thumbDir)
 	require.NoError(t, err)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix := index.New([]string{root}, st, thumbs, workers, log)
+	ix := index.NewIndexer([]string{root}, st, thumbs, log)
+	slots := index.NewSlots(workers)
 
-	return &fixture{ix: ix, sc: index.NewScanner(ix, time.Hour, nil, log),
+	return &fixture{ix: ix, slots: slots, sc: index.NewScanner(ix, slots, time.Hour, nil, log),
 		st: st, thumbs: thumbs, root: root, thumbDir: thumbDir, log: log}
 }
 
@@ -106,18 +109,27 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 	thumbs, err := thumb.NewProvider(thumbDir)
 	require.NoError(t, err)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix := index.New(roots, st, thumbs, 4, log)
+	ix := index.NewIndexer(roots, st, thumbs, log)
+	slots := index.NewSlots(4)
 
-	return &fixture{ix: ix, sc: index.NewScanner(ix, time.Hour, nil, log),
+	return &fixture{ix: ix, slots: slots, sc: index.NewScanner(ix, slots, time.Hour, nil, log),
 		st: st, thumbs: thumbs, root: roots[0], thumbDir: thumbDir, log: log}, roots
 }
 
-func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
+func TestNewSlotsPanicsBelowOne(t *testing.T) {
+	for _, n := range []int{0, -1} {
+		require.PanicsWithValue(t,
+			fmt.Sprintf("index: slots must be 1 or greater: %d", n),
+			func() { index.NewSlots(n) })
+	}
+}
+
+func TestScanStoresRasterPhotoWithThumb(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
 
-	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
@@ -125,30 +137,29 @@ func TestIndexFileStoresRasterPhotoWithThumb(t *testing.T) {
 	require.Len(t, f.generatedThumbs(t), 1, "nothing to borrow, so it makes its own")
 }
 
-// TestIndexFileAppliesTheEXIFOrientationToTheThumbnail はEXIFから読んだ向きが
+// TestScanAppliesTheEXIFOrientationToTheThumbnail はEXIFから読んだ向きが
 // サムネイル生成まで届いていることを確かめる。読み取り(internal/index/exif)と
 // 適用(internal/thumb)は別パッケージなので、繋ぎ違えても双方のテストは通る。
-func TestIndexFileAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
+func TestScanAppliesTheEXIFOrientationToTheThumbnail(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	// 縮小されない小ささにして、向きの適用が寸法にそのまま出るようにする。
-	path := writeJPEGWithOrientation(t, f.root, "a.jpg", 16, 8, 6)
+	writeJPEGWithOrientation(t, f.root, "a.jpg", 16, 8, 6)
 
-	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
 	cfg := decodeThumbConfig(t, f.onlyGeneratedThumb(t))
 	require.Equal(t, 8, cfg.Width, "Orientation=6 swaps width and height")
 	require.Equal(t, 16, cfg.Height)
 }
 
-func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
+func TestScanStoresHEICWithoutThumb(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	// HEICはデコードしない方針なので、中身が画像でなくても登録される
-	path := filepath.Join(f.root, "a.heic")
-	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
+	// HEICはデコードしない方針なので、画素が無くても署名さえ合えば登録される
+	path := writeTestHEIC(t, f.root, "a.heic")
 
-	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
@@ -156,29 +167,16 @@ func TestIndexFileStoresHEICWithoutThumb(t *testing.T) {
 	require.Empty(t, f.generatedThumbs(t), "HEIC cannot be decoded")
 }
 
-func TestIndexFileIgnoresUnsupportedExtensions(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	path := filepath.Join(f.root, "a.avi")
-	require.NoError(t, os.WriteFile(path, []byte("video"), 0o644))
-
-	require.NoError(t, f.ix.IndexFile(context.Background(), path), "an unsupported file is not an error")
-
-	n, err := f.st.Count(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, 0, n)
-}
-
 // 動画は自前でサムネイルを作れないが、インデックスには載る。壊れているかどうかは
 // デコードして初めて分かることで、famifoにデコーダが無い以上、載せる前に判定する
 // 手段が無い。黙って消えるより、絵の無いタイルとして出るほうを選ぶ。
-func TestIndexFileIndexesVideosWithoutAThumbnail(t *testing.T) {
+func TestScanIndexesVideosWithoutAThumbnail(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.root, "clip.mp4")
-	require.NoError(t, os.WriteFile(path, []byte("not a real container"), 0o644))
+	require.NoError(t, os.WriteFile(path, testMP4Stub(), 0o644))
 
-	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
@@ -188,13 +186,13 @@ func TestIndexFileIndexesVideosWithoutAThumbnail(t *testing.T) {
 
 // 動画の撮影日時はEXIFではなくコンテナから来る。mtimeとは違う値になることで、
 // videometa が実際に読まれていることが分かる。
-func TestIndexFileReadsTheCaptureTimeFromTheContainer(t *testing.T) {
+func TestScanReadsTheCaptureTimeFromTheContainer(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	want := time.Date(2026, 9, 9, 9, 39, 6, 0, time.UTC)
 	path := writeTestMP4(t, f.root, "clip.mp4", want)
 
-	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
@@ -202,13 +200,13 @@ func TestIndexFileReadsTheCaptureTimeFromTheContainer(t *testing.T) {
 }
 
 // コンテナから読めない動画はmtimeに落ちる。EXIFの無い写真と同じ扱いである。
-func TestIndexFileFallsBackToModTimeForAnUnreadableVideo(t *testing.T) {
+func TestScanFallsBackToModTimeForAnUnreadableVideo(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.root, "clip.mp4")
-	require.NoError(t, os.WriteFile(path, []byte("not a container"), 0o644))
+	require.NoError(t, os.WriteFile(path, testMP4Stub(), 0o644))
 
-	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
 	fi, err := os.Stat(path)
 	require.NoError(t, err)
@@ -218,54 +216,17 @@ func TestIndexFileFallsBackToModTimeForAnUnreadableVideo(t *testing.T) {
 	require.Equal(t, fi.ModTime().Unix(), got.TakenAt().Unix())
 }
 
-func TestIndexFileIgnoresDirectories(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	dir := filepath.Join(f.root, "sub.jpg") // 拡張子付きディレクトリという嫌がらせ
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-
-	require.NoError(t, f.ix.IndexFile(context.Background(), dir))
-
-	n, err := f.st.Count(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, 0, n)
-}
-
-func TestIndexFileRejectsBrokenRasterImage(t *testing.T) {
+func TestScanRejectsBrokenRasterImage(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.root, "broken.jpg")
 	require.NoError(t, os.WriteFile(path, []byte("not an image"), 0o644))
 
-	err := f.ix.IndexFile(context.Background(), path)
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	require.Error(t, err, "a broken image is not stored and returns an error")
-	n, cerr := f.st.Count(context.Background())
-	require.NoError(t, cerr)
-	require.Equal(t, 0, n)
-}
-
-func TestRemoveFileDeletesRowAndThumb(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	ctx := context.Background()
-	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
-	require.NoError(t, f.ix.IndexFile(ctx, path))
-	require.Len(t, f.generatedThumbs(t), 1)
-
-	require.NoError(t, f.ix.RemoveFile(ctx, path))
-
-	require.Empty(t, f.generatedThumbs(t))
-	n, err := f.st.Count(ctx)
+	n, err := f.st.Count(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 0, n)
-}
-
-func TestRemoveFileIsQuietForUnknownPath(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-
-	require.NoError(t, f.ix.RemoveFile(context.Background(), filepath.Join(f.root, "never.jpg")))
+	require.Equal(t, 0, n, "a broken image is not stored")
 }
 
 // writeSynoThumb は srcPath の写真用のサムネイルを @eaDir に置く。
@@ -276,13 +237,13 @@ func writeSynoThumb(t *testing.T, srcPath string) string {
 	return out
 }
 
-func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
+func TestScanBorrowsTheSynologyThumbnail(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
 	writeSynoThumb(t, path)
 
-	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
@@ -292,14 +253,13 @@ func TestIndexFileBorrowsTheSynologyThumbnail(t *testing.T) {
 }
 
 // HEICはGoでデコードできないが、Synologyのサムネイルがあれば一覧に出せる。
-func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
+func TestScanBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	path := filepath.Join(f.root, "a.heic")
-	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
+	path := writeTestHEIC(t, f.root, "a.heic")
 	writeSynoThumb(t, path)
 
-	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
@@ -310,16 +270,15 @@ func TestIndexFileBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 
 // DSM 7.3 がHEICのデコードに失敗すると .fail だけが残る。famifoも作れないので
 // サムネイル無しのまま原本を配信する。.fail を置き換えるのはfamifoの仕事ではない。
-func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T) {
+func TestScanLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	path := filepath.Join(f.root, "a.heic")
-	require.NoError(t, os.WriteFile(path, []byte("not decodable by go"), 0o644))
+	path := writeTestHEIC(t, f.root, "a.heic")
 	fail := filepath.Join(filepath.Dir(synology.ThumbMPath(path)), "SYNOPHOTO_THUMB_M.fail")
 	require.NoError(t, os.MkdirAll(filepath.Dir(fail), 0o755))
 	require.NoError(t, os.WriteFile(fail, nil, 0o644))
 
-	require.NoError(t, f.ix.IndexFile(context.Background(), path))
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
@@ -329,18 +288,40 @@ func TestIndexFileLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T)
 }
 
 // famifoはSynology Photosの領域に書き込まない。消しもしない。
-func TestRemoveFileKeepsTheSynologyThumbnail(t *testing.T) {
+//
+// もう1枚を残しておく。ルートが空に見えると、未マウントと区別できないので削除が
+// 見送られる。
+func TestScanKeepsTheSynologyThumbnailOfADeletedPhoto(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
 	synoThumb := writeSynoThumb(t, path)
-	require.NoError(t, f.ix.IndexFile(ctx, path))
+	writeTestJPEG(t, f.root, "keep.jpg", 400, 200)
+	require.NoError(t, f.sc.ScanOnce(ctx))
 
-	require.NoError(t, f.ix.RemoveFile(ctx, path))
+	require.NoError(t, os.Remove(path))
+	require.NoError(t, f.sc.ScanOnce(ctx))
 
 	require.FileExists(t, synoThumb, "@eaDir is never touched")
 	n, err := f.st.Count(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 0, n)
+	require.Equal(t, 1, n)
+}
+
+// 拡張子を写真のものに付け替えただけのファイルは載せない。
+//
+// 自前でデコードしない形式（HEICや動画）では thumb が原本を開かないため、ここで
+// 中身を見ないと素通りして行が入る。行が入れば /file/{id} が配信する。
+func TestScanRejectsContentThatDoesNotMatchTheExtension(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	path := filepath.Join(f.root, "a.heic")
+	require.NoError(t, os.WriteFile(path, []byte("alert('hi')\n"), 0o644))
+
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
+
+	n, err := f.st.Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "no row may be created for a file that is not a photo")
 }

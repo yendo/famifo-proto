@@ -17,14 +17,17 @@
 > **監視ループはイベントの受信と帳簿づけだけを行い、実行時間が写真の枚数や
 > サイズに依存する仕事を自分では走らせない。**
 
-これを担うのが `internal/index/executor.go` の `executor` である。
+これを担うのは取り込みを起こす入口（`Scanner` と `Watcher`）で、共有の枠
+`Slots`（`slots.go`）から1つ取ってから goroutine を起こす。
 
 | 名前 | 場所 | 役割 |
 |---|---|---|
-| `executor` | `executor.go` | 取り込みの実行を1箇所に集める。同時実行の上限は `workers` |
-| `submit` | `executor.go:28` | 持ち場が空くまで待つ。`Scan` 用（走査への背圧） |
-| `trySubmit` | `executor.go:36` | 待たずに false を返す。`Watcher` 用（待つと取りこぼす） |
-| `scanner` | `scan.go` | 1回のスキャンが持ち回る帳簿。`Scan` の中だけで生きる |
+| `Indexer` | `indexer.go` | 1枚の変更をインデックスとサムネイルに反映する。同期的で、並行について何も知らない |
+| `Slots` | `slots.go` | 同時に取り込める枠。`main.go` が1つ作り、スキャンと監視が共有する |
+| `acquire` | `slots.go` | 枠が空くまで待つ。スキャン用（走査への背圧） |
+| `tryAcquire` | `slots.go` | 待たずに false を返す。監視用（待つと取りこぼす） |
+| `Scanner` | `scan.go` | スキャンを繰り返す（`Run`）。1回ごとに `scanOnce` を作る |
+| `scanOnce` | `scan.go` | 1回のスキャンが持ち回る帳簿。1回ごとに作って捨てる |
 | `Watcher` | `watch.go` | fsnotify の追従。`pending`（debounce）と `inflight` を持つ |
 
 以下の問題は、この不変条件が**取り込みについてしか適用されていない**ことと、
@@ -59,7 +62,7 @@
 監視を張る前にスキャンするしかないので窓ができる（課題5）。運転中に `Scan` を
 回せる設計にすれば、順序を「監視を張る → スキャン」に変えて窓が閉じ、溢れたら
 再スキャンで回復できる。そのとき初めて `Scan` と `Watcher` が同時に走るので、
-課題7の「`executor` を共有しているが同時実行の規約が無い」が問題として立つ。
+課題7の「取り込みの実行単位の共有に同時実行の規約が無い」が問題として立つ。
 
 該当: 課題4、課題5、課題7
 
@@ -158,10 +161,10 @@ FIFO を「取り込みを止められる写真」として使う。`mkfifoPhoto
 要求するため、監視を張るには降りるしかない。避けられるのは「ループの中で歩く
 こと」だけである。
 
-決めるべきは逃がし先である。`executor` は `IndexFile` に固定されているので、
+決めるべきは逃がし先である。`startIndex` は `indexFile` に固定されているので、
 そのままでは使えない。取りうる形:
 
-- `executor` を「1枚の取り込み」ではなく「1つの仕事」を受ける形に一般化する
+- 枠を「1枚の取り込み」ではなく「1つの仕事」に渡す形に一般化する
 - 監視ループに専用の walk ワーカーを1本足し、結果（追加すべき監視対象と
   積むべきパス）をチャネルでループに返す。完了通知は `w.done` と同じ作法になる
 
@@ -201,7 +204,7 @@ DELETE ... WHERE path LIKE '/a/b/%'                 -> SCAN photos
 DELETE ... WHERE path >= '/a/b/' AND path < '/a/b0' -> SEARCH photos USING INDEX sqlite_autoindex_photos_2
 ```
 
-`path` は `TEXT NOT NULL UNIQUE`（`store.go:28`）なので暗黙の索引がある。
+`path` は `TEXT NOT NULL UNIQUE`（`store.go:28`）なので暗黙のインデックスがある。
 使われていないだけである。4,497枚のDBで1,000枚消すと450万行ぶんの走査になる。
 
 ### 直し方
@@ -296,9 +299,9 @@ case err, ok := <-w.fsw.Errors:
 
 ### 証拠
 
-`watch.go:81` の `w.ix.executor.wait()`。待つ相手は `IndexFile`
-（`indexer.go:58`）だが、`IndexFile` は `ctx` を `Upsert`（`indexer.go:81`）にしか
-渡していない。`exif.Read`（`72`）と `thumbs.Prepare`（`78`）は `ctx` を見ない。
+`watch.go:109` の `w.wg.Wait()`。待つ相手は `indexFile`
+（`indexer.go:70`）だが、`indexFile` は `ctx` を `Upsert`（`indexer.go:126`）にしか
+渡していない。`exif.Read`（`115`）と `thumbs.Prepare`（`123`）は `ctx` を見ない。
 
 ### 直し方
 
@@ -310,22 +313,27 @@ case err, ok := <-w.fsw.Errors:
 
 ---
 
-## 課題7: executor の共有に同時実行の規約が無い
+## 課題7: 取り込みの実行単位の共有に同時実行の規約が無い
 
 **根3。課題5に着手すると顕在化する。**
 
 ### 症状
 
-`Scan` と `Watcher` が同じ `executor` を共有している（`indexer.go` の
-`ix.executor`）。今は `main.go` が順番に呼ぶので問題にならないが、それを保証して
-いるのは呼び出し順だけである。同時に走ると `executor.wait()`（`executor.go:61`）が
-相手の仕事の完了まで待つ。
+`Scan` と `Watcher` が取り込みの実行単位を1つだけ共有していた。今は `main.go` が
+順番に呼ぶので問題にならないが、それを保証していたのは呼び出し順だけである。
+同時に走ると、共有していた `wait()` が相手の仕事の完了まで待っていた。
 
 ### 直し方
 
 課題5で順序を変えると同時実行が常態になるので、そのとき決める。
 `wait()` が「自分が出した仕事だけ」を待つ形にするか、共有をやめて入口ごとに
-`executor` を持つか（その場合 `workers` の意味が入口ごとになる）。
+実行単位を持つか（その場合 `workers` の意味が入口ごとになる）。
+
+**解決済み（2026-10-04）。** `2026-10-04-index-concurrency-roles-design.md` で
+関門を入口ごとの `sync.WaitGroup` にし、`Indexer.startIndex` にそれを渡す形にした。
+待つ相手は自分が出した取り込みだけになる。共有するのは `Indexer` の枠（`slots`）
+だけで、これは誰も `wait` しない。課題5で順序を変えて同時実行が常態になっても、
+互いの完了を待ち合わない。
 
 あわせて `pending` に上限が無いことも見ておく。`enqueueTree` が一度に全件積むため、
 巨大なディレクトリを持ち込むとパスの数だけ増える。メモリだけの問題なので

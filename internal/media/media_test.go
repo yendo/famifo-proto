@@ -33,9 +33,9 @@ func TestNewFillsTheFieldsFromThePathAndFileInfo(t *testing.T) {
 	t.Parallel()
 	const path = "/items/A.JPG"
 
-	p := media.New(path, fakeFileInfo{modTime: testModTime}, time.Time{})
+	m := media.New(path, fakeFileInfo{modTime: testModTime}, time.Time{})
 
-	require.Equal(t, media.IDFor(path), p.ID(), "the ID is derived from the path")
-	require.Equal(t, path, p.Path())
-	require.True(t, p.ModTime().Equal(testModTime))
+	require.Equal(t, media.IDFor(path), m.ID(), "the ID is derived from the path")
+	require.Equal(t, path, m.Path())
+	require.True(t, m.ModTime().Equal(testModTime))
 }

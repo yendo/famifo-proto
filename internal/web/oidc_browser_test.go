@@ -177,8 +177,7 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	t.Cleanup(func() { _ = st.Close() })
 
 	require.NoError(t, writeTestPhoto(filepath.Join(mediaDir, "p0000.jpg"), 0, time.Now()))
-	_, err = indexAll(st, mediaDir, thumbs)
-	require.NoError(t, err)
+	require.NoError(t, indexAll(st, mediaDir, thumbs, 1))
 
 	sessions, err := session.New(filepath.Join(dir, "sessions.db"), false, log)
 	require.NoError(t, err)

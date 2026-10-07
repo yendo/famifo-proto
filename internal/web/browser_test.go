@@ -329,10 +329,7 @@ func prepareTestMedia(st *store.Store, mediaDir string, thumbs *thumb.Provider) 
 			i++
 		}
 	}
-	if _, err := indexAll(st, mediaDir, thumbs); err != nil {
-		return err
-	}
-	return nil
+	return indexAll(st, mediaDir, thumbs, i)
 }
 
 // writeTestPhoto はテスト画像を書き、撮影日時をmtimeに焼く。
@@ -347,13 +344,47 @@ func writeTestPhoto(path string, i int, takenAt time.Time) error {
 	return nil
 }
 
-// indexAll は本番と同じ取り込み経路でコーパスをインデックスに載せる。
-// 手でMediaを組むと、Mediaの構造が変わるたびにブラウザテストが巻き添えになる。
-func indexAll(st *store.Store, mediaDir string, thumbs *thumb.Provider) (index.Stats, error) {
+// indexAll は本番と同じ取り込み経路でコーパスをインデックスに載せ、want 枚が
+// 載るまで待つ。手でMediaを組むと、Mediaの構造が変わるたびにブラウザテストが
+// 巻き添えになる。
+//
+// スキャンを1回だけ走らせる公開の口は無いので、本番と同じく Run を動かし、
+// 起動直後の1回目で全件が載るのを待つ。間隔は長くして2回目を走らせない。
+func indexAll(st *store.Store, mediaDir string, thumbs *thumb.Provider, want int) error {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ix := index.New([]string{mediaDir}, st, thumbs, 4, log)
-	return index.NewScanner(ix, time.Hour, nil, log).Scan(context.Background())
+	ix := index.NewIndexer([]string{mediaDir}, st, thumbs, log)
+	sc := index.NewScanner(ix, index.NewSlots(4), time.Hour, nil, log)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sc.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	deadline := time.Now().Add(indexAllTimeout)
+	for {
+		n, err := st.Count(context.Background())
+		if err != nil {
+			return err
+		}
+		if n == want {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			// 1枚でも欠けると、日ごとの枚数を前提にした検証が成り立たない。
+			return fmt.Errorf("too few items were indexed: %d/%d", n, want)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
+
+// indexAllTimeout は indexAll が全件の取り込みを待つ上限。
+const indexAllTimeout = 2 * time.Minute
 
 // writeTestJPEG はi番目の写真用に、色だけが違う小さな正方形JPEGを作る。
 func writeTestJPEG(path string, i int) error {
@@ -1870,15 +1901,8 @@ func prepareManyTestMedia(st *store.Store, mediaDir string, thumbs *thumb.Provid
 			return err
 		}
 	}
-	stats, err := indexAll(st, mediaDir, thumbs)
-	if err != nil {
-		return err
-	}
 	// 滞留の再現には全件が載っている必要がある。1枚でも欠けると本数が変わる。
-	if stats.Indexed != manyMediaCount {
-		return fmt.Errorf("too few items were indexed: %d/%d", stats.Indexed, manyMediaCount)
-	}
-	return nil
+	return indexAll(st, mediaDir, thumbs, manyMediaCount)
 }
 
 // startStallGallery はスキャン中のNASを模したギャラリーを起動する。

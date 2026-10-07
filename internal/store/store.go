@@ -88,11 +88,11 @@ ON CONFLICT(id) DO UPDATE SET
     mod_time  = excluded.mod_time`
 
 // Upsert は1件を登録または更新する。
-func (s *Store) Upsert(ctx context.Context, p media.Media) error {
+func (s *Store) Upsert(ctx context.Context, m media.Media) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
-		p.ID(), p.Path(), p.TakenAt().Unix(), p.ModTime().Unix())
+		m.ID(), m.Path(), m.TakenAt().Unix(), m.ModTime().Unix())
 	if err != nil {
-		return fmt.Errorf("cannot save the media (%s): %w", p.Path(), err)
+		return fmt.Errorf("cannot save the media (%s): %w", m.Path(), err)
 	}
 	return nil
 }
@@ -100,14 +100,14 @@ func (s *Store) Upsert(ctx context.Context, p media.Media) error {
 // GetByID はIDで1件を引く。見つからない場合は ErrNotFound を返す。
 func (s *Store) GetByID(ctx context.Context, id string) (media.Media, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+selectCols+` FROM media WHERE id = ?`, id)
-	p, err := scanMedia(row)
+	m, err := scanMedia(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return media.Media{}, ErrNotFound
 	}
 	if err != nil {
 		return media.Media{}, fmt.Errorf("cannot get the media: %w", err)
 	}
-	return p, nil
+	return m, nil
 }
 
 // DeleteByPath はパスで1件を削除し、削除した行を返す。
@@ -116,14 +116,14 @@ func (s *Store) GetByID(ctx context.Context, id string) (media.Media, error) {
 func (s *Store) DeleteByPath(ctx context.Context, path string) (media.Media, bool, error) {
 	row := s.db.QueryRowContext(ctx,
 		`DELETE FROM media WHERE path = ? RETURNING `+selectCols, path)
-	p, err := scanMedia(row)
+	m, err := scanMedia(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return media.Media{}, false, nil
 	}
 	if err != nil {
 		return media.Media{}, false, fmt.Errorf("cannot delete the media (%s): %w", path, err)
 	}
-	return p, true, nil
+	return m, true, nil
 }
 
 // DeleteByPathPrefix はディレクトリ配下の登録をまとめて削除し、削除した行を返す。
@@ -151,11 +151,11 @@ func (s *Store) DeleteByPathPrefix(ctx context.Context, prefix string) ([]media.
 
 	var out []media.Media
 	for rows.Next() {
-		p, err := scanMedia(rows)
+		m, err := scanMedia(rows)
 		if err != nil {
 			return nil, fmt.Errorf("cannot read the deletion result: %w", err)
 		}
-		out = append(out, p)
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }
@@ -202,11 +202,11 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]media.Media
 
 	var out []media.Media
 	for rows.Next() {
-		p, err := scanMedia(rows)
+		m, err := scanMedia(rows)
 		if err != nil {
 			return nil, fmt.Errorf("cannot read the media list: %w", err)
 		}
-		out = append(out, p)
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }
