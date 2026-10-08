@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/store"
+	"github.com/yendo/famifo-proto/internal/synology"
 )
 
 // noOpenItem は「開いた写真は無い」ことを表す通し番号。
@@ -109,7 +111,7 @@ func (g *Gallery) handleThumb(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	path, contentType, ok := g.thumbs.SmallPath(m)
+	path, contentType, ok := g.thumbs.Path(m)
 	if !ok {
 		serveNoPreview(w)
 		return
@@ -126,11 +128,40 @@ func (g *Gallery) handleFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	path, contentType := g.thumbs.LargePath(m)
+	path, contentType := fullViewPath(m)
 	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
 	// 先に設定しておけばServeContentは上書きしない。
 	w.Header().Set("Content-Type", contentType)
 	http.ServeFile(w, r, path)
+}
+
+// fullViewPath は拡大表示に配信するファイルのパスと、そのMIMEタイプを返す。
+//
+// 借りるものが2種類ある。HEICはSafari以外のブラウザが表示できないので、@eaDir から
+// 借りられるなら原本ではなくSynologyのXL（長辺1707px）を返す。動画はHEVCが端末に
+// よって再生できないので、Synologyが作ったH.264版（SYNOPHOTO_FILM_H.mp4）を返す。
+//
+// 動画を先に見るのは、静止画のXLを掴ませないためである。動画にもMとXLは作られるので、
+// 順序を逆にすると再生する場面で1枚の静止画が配られる。
+//
+// 写真では「MとXLは同じ生成器が一緒に書く」としてXLの存在を確かめていないが、動画では
+// その導出が成り立たない。サムネイル生成と動画変換は別の工程で、実測した @eaDir にも
+// SYNOPHOTO_THUMB_M.jpg があるのに SYNOPHOTO_FILM.fail があった。だからフィルムは
+// HasFilm で自分で確かめる。
+//
+// 借りたXLは .jpg、借りたフィルムは .mp4 なので、選ばれたパスからMIMEを引き直せる。
+// 呼び出し側が引き直さずに済むよう、ここで一緒に返す。
+func fullViewPath(m media.Media) (path, contentType string) {
+	path = m.Path()
+	switch {
+	case imagefmt.IsVideo(path):
+		if synology.HasFilm(path) {
+			path = synology.FilmPath(path)
+		}
+	case imagefmt.IsSupported(path) && !imagefmt.IsDecodable(path) && synology.HasThumbM(path):
+		path = synology.ThumbXLPath(path)
+	}
+	return path, imagefmt.ContentType(path)
 }
 
 // parseWindow はクエリから窓枠の範囲を読む。省略時は先頭から chunkSize 件。

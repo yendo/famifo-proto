@@ -1,13 +1,12 @@
-// Package thumb は表示用に派生した画像を所有する。一覧用のサムネイルは借りられる
-// ものを借り、借りられないものだけ自前で生成する（自前の出力は常にJPEG）。
-// 拡大表示にどのファイルを配信するかの選択もここが決める。
+// Package thumb は一覧用のサムネイルを所有する。借りられるものは借り、
+// 借りられないものだけ自前で生成する（自前の出力は常にJPEG）。
 //
 // 取り込み側（internal/index）が生成と掃除を、配信側（internal/web）がパスの取得を
 // 使う。置き場所の規則を知るのはこのパッケージだけで、どちらの側もサムネイルの
 // ディレクトリを持たない。
 //
-// 生成にHEICと動画は来ない（自前ではデコードしない方針）。動画は絵も再生用の
-// 変換版も借りるだけで、famifoが作るものは何も無い。@eaDir のパスの組み立てと
+// 生成にHEICと動画は来ない（自前ではデコードしない方針）。動画のサムネイルは
+// 借りるだけで、famifoが作るものは何も無い。@eaDir のパスの組み立てと
 // 存在確認は internal/synology が持ち、ここはそれを使って選ぶだけである。
 package thumb
 
@@ -57,85 +56,6 @@ func NewProvider(dir string) (*Provider, error) {
 	return &Provider{dir: dir}, nil
 }
 
-// GeneratedPath は自前で生成したサムネイルの置き場所を返す。実在するとは限らない。
-// Prepare が書き込む先であり、置き場を掃除する道具が同じ規則で引くために公開する。
-//
-// 名前に元画像の版（mtimeのUnix秒）を含める。写真が差し替われば別のファイルに
-// なるので、鮮度の判定が「サムネイルのほうが新しいか」という順序の比較ではなく
-// 「その版の名前があるか」という一致の確認で済む。mtimeは前にしか進むとは
-// 限らず（cp -p や rsync -t でバックアップから戻すと過去へ動く）、順序で
-// 判定すると作り直しを見送ってしまうため。
-//
-// 秒に丸めるのは、DBが mod_time を Unix 秒で持っているのに合わせるためと、
-// ファイルシステムによって時刻の粒度が違うのを避けるため。
-func (pv *Provider) GeneratedPath(m media.Media) string {
-	name := fmt.Sprintf("%s-%d.jpg", m.ID(), m.ModTime().Unix())
-	return filepath.Join(pv.shardDir(m.ID()), name)
-}
-
-// SmallPath は一覧のタイルに配信するファイルのパスと、そのMIMEタイプを返す。
-//
-// 出どころはDBに持たず、配信のたびに調べる。取り込み時点の判断を焼き付けると、
-// あとからDSMがサムネイルを作っても（原本のmtimeが動かない限り再取り込みされないため）
-// 永久に反映されない。
-//
-// @eaDir を先に見るのは、実際のライブラリではHEICもJPEGもほぼ全てにSynologyの
-// サムネイルがあり、取り込み時に借りる側を優先しているぶん自前の置き場がほぼ空になる
-// ためである。先に自分の置き場を見ると大半のタイルで空振りする。
-//
-// どちらも無ければ原本に落ちる。ただしブラウザが表示できない形式（HEIC/HEIF）では
-// 原本を出しても割れたタイルになるだけなので ok=false を返し、配信側がプレースホルダに
-// 差し替える。
-//
-// 「ブラウザが出せるか」の判定に IsDecodable を使っている。いまの対応表では
-// 「famifoがデコードできる形式」と「ブラウザが表示できる形式」が一致しているためで、
-// 別の問いである。両者が食い違う形式（Goがデコードできないがブラウザは表示できる
-// AVIFなど）を表に足すときは、ここを分ける必要がある。
-func (pv *Provider) SmallPath(m media.Media) (path, contentType string, ok bool) {
-	if synology.HasThumbM(m.Path()) {
-		borrowed := synology.ThumbMPath(m.Path())
-		return borrowed, imagefmt.ContentType(borrowed), true
-	}
-	if out := pv.GeneratedPath(m); isRegularFile(out) {
-		return out, imagefmt.ContentType(out), true
-	}
-	if imagefmt.IsDecodable(m.Path()) {
-		// 借りるものが無いことは上で確かめてあるので、LargePath に訊き直しても
-		// 原本しか返らない。@eaDir をもう一度 stat せずに済ませる。
-		return m.Path(), imagefmt.ContentType(m.Path()), true
-	}
-	return "", "", false
-}
-
-// LargePath は拡大表示に配信するファイルのパスと、そのMIMEタイプを返す。
-//
-// 借りるものが2種類ある。HEICはSafari以外のブラウザが表示できないので、@eaDir から
-// 借りられるなら原本ではなくSynologyのXL（長辺1707px）を返す。動画はHEVCが端末に
-// よって再生できないので、Synologyが作ったH.264版（SYNOPHOTO_FILM_H.mp4）を返す。
-//
-// 動画を先に見るのは、静止画のXLを掴ませないためである。動画にもMとXLは作られるので、
-// 順序を逆にすると再生する場面で1枚の静止画が配られる。
-//
-// 写真では「MとXLは同じ生成器が一緒に書く」としてXLの存在を確かめていないが、動画では
-// その導出が成り立たない。サムネイル生成と動画変換は別の工程で、実測した @eaDir にも
-// SYNOPHOTO_THUMB_M.jpg があるのに SYNOPHOTO_FILM.fail があった。だからフィルムは
-// HasFilm で自分で確かめる。
-//
-// 借りたXLは .jpg、借りたフィルムは .mp4 なので、選ばれたパスからMIMEを引き直せる。
-// 呼び出し側が引き直さずに済むよう、ここで一緒に返す。
-func (pv *Provider) LargePath(m media.Media) (path, contentType string) {
-	path = m.Path()
-	switch {
-	case imagefmt.IsVideo(path):
-		if synology.HasFilm(path) {
-			path = synology.FilmPath(path)
-		}
-	case imagefmt.IsSupported(path) && !imagefmt.IsDecodable(path) && synology.HasThumbM(path):
-		path = synology.ThumbXLPath(path)
-	}
-	return path, imagefmt.ContentType(path)
-}
-
 // Prepare は写真1枚ぶんのサムネイルを配信できる状態にする。
 //
 // 呼び終わると、自分の置き場にはこの写真の現在の版が1つだけあるか、1つも無い。
@@ -150,26 +70,94 @@ func (pv *Provider) LargePath(m media.Media) (path, contentType string) {
 //
 // 生成に失敗した場合だけエラーを返す。インデックスに載せるかどうかは呼び出し側の
 // 判断である。
+//
+// 古い版の掃除の失敗は握りつぶす。消し残しは表示にも正しさにも影響せず、
+// 数KBのファイルが残るだけなので、これで取り込み全体を失敗させる価値がない。
 func (pv *Provider) Prepare(m media.Media, orientation uint16) error {
 	switch {
 	case synology.HasThumbM(m.Path()):
 		// 借りるほうへ切り替わったら、自前で作ったものは用済みになる。
-		pv.sweepQuietly(m.ID(), "")
+		_ = pv.sweepFamifoThumbs(m.ID(), "")
 	case imagefmt.IsDecodable(m.Path()):
-		out, err := pv.generate(m, orientation)
+		out, err := pv.generateFamifoThumb(m, orientation)
 		if err != nil {
 			// 失敗しても古い版は消さない。新しいのができるまでの控えとして
 			// 働いており、先に消すと一覧のタイルが割れるため。
 			return err
 		}
-		pv.sweepQuietly(m.ID(), out)
+		_ = pv.sweepFamifoThumbs(m.ID(), out)
 	default:
-		pv.sweepQuietly(m.ID(), "")
+		_ = pv.sweepFamifoThumbs(m.ID(), "")
 	}
 	return nil
 }
 
-// generate は m の原本からサムネイルを作る。
+// Path は一覧のタイルに配信するサムネイルのパスと、そのMIMEタイプを返す。
+//
+// 出どころはDBに持たず、配信のたびに調べる。取り込み時点の判断を焼き付けると、
+// あとからDSMがサムネイルを作っても（原本のmtimeが動かない限り再取り込みされないため）
+// 永久に反映されない。
+//
+// @eaDir を先に見るのは、実際のライブラリではHEICもJPEGもほぼ全てにSynologyの
+// サムネイルがあり、取り込み時に借りる側を優先しているぶん自前の置き場がほぼ空になる
+// ためである。先に自分の置き場を見ると大半のタイルで空振りする。
+//
+// どちらも無ければ原本に落ちる。ただしブラウザが表示できない形式（HEIC/HEIF）では
+// 原本を出しても割れたタイルになるだけなので ok=false を返し、配信側がプレースホルダに
+// 差し替える。
+//
+// 原本に落ちるのを残すかは未決である（2026-10-07）。取り込み時に Prepare が借りるか
+// 作るかしており、生成に失敗した写真はDBに載らないので、ここに来るのは取り込み後に
+// サムネイルが消えた場合に限られる。借りていた @eaDir のものが消えた（借りた時点で
+// 自前の分は掃除済み）か、自前の置き場から消されたかである。原本のmtimeが動かない限り
+// 取り込み直されないので、その間は重い原本が一覧に出続ける。また、原本を返すのは
+// サムネイルを供給するというこの型の役割を超えている。
+//
+// 「ブラウザが出せるか」の判定に IsDecodable を使っている。いまの対応表では
+// 「famifoがデコードできる形式」と「ブラウザが表示できる形式」が一致しているためで、
+// 別の問いである。両者が食い違う形式（Goがデコードできないがブラウザは表示できる
+// AVIFなど）を表に足すときは、ここを分ける必要がある。
+func (pv *Provider) Path(m media.Media) (path, contentType string, ok bool) {
+	if synology.HasThumbM(m.Path()) {
+		borrowed := synology.ThumbMPath(m.Path())
+		return borrowed, imagefmt.ContentType(borrowed), true
+	}
+	if out := pv.famifoThumbPath(m); isRegularFile(out) {
+		return out, imagefmt.ContentType(out), true
+	}
+	if imagefmt.IsDecodable(m.Path()) {
+		return m.Path(), imagefmt.ContentType(m.Path()), true
+	}
+	return "", "", false
+}
+
+// RemoveFamifoThumbs は id のサムネイルを版によらず全て削除する。
+// 存在しない場合はエラーにしない。
+func (pv *Provider) RemoveFamifoThumbs(id string) error { return pv.sweepFamifoThumbs(id, "") }
+
+// famifoThumbPath は自前で生成したサムネイルの置き場所を返す。実在するとは限らない。
+// Prepare が書き込む先であり、Path が引き当てる先でもある。
+//
+// 名前に元画像の版（mtimeのUnix秒）を含める。写真が差し替われば別のファイルに
+// なるので、鮮度の判定が「サムネイルのほうが新しいか」という順序の比較ではなく
+// 「その版の名前があるか」という一致の確認で済む。mtimeは前にしか進むとは
+// 限らず（cp -p や rsync -t でバックアップから戻すと過去へ動く）、順序で
+// 判定すると作り直しを見送ってしまうため。
+//
+// 秒に丸めるのは、DBが mod_time を Unix 秒で持っているのに合わせるためと、
+// ファイルシステムによって時刻の粒度が違うのを避けるため。
+func (pv *Provider) famifoThumbPath(m media.Media) string {
+	name := fmt.Sprintf("%s-%d.jpg", m.ID(), m.ModTime().Unix())
+	return filepath.Join(pv.shardDir(m.ID()), name)
+}
+
+// shardDir は id のサムネイルを置くディレクトリを返す。
+// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
+func (pv *Provider) shardDir(id string) string {
+	return filepath.Join(pv.dir, id[:2])
+}
+
+// generateFamifoThumb は m の原本からサムネイルを作る。
 // デコードできないファイルはエラーを返し、サムネイルは何も残さない。
 //
 // orientation はEXIFの向き（Orientation、1..8）。image.Decode はEXIFを見ずに
@@ -185,8 +173,8 @@ func (pv *Provider) Prepare(m media.Media, orientation uint16) error {
 //
 // 作った（または既にあった）サムネイルのパスを返す。呼び出し側が、それ以外の版を
 // 掃除するために使う。
-func (pv *Provider) generate(m media.Media, orientation uint16) (string, error) {
-	out := pv.GeneratedPath(m)
+func (pv *Provider) generateFamifoThumb(m media.Media, orientation uint16) (string, error) {
+	out := pv.famifoThumbPath(m)
 	if isRegularFile(out) {
 		return out, nil
 	}
@@ -230,25 +218,11 @@ func (pv *Provider) generate(m media.Media, orientation uint16) (string, error) 
 	return out, nil
 }
 
-// isRegularFile はそのパスに通常ファイルがあるかを返す。
-//
-// 名前に元画像の版が入っているので、存在すればその版から作られたものである。
-// 「元より新しいか」を確かめる必要はない。出力は一時ファイルへ書いてから
-// renameしているため、中途半端な内容が残っていることもない。
-func isRegularFile(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.Mode().IsRegular()
-}
-
-// Remove は id のサムネイルを版によらず全て削除する。
-// 存在しない場合はエラーにしない。
-func (pv *Provider) Remove(id string) error { return pv.sweep(id, "") }
-
-// sweep は id のサムネイルのうち keep 以外を削除する。keep が空なら全て消す。
+// sweepFamifoThumbs は id のサムネイルのうち keep 以外を削除する。keep が空なら全て消す。
 //
 // 同じ写真の古い版はここでまとめて片づく。前回の異常終了で取り残されたものも
 // 同時に回収する。版を持たない旧形式（<id>.jpg）も接頭辞で拾えるようにしてある。
-func (pv *Provider) sweep(id, keep string) error {
+func (pv *Provider) sweepFamifoThumbs(id, keep string) error {
 	dir := pv.shardDir(id)
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -272,14 +246,14 @@ func (pv *Provider) sweep(id, keep string) error {
 	return nil
 }
 
-// sweepQuietly は掃除の失敗を握りつぶす。消し残しは表示にも正しさにも影響せず、
-// 数KBのファイルが残るだけなので、これで取り込み全体を失敗させる価値がない。
-func (pv *Provider) sweepQuietly(id, keep string) { _ = pv.sweep(id, keep) }
-
-// shardDir は id のサムネイルを置くディレクトリを返す。
-// 1ディレクトリにファイルが集中しないようIDの先頭2文字で分割する。
-func (pv *Provider) shardDir(id string) string {
-	return filepath.Join(pv.dir, id[:2])
+// isRegularFile はそのパスに通常ファイルがあるかを返す。
+//
+// 名前に元画像の版が入っているので、存在すればその版から作られたものである。
+// 「元より新しいか」を確かめる必要はない。出力は一時ファイルへ書いてから
+// renameしているため、中途半端な内容が残っていることもない。
+func isRegularFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // scaleToFit は長辺が maxEdge 以下になるよう縮小する。元より大きくは引き伸ばさない。

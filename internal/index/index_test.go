@@ -1,8 +1,12 @@
 package index_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -114,6 +118,91 @@ func newFixtureRoots(t *testing.T, names ...string) (*fixture, []string) {
 
 	return &fixture{ix: ix, slots: slots, sc: index.NewScanner(ix, slots, time.Hour, nil, log),
 		st: st, thumbs: thumbs, root: roots[0], thumbDir: thumbDir, log: log}, roots
+}
+
+// writeJPEGWithOrientation は IFD0 に Orientation タグだけを持つJPEGを書き出す。
+// TIFFブロックを手で組み立ててAPP1としてSOI直後に差し込む。
+// internal/index/exif/exif_test.go と同じ手口。
+func writeJPEGWithOrientation(t *testing.T, dir, name string, w, h int, orientation uint16) string {
+	t.Helper()
+
+	var body bytes.Buffer
+	require.NoError(t, jpeg.Encode(&body, image.NewRGBA(image.Rect(0, 0, w, h)), nil))
+
+	le := binary.LittleEndian
+	var tiff bytes.Buffer
+	tiff.WriteString("II")              // リトルエンディアン
+	binary.Write(&tiff, le, uint16(42)) // TIFFマジック
+	binary.Write(&tiff, le, uint32(8))  // IFD0のオフセット
+
+	binary.Write(&tiff, le, uint16(1))      // IFD0: エントリ1件
+	binary.Write(&tiff, le, uint16(0x0112)) // Orientation
+	binary.Write(&tiff, le, uint16(3))      // SHORT
+	binary.Write(&tiff, le, uint32(1))      // 個数
+	binary.Write(&tiff, le, orientation)    // 4バイトの値欄に直接埋める
+	binary.Write(&tiff, le, uint16(0))      // 値欄の余り
+	binary.Write(&tiff, le, uint32(0))      // 次のIFDなし
+
+	var app1 bytes.Buffer
+	app1.Write([]byte{0xFF, 0xE1})
+	binary.Write(&app1, binary.BigEndian, uint16(2+6+tiff.Len()))
+	app1.WriteString("Exif\x00\x00")
+	app1.Write(tiff.Bytes())
+
+	out := append([]byte{0xFF, 0xD8}, app1.Bytes()...)
+	out = append(out, body.Bytes()[2:]...) // SOIを除いた残りを連結
+
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, out, 0o644))
+	return path
+}
+
+// decodeThumbConfig はサムネイルの寸法を読む。
+func decodeThumbConfig(t *testing.T, path string) image.Config {
+	t.Helper()
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	defer f.Close()
+	cfg, _, err := image.DecodeConfig(f)
+	require.NoError(t, err)
+	return cfg
+}
+
+// writeTestHEIC は最小のHEICを書き出してそのパスを返す。
+func writeTestHEIC(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, testHEIC(), 0o644))
+	return path
+}
+
+// writeTestMP4 は mvhd だけを持つ最小の mp4 を書き出す。ftyp が isom なので
+// creation_time は UTC として読まれる。中身の映像は無い。
+func writeTestMP4(t *testing.T, dir, name string, when time.Time) string {
+	t.Helper()
+
+	bx := func(typ string, parts ...[]byte) []byte {
+		var body []byte
+		for _, p := range parts {
+			body = append(body, p...)
+		}
+		out := make([]byte, 8, 8+len(body))
+		binary.BigEndian.PutUint32(out[:4], uint32(8+len(body)))
+		copy(out[4:8], typ)
+		return append(out, body...)
+	}
+
+	ftyp := bx("ftyp", []byte("isom"), []byte{0, 0, 2, 0}, []byte("mp41"))
+	mvhd := make([]byte, 100)
+	// 1904-01-01起点の秒。ペイロードの4バイト目から4バイト。
+	binary.BigEndian.PutUint32(mvhd[4:8], uint32(when.Unix()+2082844800))
+	moov := bx("moov", bx("mvhd", mvhd))
+
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, append(ftyp, moov...), 0o644))
+	return path
 }
 
 func TestNewSlotsPanicsBelowOne(t *testing.T) {
@@ -248,8 +337,8 @@ func TestScanBorrowsTheSynologyThumbnail(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Empty(t, f.generatedThumbs(t), "makes none of its own when it can borrow")
-	small, _, _ := f.thumbs.SmallPath(got)
-	require.Equal(t, synology.ThumbMPath(path), small, "the gallery shows the borrowed one")
+	served, _, _ := f.thumbs.Path(got)
+	require.Equal(t, synology.ThumbMPath(path), served, "the gallery shows the borrowed one")
 }
 
 // HEICはGoでデコードできないが、Synologyのサムネイルがあれば一覧に出せる。
@@ -263,8 +352,8 @@ func TestScanBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
-	small, _, _ := f.thumbs.SmallPath(got)
-	require.Equal(t, synology.ThumbMPath(path), small,
+	served, _, _ := f.thumbs.Path(got)
+	require.Equal(t, synology.ThumbMPath(path), served,
 		"borrowing puts it in the gallery even when it cannot be decoded")
 }
 
@@ -283,7 +372,7 @@ func TestScanLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T) {
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
 	require.Empty(t, f.generatedThumbs(t))
-	_, _, ok := f.thumbs.SmallPath(got)
+	_, _, ok := f.thumbs.Path(got)
 	require.False(t, ok, "with only .fail there is nothing to show in the gallery")
 }
 
