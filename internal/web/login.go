@@ -103,7 +103,7 @@ func (a *Auth) requireSignIn(next http.Handler) http.Handler {
 		}
 		// ページはログインへ送る。データを取りに来た経路は401で返す。
 		// ここでHTMLを返すと、fetchしている側でJSONの解釈が壊れ、画面には
-		// 何も出ないまま原因も読めなくなる。/thumb と /file は <img> と
+		// 何も出ないまま原因も読めなくなる。/thumb と /full は <img> と
 		// <video> が読むので、リダイレクトしても意味がない。
 		if isDataPath(r.URL.Path) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -115,11 +115,11 @@ func (a *Auth) requireSignIn(next http.Handler) http.Handler {
 
 // isDataPath はページではなくデータを取りに来た経路を見分ける。
 //
-// /tiles は gallery.js が fetch し、/thumb/ と /file/ は <img> と <video> が読む。
+// /tiles は gallery.js が fetch し、/thumb/ と /full/ は <img> と <video> が読む。
 // ここに挙げる経路は Handler のルート表と一対一である。データを返す経路を
 // 足したらここにも足すこと。忘れると、その経路だけ未認証時に白い画面になる。
 func isDataPath(p string) bool {
-	return p == "/tiles" || strings.HasPrefix(p, "/thumb/") || strings.HasPrefix(p, "/file/")
+	return p == "/tiles" || strings.HasPrefix(p, "/thumb/") || strings.HasPrefix(p, "/full/")
 }
 
 // currentUser はセッションから利用者の識別子（IDトークンの sub）を取り出す。

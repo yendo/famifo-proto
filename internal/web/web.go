@@ -41,7 +41,7 @@ const DefaultChunkSize = 120
 // contentSecurityPolicy はすべての応答に載せる方針。
 //
 // default-src を 'none' にして、必要なものだけを足す。ギャラリーが読むのは
-// /static/ のCSSとJS、/thumb/ と /file/ の画像と動画、それに /tiles の fetch
+// /static/ のCSSとJS、/thumb/ と /full/ の画像と動画、それに /tiles の fetch
 // だけで、外部から取るものは1つも無い（idiomorph も同梱してある）。
 // connect-src が要るのは、仮想スクロールが /tiles を fetch するためである。
 //
@@ -108,7 +108,7 @@ func NewHandler(st *store.Store, thumbs *thumb.Provider, auth *Auth, chunkSize i
 	routes.HandleFunc("GET /item/{id}", h.handleItem)
 	routes.HandleFunc("GET /tiles", h.handleTiles)
 	routes.HandleFunc("GET /thumb/{id}", h.handleThumb)
-	routes.HandleFunc("GET /file/{id}", h.handleFile)
+	routes.HandleFunc("GET /full/{id}", h.handleFull)
 
 	if auth == nil {
 		mux.Handle("/", routes)
@@ -123,7 +123,7 @@ func NewHandler(st *store.Store, thumbs *thumb.Provider, auth *Auth, chunkSize i
 
 // securityHeaders はすべての応答に同じ守りを載せる。
 //
-// nosniff が効くのは /thumb/ と /file/ である。どちらもディスク上のファイルの
+// nosniff が効くのは /thumb/ と /full/ である。どちらもディスク上のファイルの
 // 中身を、拡張子だけから決めたMIMEタイプで配る。写真のディレクトリにHTMLの
 // 中身を持つ .jpg が置かれても、いまのブラウザは image/* と宣言された応答を
 // HTMLへ格上げして解釈しないが、その挙動に頼らずに済ませる。
@@ -213,8 +213,8 @@ func (h *handlers) handleThumb(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-// handleFile は拡大表示用の画像を配信する。
-func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
+// handleFull は拡大表示用の写真と動画を配信する。
+func (h *handlers) handleFull(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.lookupMedia(w, r)
 	if !ok {
 		return

@@ -89,7 +89,7 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) (err error) {
 	}
 	// シンボリックリンクは載せない。
 	//
-	// 載せると配信できてしまう。行が入れば /file/{id} は原本のパス――つまり
+	// 載せると配信できてしまう。行が入れば /full/{id} は原本のパス――つまり
 	// リンクそのもの――を ServeFile に渡し、リンクを追った先の中身がブラウザへ
 	// 出ていく。-data が -dir の外にあることは config.Validate が確かめているが、
 	// リンクの先までは縛れないため、写真の共有フォルダに1本置くだけで
