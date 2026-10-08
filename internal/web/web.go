@@ -28,7 +28,7 @@ var assets embed.FS
 //go:embed static/no-preview.svg
 var noPreview []byte
 
-// defaultChunkSize は仮想スクロールが1回に取る塊の枚数。
+// DefaultChunkSize は仮想スクロールが1回に取る塊の枚数。
 //
 // 先頭の1塊は初回HTMLに埋め込む。クライアントは範囲を覆う塊が揃うまで
 // 描かないので、この値が「開いた画面 + overscan 4行」に届かないと、開いた
@@ -36,7 +36,7 @@ var noPreview []byte
 // 76枚（実データ4497枚で計測）で、60では足りていなかった。
 //
 // 利用者が変えられる設定ではない。表示の寸法を変えたときは測り直すこと。
-const defaultChunkSize = 120
+const DefaultChunkSize = 120
 
 // contentSecurityPolicy はすべての応答に載せる方針。
 //
@@ -76,46 +76,25 @@ const contentSecurityPolicy = "default-src 'none'; " +
 const noOpenItem = -1
 
 // NewHandler はルーティング済みのハンドラを返す。
-// 塊の大きさは defaultChunkSize に任せる。利用者が変えられる設定ではない。
 //
 // thumbs は取り込み側と共有する。配信するファイルの選択はすべてそこが決めるので、
 // このパッケージはサムネイルの置き場所を知らない。
 //
 // auth に nil を渡すと認証しない。開発機やテストでIdPを立てずに動かせるようにするため
 // であり、既定の構成でもある。
-func NewHandler(st *store.Store, thumbs *thumb.Provider, auth *Auth, log *slog.Logger) (http.Handler, error) {
-	a, err := newApp(st, thumbs, auth, log)
-	if err != nil {
-		return nil, err
-	}
-	return a.handler(), nil
-}
-
-// app はHTTPハンドラが使う依存をまとめる。ハンドラはこの型のメソッドで、
-// 認証の経路は Auth が持つ。
-type app struct {
-	store     *store.Store
-	tmpl      *template.Template
-	thumbs    *thumb.Provider
-	chunkSize int
-	auth      *Auth // nil なら認証しない
-	log       *slog.Logger
-}
-
-// newApp はテンプレートを読み込んでappを作る。
-func newApp(st *store.Store, thumbs *thumb.Provider, auth *Auth, log *slog.Logger) (*app, error) {
+//
+// chunkSize は仮想スクロールが1回に取る塊の枚数で、本番は DefaultChunkSize を渡す。
+// テストは塊の境界を跨ぐ挙動を少ない写真で確かめるため、小さい値を渡す。
+//
+// セッションのミドルウェア（LoadAndSave）は /static/ には掛けない。静的ファイルは
+// セッションを読まないし、掛けると応答に Vary: Cookie が付く。
+func NewHandler(st *store.Store, thumbs *thumb.Provider, auth *Auth, chunkSize int, log *slog.Logger) (http.Handler, error) {
 	tmpl, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("cannot load the templates: %w", err)
 	}
-	return &app{store: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, auth: auth, log: log}, nil
-}
+	h := &handlers{store: st, tmpl: tmpl, thumbs: thumbs, chunkSize: chunkSize, auth: auth, log: log}
 
-// handler はルーティング済みのハンドラを返す。
-//
-// セッションのミドルウェア（LoadAndSave）は /static/ には掛けない。静的ファイルは
-// セッションを読まないし、掛けると応答に Vary: Cookie が付く。
-func (a *app) handler() http.Handler {
 	mux := http.NewServeMux()
 
 	staticFS, err := fs.Sub(assets, "static")
@@ -126,21 +105,21 @@ func (a *app) handler() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
 	routes := http.NewServeMux()
-	routes.HandleFunc("GET /{$}", a.handleIndex)
-	routes.HandleFunc("GET /item/{id}", a.handleItem)
-	routes.HandleFunc("GET /tiles", a.handleTiles)
-	routes.HandleFunc("GET /thumb/{id}", a.handleThumb)
-	routes.HandleFunc("GET /file/{id}", a.handleFile)
+	routes.HandleFunc("GET /{$}", h.handleIndex)
+	routes.HandleFunc("GET /item/{id}", h.handleItem)
+	routes.HandleFunc("GET /tiles", h.handleTiles)
+	routes.HandleFunc("GET /thumb/{id}", h.handleThumb)
+	routes.HandleFunc("GET /file/{id}", h.handleFile)
 
-	if a.auth == nil {
+	if auth == nil {
 		mux.Handle("/", routes)
 	} else {
 		session := http.NewServeMux()
-		session.Handle("/", a.auth.requireSignIn(routes))
-		a.auth.addRoutes(session)
-		mux.Handle("/", a.auth.sessions.LoadAndSave(session))
+		session.Handle("/", auth.requireSignIn(routes))
+		auth.addRoutes(session)
+		mux.Handle("/", auth.sessions.LoadAndSave(session))
 	}
-	return securityHeaders(mux)
+	return securityHeaders(mux), nil
 }
 
 // securityHeaders はすべての応答に同じ守りを載せる。
@@ -161,9 +140,20 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// handlers はHTTPハンドラが使う依存をまとめる。ハンドラはこの型のメソッドで、
+// 認証の経路は Auth が持つ。
+type handlers struct {
+	store     *store.Store
+	tmpl      *template.Template
+	thumbs    *thumb.Provider
+	chunkSize int
+	auth      *Auth // nil なら認証しない
+	log       *slog.Logger
+}
+
 // handleIndex はギャラリーのトップページを返す。
-func (a *app) handleIndex(w http.ResponseWriter, r *http.Request) {
-	a.renderIndex(w, r, noOpenItem)
+func (h *handlers) handleIndex(w http.ResponseWriter, r *http.Request) {
+	h.renderIndex(w, r, noOpenItem)
 }
 
 // handleItem は写真ごとのURLを受け、その写真を開いた状態のギャラリーを返す。
@@ -171,8 +161,8 @@ func (a *app) handleIndex(w http.ResponseWriter, r *http.Request) {
 //
 // 消えた写真のURLを共有されることは普通に起きる。404にすると行き止まりになるので、
 // ギャラリーへ送る。
-func (a *app) handleItem(w http.ResponseWriter, r *http.Request) {
-	rank, err := a.store.RankOf(r.Context(), r.PathValue("id"))
+func (h *handlers) handleItem(w http.ResponseWriter, r *http.Request) {
+	rank, err := h.store.RankOf(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -181,24 +171,77 @@ func (a *app) handleItem(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	a.renderIndex(w, r, rank)
+	h.renderIndex(w, r, rank)
+}
+
+// handleTiles は仮想スクロール用のHTML断片を返す。
+// 初回ページと同じテンプレートを使い、マークアップを1箇所に保つ。
+func (h *handlers) handleTiles(w http.ResponseWriter, r *http.Request) {
+	offset, limit, err := parseWindow(r, h.chunkSize)
+	if err != nil {
+		http.Error(w, "bad range", http.StatusBadRequest)
+		return
+	}
+	tiles, err := h.buildRange(r, offset, limit)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.tmpl.ExecuteTemplate(w, "tiles", tiles); err != nil {
+		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
+		h.log.Error("failed to render the tiles template", "err", err)
+		return
+	}
+}
+
+// handleThumb は一覧のタイルを配信する。どのファイルを出すかは thumb が決める。
+// 出せる絵が無ければプレースホルダに差し替えるので、404にはならない。
+func (h *handlers) handleThumb(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.lookupMedia(w, r)
+	if !ok {
+		return
+	}
+	path, contentType, ok := h.thumbs.Path(m)
+	if !ok {
+		serveNoPreview(w)
+		return
+	}
+	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
+	// 先に設定しておけばServeContentは上書きしない。
+	w.Header().Set("Content-Type", contentType)
+	http.ServeFile(w, r, path)
+}
+
+// handleFile は拡大表示用の画像を配信する。
+func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.lookupMedia(w, r)
+	if !ok {
+		return
+	}
+	path, contentType := fullViewPath(m)
+	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
+	// 先に設定しておけばServeContentは上書きしない。
+	w.Header().Set("Content-Type", contentType)
+	http.ServeFile(w, r, path)
 }
 
 // renderIndex はトップページのHTMLを組み立てて返す。openIndex は開いた状態で
 // 表示する写真の通し番号で、noOpenItem なら閉じたまま開く。
 // 先頭の塊を埋めた状態で返すので、開いた直後に灰色の画面が出ない。
-func (a *app) renderIndex(w http.ResponseWriter, r *http.Request, openIndex int) {
-	tiles, err := a.buildRange(r, 0, a.chunkSize)
+func (h *handlers) renderIndex(w http.ResponseWriter, r *http.Request, openIndex int) {
+	tiles, err := h.buildRange(r, 0, h.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	total, err := a.store.Count(r.Context())
+	total, err := h.store.Count(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	days, err := a.store.DayGroups(r.Context())
+	days, err := h.store.DayGroups(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -215,68 +258,15 @@ func (a *app) renderIndex(w http.ResponseWriter, r *http.Request, openIndex int)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	view := indexView{
-		tilesView: tiles, Total: total, ChunkSize: a.chunkSize,
+		tilesView: tiles, Total: total, ChunkSize: h.chunkSize,
 		DayGroups: template.JS(raw), OpenIndex: openIndex,
-		AuthEnabled: a.auth != nil,
+		AuthEnabled: h.auth != nil,
 	}
-	if err := a.tmpl.ExecuteTemplate(w, "index", view); err != nil {
+	if err := h.tmpl.ExecuteTemplate(w, "index", view); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		a.log.Error("failed to render the index template", "err", err)
+		h.log.Error("failed to render the index template", "err", err)
 		return
 	}
-}
-
-// handleTiles は仮想スクロール用のHTML断片を返す。
-// 初回ページと同じテンプレートを使い、マークアップを1箇所に保つ。
-func (a *app) handleTiles(w http.ResponseWriter, r *http.Request) {
-	offset, limit, err := parseWindow(r, a.chunkSize)
-	if err != nil {
-		http.Error(w, "bad range", http.StatusBadRequest)
-		return
-	}
-	tiles, err := a.buildRange(r, offset, limit)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := a.tmpl.ExecuteTemplate(w, "tiles", tiles); err != nil {
-		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		a.log.Error("failed to render the tiles template", "err", err)
-		return
-	}
-}
-
-// handleThumb は一覧のタイルを配信する。どのファイルを出すかは thumb が決める。
-// 出せる絵が無ければプレースホルダに差し替えるので、404にはならない。
-func (a *app) handleThumb(w http.ResponseWriter, r *http.Request) {
-	m, ok := a.lookupMedia(w, r)
-	if !ok {
-		return
-	}
-	path, contentType, ok := a.thumbs.Path(m)
-	if !ok {
-		serveNoPreview(w)
-		return
-	}
-	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
-	// 先に設定しておけばServeContentは上書きしない。
-	w.Header().Set("Content-Type", contentType)
-	http.ServeFile(w, r, path)
-}
-
-// handleFile は拡大表示用の画像を配信する。
-func (a *app) handleFile(w http.ResponseWriter, r *http.Request) {
-	m, ok := a.lookupMedia(w, r)
-	if !ok {
-		return
-	}
-	path, contentType := fullViewPath(m)
-	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
-	// 先に設定しておけばServeContentは上書きしない。
-	w.Header().Set("Content-Type", contentType)
-	http.ServeFile(w, r, path)
 }
 
 // parseWindow はクエリから窓枠の範囲を読む。省略時は先頭から chunkSize 件。
@@ -301,8 +291,8 @@ func parseWindow(r *http.Request, defaultLimit int) (offset, limit int, err erro
 
 // lookupMedia はURLのIDから写真を引く。
 // パスではなくIDを経由することで、インデックスに無いファイルは配信できない。
-func (a *app) lookupMedia(w http.ResponseWriter, r *http.Request) (media.Media, bool) {
-	m, err := a.store.GetByID(r.Context(), r.PathValue("id"))
+func (h *handlers) lookupMedia(w http.ResponseWriter, r *http.Request) (media.Media, bool) {
+	m, err := h.store.GetByID(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return media.Media{}, false

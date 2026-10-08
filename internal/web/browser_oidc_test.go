@@ -183,7 +183,7 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sessions.Close() })
 
-	h, err := web.NewHandler(st, thumbs, web.NewAuth(client, sessions, "", log), log)
+	h, err := web.NewHandler(st, thumbs, web.NewAuth(client, sessions, "", log), web.DefaultChunkSize, log)
 	require.NoError(t, err)
 
 	ts := httptest.NewUnstartedServer(h)
