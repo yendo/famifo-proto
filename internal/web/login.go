@@ -63,7 +63,7 @@ type Provider interface {
 	LogoutURL(postLogoutRedirectURI, idTokenHint string) (string, bool)
 }
 
-// Auth は認証の経路とミドルウェアを担う。NewGallery に nil を渡すと認証しない。
+// Auth は認証の経路とミドルウェアを担う。NewHandler に nil を渡すと認証しない。
 type Auth struct {
 	oidc Provider
 	// sessions はセッションの保管と持ち回りを担う。Cookieの名前も属性も、
