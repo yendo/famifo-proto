@@ -330,10 +330,16 @@ func waitForIndexing(t *testing.T, path string) *os.File {
 	}
 }
 
-// serveFifo は path に読み手が現れるたびにJPEGを流し込む係を置く。
-// 1枚の取り込みは原本を3度開く。中身の検査とEXIFの読み取りとサムネイルの生成である。
-// どちらの open(2) にも応じる必要があるうえ、1度目の読み手が閉じる時刻は
+// serveFifo は path に読み手が現れるたびに data を流し込む係を置く。
+// 1枚の取り込みは原本を何度か開く（HEICなら中身の検査とEXIFの読み取り）。
+// どの open(2) にも応じる必要があるうえ、1度目の読み手が閉じる時刻は
 // こちらから見えないので、回数を数えずに応じ続ける。
+//
+// 読み手ごとに中身が届く保証は無い。前の読み手が閉じたあと、こちらが書き込み側を
+// 閉じる前に次の読み手が開くと、次の読み手は同じパイプにつながり、何も受け取らずに
+// EOFを読む。届かなくても取り込みが成り立つ読み手（EXIFの読み取り）の後ろにしか
+// 使えない。JPEGならサムネイルの生成が空を受け取ってデコードに失敗し、取り込みが
+// 行を作らないまま終わる。
 //
 // 1周ごとに間を置くのは、読み手に順番を回すためである。書き込みのopenが待つのは
 // 読み手が「居ない」ときだけで、取り込みが開いたまま読んでいる間は何度開いても
@@ -388,14 +394,10 @@ func TestWatcherKeepsHandlingEventsWhileAFileIsStuck(t *testing.T) {
 
 	requireCount(t, f, 1) // 止まっている1枚に巻き込まれない
 
-	// 止めていた取り込みを最後まで通してから監視を止める。中身の検査が最初の
-	// 読み手なので、空のまま閉じるとEOFだけが渡り、「写真ではない」と判断されて
-	// そこで終わる。署名を含む先頭を流してから閉じる。
-	_, err := w.Write(testJPEG(t, 40, 20))
-	require.NoError(t, err)
+	// 止めていた取り込みを終わらせてから監視を止める。何も流さずに閉じれば、
+	// 最初の読み手である中身の検査がEOFだけを受け取り、「写真ではない」と
+	// 判断してそこで終わる。
 	require.NoError(t, w.Close())
-	serveFifo(t, stuck, testJPEG(t, 40, 20))
-	requireCount(t, f, 2)
 }
 
 func TestWatcherIndexesUpToWorkersInParallel(t *testing.T) {
@@ -411,16 +413,10 @@ func TestWatcherIndexesUpToWorkersInParallel(t *testing.T) {
 	wa := waitForIndexing(t, a)
 	wb := waitForIndexing(t, b)
 
-	// 2枚とも最後まで通してから監視を止める。空のまま閉じると中身の検査が
-	// EOFを受け取って終わるので、署名を含む先頭を流してから閉じる。
-	for _, w := range []*os.File{wa, wb} {
-		_, err := w.Write(testJPEG(t, 40, 20))
-		require.NoError(t, err)
-		require.NoError(t, w.Close())
-	}
-	serveFifo(t, a, testJPEG(t, 40, 20))
-	serveFifo(t, b, testJPEG(t, 40, 20))
-	requireCount(t, f, 2)
+	// 止めていた2枚を終わらせてから監視を止める。何も流さずに閉じれば、
+	// 中身の検査がEOFだけを受け取ってそこで終わる。
+	require.NoError(t, wa.Close())
+	require.NoError(t, wb.Close())
 }
 
 func TestWatcherLeavesNoRowForAFileMovedWhileBeingIndexed(t *testing.T) {
