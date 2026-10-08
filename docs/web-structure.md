@@ -55,7 +55,7 @@ index.html
         +-- lightbox.js --+
         +-- scrubber.js --+--> gallery.js --> idiomorph.esm.js
               |                    |
-              |                    +--> fetch /tiles?offset&limit
+              |                    +--> fetch /tiles?chunk
               |                    |
               +--------------------+--> layout.js
 
