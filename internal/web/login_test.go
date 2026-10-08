@@ -85,7 +85,7 @@ func newAuthFixtureWith(t *testing.T, prov *fakeProvider, secure bool) *authFixt
 
 	h, err := web.NewHandler(st, thumbs,
 		web.NewAuth(prov, sessions, "https://famifo.example.invalid", log),
-		log)
+		web.DefaultChunkSize, log)
 	require.NoError(t, err)
 	return &authFixture{h: h, prov: prov}
 }
@@ -466,7 +466,7 @@ func TestWithoutAuthEverythingIsOpen(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	thumbs, err := thumb.NewProvider(dir + "/thumbs")
 	require.NoError(t, err)
-	h, err := web.NewHandler(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, err := web.NewHandler(st, thumbs, nil, web.DefaultChunkSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 
 	resp := get(t, h, "/")

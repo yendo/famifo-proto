@@ -46,8 +46,8 @@ type indexView struct {
 }
 
 // buildRange はオフセット指定で1窓枠分を組み立てる。
-func (a *app) buildRange(r *http.Request, offset, limit int) (tilesView, error) {
-	items, err := a.store.ListRange(r.Context(), offset, limit)
+func (h *handlers) buildRange(r *http.Request, offset, limit int) (tilesView, error) {
+	items, err := h.store.ListRange(r.Context(), offset, limit)
 	if err != nil {
 		return tilesView{}, err
 	}
