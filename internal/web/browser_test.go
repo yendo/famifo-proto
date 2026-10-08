@@ -300,11 +300,12 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h, err := web.NewHandler(st, thumbs, nil, testChunkSize, log)
+	h, err := web.NewHandler(st, thumbs, nil, log)
 	if err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
 	}
+	h.SetChunkSize(testChunkSize)
 
 	srv = httptest.NewServer(h)
 	return tempDir, srv, func() { st.Close() }, nil
@@ -1936,8 +1937,9 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 
 	require.NoError(t, prepareManyTestMedia(st, mediaDir, thumbs))
 
-	h, err := web.NewHandler(st, thumbs, nil, stallChunkSize, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, err := web.NewHandler(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
+	h.SetChunkSize(stallChunkSize)
 
 	var items, dropped int64
 	gate := make(chan struct{}, 1)
@@ -2227,7 +2229,7 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 		media.Restore(mediaPath, time.Unix(1600000000, 0), time.Unix(1600000000, 0))))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h, err := web.NewHandler(st, thumbs, nil, web.DefaultChunkSize, log)
+	h, err := web.NewHandler(st, thumbs, nil, log)
 	require.NoError(t, err)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)

@@ -106,7 +106,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Warn("authentication is off, anyone who can reach this address can see the media")
 	}
 
-	handler, err := web.NewHandler(st, thumbs, auth, web.DefaultChunkSize, log)
+	handler, err := web.NewHandler(st, thumbs, auth, log)
 	if err != nil {
 		return err
 	}
