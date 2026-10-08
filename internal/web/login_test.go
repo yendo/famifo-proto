@@ -161,7 +161,7 @@ func TestPagesRedirectToLoginWhenNotSignedIn(t *testing.T) {
 func TestDataPathsReturn401WhenNotSignedIn(t *testing.T) {
 	f := newAuthFixture(t)
 
-	for _, path := range []string{"/tiles?offset=0&limit=1", "/thumb/abc", "/file/abc"} {
+	for _, path := range []string{"/tiles?offset=0&limit=1", "/thumb/abc", "/full/abc"} {
 		resp := get(t, f.h, path)
 		require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "path %s", path)
 	}

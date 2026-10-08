@@ -129,7 +129,7 @@ func TestGalleryRendersTiles(t *testing.T) {
 	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
 	body := rec.Body.String()
 	require.Contains(t, body, `src="/thumb/`+m.ID()+`"`)
-	require.Contains(t, body, `data-full="/file/`+m.ID()+`"`)
+	require.Contains(t, body, `data-full="/full/`+m.ID()+`"`)
 }
 
 func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
@@ -179,7 +179,7 @@ func TestGalleryPointsEveryTileAtThumb(t *testing.T) {
 
 	require.Contains(t, body, `src="/thumb/`+m.ID()+`"`,
 		"a tile points at /thumb/ even with no thumbnail; the handler falls back to the original")
-	require.NotContains(t, body, `src="/file/`+m.ID()+`"`)
+	require.NotContains(t, body, `src="/full/`+m.ID()+`"`)
 }
 
 func TestGalleryOrdersNewestFirst(t *testing.T) {
@@ -206,7 +206,7 @@ func TestTilesReturnsFragmentOnly(t *testing.T) {
 	body := rec.Body.String()
 	require.NotContains(t, body, "<html", "a fragment, not a whole page")
 	require.NotContains(t, body, "<body")
-	require.Contains(t, body, "/file/")
+	require.Contains(t, body, "/full/")
 }
 
 func TestTilesReturnsRequestedWindow(t *testing.T) {
@@ -415,7 +415,7 @@ func TestTilesLinkToTheItemPage(t *testing.T) {
 	body := doGet(t, f.h, "/").Body.String()
 
 	require.Contains(t, body, `href="/item/`+m.ID()+`"`)
-	require.Contains(t, body, `data-full="/file/`+m.ID()+`"`)
+	require.Contains(t, body, `data-full="/full/`+m.ID()+`"`)
 }
 
 // タイルが動画かどうかはHTMLに出る。lightbox.js が拡大表示の切り替えに使い、
@@ -520,7 +520,7 @@ func TestServeOriginal(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	original, err := os.ReadFile(m.Path())
@@ -534,7 +534,7 @@ func TestServeOriginalSetsHEICContentType(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.heic", rec.Body.String(),
@@ -547,7 +547,7 @@ func TestServeOriginalNotFoundForUnknownID(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
 
-	rec := doGet(t, f.h, "/file/deadbeef")
+	rec := doGet(t, f.h, "/full/deadbeef")
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
@@ -557,9 +557,9 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 	f := newWebFixture(t, 10)
 	// パスではなくIDでしか引けないため、traversalは構造的に成立しない
 	for _, target := range []string{
-		"/file/../../etc/passwd",
+		"/full/../../etc/passwd",
 		"/thumb/..%2f..%2fetc%2fpasswd",
-		"/file/" + media.IDFor("/etc/passwd"),
+		"/full/" + media.IDFor("/etc/passwd"),
 	} {
 		t.Run(target, func(t *testing.T) {
 			rec := doGet(t, f.h, target)
@@ -584,7 +584,7 @@ func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-xl-a.heic", rec.Body.String(),
@@ -598,7 +598,7 @@ func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String(),
@@ -613,7 +613,7 @@ func TestServeVideoBorrowsTheTranscode(t *testing.T) {
 	m := f.addMedia(t, "clip.mp4", time.Unix(1600000000, 0), noThumb)
 	writeFileAt(t, synology.FilmPath(m.Path()), "film-clip.mp4")
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "film-clip.mp4", rec.Body.String())
@@ -626,7 +626,7 @@ func TestServeOriginalVideoWithoutATranscode(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "clip.mov", time.Unix(1600000000, 0), noThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-clip.mov", rec.Body.String())
@@ -641,7 +641,7 @@ func TestServeVideoDoesNotBorrowTheXL(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "clip.mp4", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-clip.mp4", rec.Body.String(), "an XL still is not what you play")
@@ -657,7 +657,7 @@ func TestResponsesCarryTheSecurityHeaders(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	for _, target := range []string{"/", "/tiles", "/static/app.css", "/thumb/" + m.ID(), "/file/" + m.ID()} {
+	for _, target := range []string{"/", "/tiles", "/static/app.css", "/thumb/" + m.ID(), "/full/" + m.ID()} {
 		t.Run(target, func(t *testing.T) {
 			rec := doGet(t, f.h, target)
 

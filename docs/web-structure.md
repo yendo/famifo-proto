@@ -30,7 +30,7 @@ routes (methods of handlers)                               web.go
   GET /tiles       handleTiles ----> parseWindow -> buildRange -> tmpl "tiles"
   GET /thumb/{id}  handleThumb ----> lookupMedia -> thumb.Provider
                                                     or serveNoPreview
-  GET /file/{id}   handleFile  ----> lookupMedia -> fullViewPath
+  GET /full/{id}   handleFull  ----> lookupMedia -> fullViewPath
 ```
 
 ## View models and templates
@@ -59,7 +59,7 @@ index.html
               |                    |
               +--------------------+--> layout.js
 
-<img>, <video> --> /thumb/{id}, /file/{id}
+<img>, <video> --> /thumb/{id}, /full/{id}
 ```
 
 ## Dependencies on other packages

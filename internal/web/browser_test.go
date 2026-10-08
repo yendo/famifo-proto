@@ -456,7 +456,7 @@ func expectedMediaURLs(n int) []string {
 	out := make([]string, n)
 	for i := 0; i < n; i++ {
 		path := filepath.Join(testMediaDir, fmt.Sprintf("p%04d.jpg", i))
-		out[i] = "/file/" + media.IDFor(path)
+		out[i] = "/full/" + media.IDFor(path)
 	}
 	return out
 }
@@ -2088,7 +2088,7 @@ func TestItemURLOpensTheLightbox(t *testing.T) {
 
 	const target = testChunkSize + 40 // 初回HTMLに埋まっていない位置
 	want := expectedMediaURLs(target + 1)[target]
-	id := strings.TrimPrefix(want, "/file/")
+	id := strings.TrimPrefix(want, "/full/")
 
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
@@ -2115,7 +2115,7 @@ func TestBackClosesTheLightbox(t *testing.T) {
 	defer cancel()
 
 	want := expectedMediaURLs(1)[0]
-	id := strings.TrimPrefix(want, "/file/")
+	id := strings.TrimPrefix(want, "/full/")
 
 	var path string
 	var survived bool
@@ -2151,7 +2151,7 @@ func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
 	defer cancel()
 
 	urls := expectedMediaURLs(4)
-	third := strings.TrimPrefix(urls[3], "/file/")
+	third := strings.TrimPrefix(urls[3], "/full/")
 
 	var path string
 	err := chromedp.Run(rctx,
@@ -2164,7 +2164,7 @@ func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	for i := 1; i <= 3; i++ {
-		want := strings.Replace(urls[i], "/file/", "/item/", 1)
+		want := strings.Replace(urls[i], "/full/", "/item/", 1)
 		err = chromedp.Run(rctx,
 			chromedp.KeyEvent(kb.ArrowRight),
 			chromedp.Poll(fmt.Sprintf(`location.pathname === %s`, strconv.Quote(want)), nil,
@@ -2261,7 +2261,7 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, got.VHidden, "the video element is shown for a video")
 	require.True(t, got.IHidden, "the image element is hidden for a video")
-	require.True(t, strings.HasPrefix(got.Src, "/file/"), "got %q", got.Src)
+	require.True(t, strings.HasPrefix(got.Src, "/full/"), "got %q", got.Src)
 
 	// 次（写真）へ送ると入れ替わり、動画の src は外れる。
 	err = chromedp.Run(rctx,

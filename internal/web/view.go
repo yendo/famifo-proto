@@ -59,7 +59,7 @@ func (h *handlers) buildRange(r *http.Request, offset, limit int) (tilesView, er
 		v.Media = append(v.Media, mediaView{
 			ID:       m.ID(),
 			PageURL:  "/item/" + m.ID(),
-			FullURL:  "/file/" + m.ID(),
+			FullURL:  "/full/" + m.ID(),
 			ThumbURL: "/thumb/" + m.ID(),
 			Date:     m.TakenAt().Format("2006-01-02"),
 			IsVideo:  imagefmt.IsVideo(m.Path()),
