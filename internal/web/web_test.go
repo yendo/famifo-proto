@@ -199,9 +199,9 @@ func TestTilesReturnsFragmentOnly(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 1)
 	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
-	last := f.addMedia(t, "b.jpg", time.Unix(1700000000, 0), famifoThumb)
+	f.addMedia(t, "b.jpg", time.Unix(1700000000, 0), famifoThumb)
 
-	rec := doGet(t, f.h, "/tiles?t=1700000000&id="+last.ID())
+	rec := doGet(t, f.h, "/tiles?chunk=0")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
@@ -210,22 +210,22 @@ func TestTilesReturnsFragmentOnly(t *testing.T) {
 	require.Contains(t, body, "/full/")
 }
 
-func TestTilesReturnsRequestedWindow(t *testing.T) {
+func TestTilesReturnsRequestedChunk(t *testing.T) {
 	t.Parallel()
-	f := newWebFixture(t, 60)
+	f := newWebFixture(t, 2)
 	var ids []string
 	for i := range 5 {
 		m := f.addMedia(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), famifoThumb)
 		ids = append(ids, m.ID())
 	}
 
-	body := doGet(t, f.h, "/tiles?offset=1&limit=2").Body.String()
+	body := doGet(t, f.h, "/tiles?chunk=1").Body.String()
 
-	// 新しい順は p4,p3,p2,p1,p0 なので offset=1 の2件は p3,p2
-	require.Contains(t, body, ids[3])
+	// 新しい順は p4,p3,p2,p1,p0 なので、2枚ずつの塊の1番目は p2,p1
 	require.Contains(t, body, ids[2])
-	require.NotContains(t, body, ids[4])
-	require.NotContains(t, body, ids[1])
+	require.Contains(t, body, ids[1])
+	require.NotContains(t, body, ids[3])
+	require.NotContains(t, body, ids[0])
 }
 
 func TestTilesHasNoSentinel(t *testing.T) {
@@ -233,20 +233,20 @@ func TestTilesHasNoSentinel(t *testing.T) {
 	f := newWebFixture(t, 60)
 	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	body := doGet(t, f.h, "/tiles?offset=0&limit=1").Body.String()
+	body := doGet(t, f.h, "/tiles?chunk=0").Body.String()
 
 	require.NotContains(t, body, "hx-", "no htmx attributes are left behind")
 	require.NotContains(t, body, "sentinel")
 }
 
-func TestTilesRejectsBadOffset(t *testing.T) {
+func TestTilesRejectsBadChunk(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
 	for _, target := range []string{
-		"/tiles?offset=abc&limit=10",
-		"/tiles?offset=-1&limit=10",
-		"/tiles?offset=0&limit=abc",
-		"/tiles?offset=0&limit=-1",
+		"/tiles?chunk=abc",
+		"/tiles?chunk=-1",
+		"/tiles?chunk=1.5",
+		"/tiles?chunk=9223372036854775807", // 塊の大きさを掛けると溢れる
 	} {
 		t.Run(target, func(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, doGet(t, f.h, target).Code)
@@ -335,7 +335,7 @@ func TestTilesTagsEachTileWithLocalDate(t *testing.T) {
 	// ローカルで2月8日の未明。UTCに直すと2月7日になる時刻。
 	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 0, 30, 0, 0, time.Local), famifoThumb)
 
-	body := doGet(t, f.h, "/tiles?offset=0&limit=60").Body.String()
+	body := doGet(t, f.h, "/tiles?chunk=0").Body.String()
 
 	require.Contains(t, body, `data-date="2026-02-08"`,
 		"cutting in UTC would give 2026-02-07; group by local time")

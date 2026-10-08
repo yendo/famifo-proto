@@ -174,7 +174,7 @@ export const gallery = (() => {
 		const controller = new AbortController();
 		const job = (async () => {
 			const res = await fetch(
-				`/tiles?offset=${ci * chunkSize}&limit=${chunkSize}`,
+				`/tiles?chunk=${ci}`,
 				{ signal: controller.signal },
 			);
 			// 401 はセッションが切れたということ。ここで握り潰すと、タイルが永久に

@@ -138,7 +138,7 @@ import { gallery } from "./gallery.js";
 		const i = Number(tile.dataset.i);
 		if (!Number.isInteger(i)) return; // 通し番号が無いタイルは無視する。
 		// NaN は i < 0 も i >= total も満たさず、
-		// offset=NaN のリクエストまで素通りする
+		// chunk=NaN のリクエストまで素通りする
 		open(i, "push").catch(() => {});
 	});
 

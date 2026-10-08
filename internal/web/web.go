@@ -162,13 +162,16 @@ func (h *Handler) handleItem(w http.ResponseWriter, r *http.Request) {
 
 // handleTiles は仮想スクロール用のHTML断片を返す。
 // 初回ページと同じテンプレートを使い、マークアップを1箇所に保つ。
+//
+// 受け取るのは塊の番号だけで、1塊の枚数はサーバーが決める。クライアントが
+// 件数を指定できると、大きな値1つで全件を引いて描かせられる。
 func (h *Handler) handleTiles(w http.ResponseWriter, r *http.Request) {
-	offset, limit, err := parseWindow(r, h.chunkSize)
+	chunk, err := parseChunk(r)
 	if err != nil {
-		http.Error(w, "bad range", http.StatusBadRequest)
+		http.Error(w, "bad chunk", http.StatusBadRequest)
 		return
 	}
-	tiles, err := h.buildRange(r, offset, limit)
+	tiles, err := h.buildRange(r, chunk*h.chunkSize, h.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -273,24 +276,19 @@ func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, openIndex 
 	}
 }
 
-// parseWindow はクエリから窓枠の範囲を読む。省略時は先頭から chunkSize 件。
-func parseWindow(r *http.Request, defaultLimit int) (offset, limit int, err error) {
-	limit = defaultLimit
-	q := r.URL.Query()
-
-	if raw := q.Get("offset"); raw != "" {
-		offset, err = strconv.Atoi(raw)
-		if err != nil || offset < 0 {
-			return 0, 0, fmt.Errorf("invalid offset: %q", raw)
-		}
+// parseChunk はクエリから塊の番号を読む。省略時は先頭の塊。
+//
+// int32 に収まる値に限るのは、塊の大きさを掛けたオフセットを溢れさせないため。
+func parseChunk(r *http.Request) (int, error) {
+	raw := r.URL.Query().Get("chunk")
+	if raw == "" {
+		return 0, nil
 	}
-	if raw := q.Get("limit"); raw != "" {
-		limit, err = strconv.Atoi(raw)
-		if err != nil || limit < 0 {
-			return 0, 0, fmt.Errorf("invalid limit: %q", raw)
-		}
+	n, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid chunk: %q", raw)
 	}
-	return offset, limit, nil
+	return int(n), nil
 }
 
 // lookupMedia はURLのIDから写真を引く。
