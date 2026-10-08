@@ -3,7 +3,7 @@
 ## Server (Go)
 
 ```
-NewHandler(store, thumbs, auth, chunkSize, log)           web.go
+NewHandler(store, thumbs, auth, log)                      web.go
   |
   v
 securityHeaders (CSP, nosniff)
@@ -24,7 +24,7 @@ securityHeaders (CSP, nosniff)
                             +-- / -> requireSignIn -> routes
                                      (isDataPath picks the reply)
 
-routes (methods of handlers)                               web.go
+routes (methods of Handler)                               web.go
   GET /{$}         handleIndex --+
   GET /item/{id}   handleItem  --+-> renderIndex -> buildRange -> tmpl "index"
   GET /tiles       handleTiles ----> parseWindow -> buildRange -> tmpl "tiles"

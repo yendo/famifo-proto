@@ -28,7 +28,7 @@ var assets embed.FS
 //go:embed static/no-preview.svg
 var noPreview []byte
 
-// DefaultChunkSize は仮想スクロールが1回に取る塊の枚数。
+// defaultChunkSize は仮想スクロールが1回に取る塊の枚数。
 //
 // 先頭の1塊は初回HTMLに埋め込む。クライアントは範囲を覆う塊が揃うまで
 // 描かないので、この値が「開いた画面 + overscan 4行」に届かないと、開いた
@@ -36,7 +36,7 @@ var noPreview []byte
 // 76枚（実データ4497枚で計測）で、60では足りていなかった。
 //
 // 利用者が変えられる設定ではない。表示の寸法を変えたときは測り直すこと。
-const DefaultChunkSize = 120
+const defaultChunkSize = 120
 
 // contentSecurityPolicy はすべての応答に載せる方針。
 //
@@ -75,7 +75,20 @@ const contentSecurityPolicy = "default-src 'none'; " +
 // noOpenItem は「開いた写真は無い」ことを表す通し番号。
 const noOpenItem = -1
 
-// NewHandler はルーティング済みのハンドラを返す。
+// Handler はギャラリーのHTTPハンドラ。ルーティング済みで、http.Server にそのまま渡せる。
+//
+// 個々のハンドラはこの型のメソッドで、認証の経路は Auth が持つ。
+type Handler struct {
+	store     *store.Store
+	tmpl      *template.Template
+	thumbs    *thumb.Provider
+	chunkSize int
+	auth      *Auth // nil なら認証しない
+	log       *slog.Logger
+	root      http.Handler // ルーティングとミドルウェアを組み終えたもの
+}
+
+// NewHandler はルーティング済みの Handler を返す。
 //
 // thumbs は取り込み側と共有する。配信するファイルの選択はすべてそこが決めるので、
 // このパッケージはサムネイルの置き場所を知らない。
@@ -83,12 +96,9 @@ const noOpenItem = -1
 // auth に nil を渡すと認証しない。開発機やテストでIdPを立てずに動かせるようにするため
 // であり、既定の構成でもある。
 //
-// chunkSize は仮想スクロールが1回に取る塊の枚数で、本番は DefaultChunkSize を渡す。
-// テストは塊の境界を跨ぐ挙動を少ない写真で確かめるため、小さい値を渡す。
-//
 // セッションのミドルウェア（LoadAndSave）は /static/ には掛けない。静的ファイルは
 // セッションを読まないし、掛けると応答に Vary: Cookie が付く。
-func NewHandler(st *store.Store, thumbs *thumb.Provider, auth *Auth, chunkSize int, log *slog.Logger) (http.Handler, error) {
+func NewHandler(st *store.Store, thumbs *thumb.Provider, auth *Auth, log *slog.Logger) (*Handler, error) {
 	tmpl, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("cannot load the templates: %w", err)
@@ -97,7 +107,7 @@ func NewHandler(st *store.Store, thumbs *thumb.Provider, auth *Auth, chunkSize i
 	if err != nil {
 		return nil, fmt.Errorf("cannot load the static files: %w", err)
 	}
-	h := &handlers{store: st, tmpl: tmpl, thumbs: thumbs, chunkSize: chunkSize, auth: auth, log: log}
+	h := &Handler{store: st, tmpl: tmpl, thumbs: thumbs, chunkSize: defaultChunkSize, auth: auth, log: log}
 
 	mux := http.NewServeMux()
 	// 未認証でもCSSは当たるようにする。ログイン前の画面が崩れる意味がない。
@@ -118,40 +128,17 @@ func NewHandler(st *store.Store, thumbs *thumb.Provider, auth *Auth, chunkSize i
 		auth.addRoutes(session)
 		mux.Handle("/", auth.sessions.LoadAndSave(session))
 	}
-	return securityHeaders(mux), nil
+	h.root = securityHeaders(mux)
+	return h, nil
 }
 
-// securityHeaders はすべての応答に同じ守りを載せる。
-//
-// nosniff が効くのは /thumb/ と /full/ である。どちらもディスク上のファイルの
-// 中身を、拡張子だけから決めたMIMEタイプで配る。写真のディレクトリにHTMLの
-// 中身を持つ .jpg が置かれても、いまのブラウザは image/* と宣言された応答を
-// HTMLへ格上げして解釈しないが、その挙動に頼らずに済ませる。
-//
-// 認証の内側と外側の両方に載せたいので、いちばん外側の mux を包む。/static/ も
-// 通る。
-func securityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("Content-Security-Policy", contentSecurityPolicy)
-		h.Set("X-Content-Type-Options", "nosniff")
-		next.ServeHTTP(w, r)
-	})
-}
-
-// handlers はHTTPハンドラが使う依存をまとめる。ハンドラはこの型のメソッドで、
-// 認証の経路は Auth が持つ。
-type handlers struct {
-	store     *store.Store
-	tmpl      *template.Template
-	thumbs    *thumb.Provider
-	chunkSize int
-	auth      *Auth // nil なら認証しない
-	log       *slog.Logger
+// ServeHTTP は要求を組み終えたルーティングへ渡す。
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.root.ServeHTTP(w, r)
 }
 
 // handleIndex はギャラリーのトップページを返す。
-func (h *handlers) handleIndex(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	h.renderIndex(w, r, noOpenItem)
 }
 
@@ -160,7 +147,7 @@ func (h *handlers) handleIndex(w http.ResponseWriter, r *http.Request) {
 //
 // 消えた写真のURLを共有されることは普通に起きる。404にすると行き止まりになるので、
 // ギャラリーへ送る。
-func (h *handlers) handleItem(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleItem(w http.ResponseWriter, r *http.Request) {
 	rank, err := h.store.RankOf(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.Redirect(w, r, "/", http.StatusFound)
@@ -175,7 +162,7 @@ func (h *handlers) handleItem(w http.ResponseWriter, r *http.Request) {
 
 // handleTiles は仮想スクロール用のHTML断片を返す。
 // 初回ページと同じテンプレートを使い、マークアップを1箇所に保つ。
-func (h *handlers) handleTiles(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleTiles(w http.ResponseWriter, r *http.Request) {
 	offset, limit, err := parseWindow(r, h.chunkSize)
 	if err != nil {
 		http.Error(w, "bad range", http.StatusBadRequest)
@@ -197,7 +184,7 @@ func (h *handlers) handleTiles(w http.ResponseWriter, r *http.Request) {
 
 // handleThumb は一覧のタイルを配信する。どのファイルを出すかは thumb が決める。
 // 出せる絵が無ければプレースホルダに差し替えるので、404にはならない。
-func (h *handlers) handleThumb(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleThumb(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.lookupMedia(w, r)
 	if !ok {
 		return
@@ -214,7 +201,7 @@ func (h *handlers) handleThumb(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleFull は拡大表示用の写真と動画を配信する。
-func (h *handlers) handleFull(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleFull(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.lookupMedia(w, r)
 	if !ok {
 		return
@@ -226,10 +213,28 @@ func (h *handlers) handleFull(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
+// securityHeaders はすべての応答に同じ守りを載せる。
+//
+// nosniff が効くのは /thumb/ と /full/ である。どちらもディスク上のファイルの
+// 中身を、拡張子だけから決めたMIMEタイプで配る。写真のディレクトリにHTMLの
+// 中身を持つ .jpg が置かれても、いまのブラウザは image/* と宣言された応答を
+// HTMLへ格上げして解釈しないが、その挙動に頼らずに済ませる。
+//
+// 認証の内側と外側の両方に載せたいので、いちばん外側の mux を包む。/static/ も
+// 通る。
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // renderIndex はトップページのHTMLを組み立てて返す。openIndex は開いた状態で
 // 表示する写真の通し番号で、noOpenItem なら閉じたまま開く。
 // 先頭の塊を埋めた状態で返すので、開いた直後に灰色の画面が出ない。
-func (h *handlers) renderIndex(w http.ResponseWriter, r *http.Request, openIndex int) {
+func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, openIndex int) {
 	tiles, err := h.buildRange(r, 0, h.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -290,7 +295,7 @@ func parseWindow(r *http.Request, defaultLimit int) (offset, limit int, err erro
 
 // lookupMedia はURLのIDから写真を引く。
 // パスではなくIDを経由することで、インデックスに無いファイルは配信できない。
-func (h *handlers) lookupMedia(w http.ResponseWriter, r *http.Request) (media.Media, bool) {
+func (h *Handler) lookupMedia(w http.ResponseWriter, r *http.Request) (media.Media, bool) {
 	m, err := h.store.GetByID(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
