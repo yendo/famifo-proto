@@ -83,11 +83,11 @@ func newAuthFixtureWith(t *testing.T, prov *fakeProvider, secure bool) *authFixt
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sessions.Close() })
 
-	gallery, err := web.NewGallery(st, thumbs,
+	h, err := web.NewHandler(st, thumbs,
 		web.NewAuth(prov, sessions, "https://famifo.example.invalid", log),
 		log)
 	require.NoError(t, err)
-	return &authFixture{h: gallery.Handler(), prov: prov}
+	return &authFixture{h: h, prov: prov}
 }
 
 func get(t *testing.T, h http.Handler, path string, cookies ...*http.Cookie) *http.Response {
@@ -466,10 +466,10 @@ func TestWithoutAuthEverythingIsOpen(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	thumbs, err := thumb.NewProvider(dir + "/thumbs")
 	require.NoError(t, err)
-	gallery, err := web.NewGallery(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, err := web.NewHandler(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 
-	resp := get(t, gallery.Handler(), "/")
+	resp := get(t, h, "/")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NotContains(t, bodyOf(t, resp), "/logout", "the logout button must not be shown")
 }

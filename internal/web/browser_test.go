@@ -234,8 +234,8 @@ func setupBrowserEnv() (cleanup func(), ok bool) {
 // requireBrowser はブラウザ環境が無ければ、このテストだけをスキップする。
 //
 // 判定を TestMain で行って os.Exit(0) すると、ブラウザテストだけでなく
-// 同じパッケージの非ブラウザテスト（gallery_test.go / handlers_test.go /
-// static_test.go の計25本）まで実行されないまま ok と表示されてしまう。
+// 同じパッケージの非ブラウザテスト（web_test.go / login_test.go /
+// static_test.go）まで実行されないまま ok と表示されてしまう。
 // CIが緑になるので誰も気づかない。判定は必ず各テストで行う。
 //
 // CI では FAMIFO_BROWSER_TESTS=required を立てる。ブラウザテストが
@@ -300,14 +300,13 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gallery, err := web.NewGallery(st, thumbs, nil, log)
+	h, err := web.NewHandlerWithChunkSize(st, thumbs, nil, log, testChunkSize)
 	if err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
 	}
-	gallery.SetChunkSize(testChunkSize)
 
-	srv = httptest.NewServer(gallery.Handler())
+	srv = httptest.NewServer(h)
 	return tempDir, srv, func() { st.Close() }, nil
 }
 
@@ -1924,12 +1923,10 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 
 	require.NoError(t, prepareManyTestMedia(st, mediaDir, thumbs))
 
-	gallery, err := web.NewGallery(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, err := web.NewHandlerWithChunkSize(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), stallChunkSize)
 	require.NoError(t, err)
-	gallery.SetChunkSize(stallChunkSize)
 
 	var items, dropped int64
-	h := gallery.Handler()
 	gate := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/tiles" {
@@ -2217,9 +2214,9 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 		media.Restore(mediaPath, time.Unix(1600000000, 0), time.Unix(1600000000, 0))))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gallery, err := web.NewGallery(st, thumbs, nil, log)
+	h, err := web.NewHandler(st, thumbs, nil, log)
 	require.NoError(t, err)
-	srv := httptest.NewServer(gallery.Handler())
+	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
 	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
