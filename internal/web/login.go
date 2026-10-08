@@ -115,7 +115,7 @@ func (a *Auth) requireSignIn(next http.Handler) http.Handler {
 
 // isDataPath はページではなくデータを取りに来た経路を見分ける。
 //
-// /tiles は app.js が fetch し、/thumb/ と /file/ は <img> と <video> が読む。
+// /tiles は gallery.js が fetch し、/thumb/ と /file/ は <img> と <video> が読む。
 // ここに挙げる経路は Handler のルート表と一対一である。データを返す経路を
 // 足したらここにも足すこと。忘れると、その経路だけ未認証時に白い画面になる。
 func isDataPath(p string) bool {

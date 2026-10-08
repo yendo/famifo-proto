@@ -418,7 +418,7 @@ func TestTilesLinkToTheItemPage(t *testing.T) {
 	require.Contains(t, body, `data-full="/file/`+m.ID()+`"`)
 }
 
-// タイルが動画かどうかはHTMLに出る。app.js が拡大表示の切り替えに使い、
+// タイルが動画かどうかはHTMLに出る。lightbox.js が拡大表示の切り替えに使い、
 // CSSが再生の印を重ねるのに使う。
 func TestGalleryMarksVideoTiles(t *testing.T) {
 	t.Parallel()
@@ -672,7 +672,7 @@ func TestResponsesCarryTheSecurityHeaders(t *testing.T) {
 // が混ざらないことを固定する。方針を入れる理由そのものがここであり、ゆるめても
 // 画面は正常に動き続けるため、テストでしか守れない。
 //
-// style-src のほうは 'unsafe-inline' を許してある。app.js の cardHTML が
+// style-src のほうは 'unsafe-inline' を許してある。gallery.js の cardHTML が
 // style 属性を持つ日カードを組み立てており、外すとレイアウトが崩れる。
 // 取り違えて script 側に足されるのを防ぐため、両者を別々に見る。
 func TestTheContentSecurityPolicyKeepsScriptsStrict(t *testing.T) {
@@ -688,7 +688,7 @@ func TestTheContentSecurityPolicyKeepsScriptsStrict(t *testing.T) {
 	}
 	require.Equal(t, "'self'", directives["script-src"])
 	require.Contains(t, directives["style-src"], "'unsafe-inline'",
-		"the day cards carry style attributes; see cardHTML in app.js")
+		"the day cards carry style attributes; see cardHTML in gallery.js")
 	require.Equal(t, "'none'", directives["default-src"],
 		"anything not listed must stay blocked, so a new kind of resource fails loudly")
 }
