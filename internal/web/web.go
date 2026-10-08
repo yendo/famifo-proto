@@ -93,14 +93,13 @@ func NewHandler(st *store.Store, thumbs *thumb.Provider, auth *Auth, chunkSize i
 	if err != nil {
 		return nil, fmt.Errorf("cannot load the templates: %w", err)
 	}
+	staticFS, err := fs.Sub(assets, "static")
+	if err != nil {
+		return nil, fmt.Errorf("cannot load the static files: %w", err)
+	}
 	h := &handlers{store: st, tmpl: tmpl, thumbs: thumbs, chunkSize: chunkSize, auth: auth, log: log}
 
 	mux := http.NewServeMux()
-
-	staticFS, err := fs.Sub(assets, "static")
-	if err != nil {
-		panic(err) // embedの内容は固定なので、ここで失敗するならビルドの不備
-	}
 	// 未認証でもCSSは当たるようにする。ログイン前の画面が崩れる意味がない。
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
