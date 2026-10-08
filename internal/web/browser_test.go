@@ -475,7 +475,7 @@ const rectJS = `(() => {
 //
 // 読み込み直後に、可視範囲が写真で埋まっているかを見る。
 //
-// 注意: サーバは gallery.html の中で最初の1塊（testChunkSize枚）を #window に
+// 注意: サーバは index.html の中で最初の1塊（testChunkSize枚）を #window に
 // 直接描画して返す。そのため「タイルが存在する」「下端がビューポートを超える」
 // だけを見ると、gallery.js が一切動かなくても通ってしまう。仮想スクロールが
 // 実際に働いて塊を追加で貼ったこと（tileCount > testChunkSize）まで見る。

@@ -46,7 +46,7 @@ const defaultChunkSize = 120
 // connect-src が要るのは、仮想スクロールが /tiles を fetch するためである。
 //
 // script-src に 'unsafe-inline' は入れない。ここが厳しくあることが、この方針を
-// 入れる理由そのものである。gallery.html にインラインスクリプトは無く、
+// 入れる理由そのものである。index.html にインラインスクリプトは無く、
 // <script type="application/json" id="daygroups"> は実行されないデータブロック
 // なので、この制限に引っかからない。
 //
@@ -126,7 +126,7 @@ func (a *app) handler() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
 	routes := http.NewServeMux()
-	routes.HandleFunc("GET /{$}", a.handleGallery)
+	routes.HandleFunc("GET /{$}", a.handleIndex)
 	routes.HandleFunc("GET /item/{id}", a.handleItem)
 	routes.HandleFunc("GET /tiles", a.handleTiles)
 	routes.HandleFunc("GET /thumb/{id}", a.handleThumb)
@@ -161,9 +161,9 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// handleGallery はギャラリーのトップページを返す。
-func (a *app) handleGallery(w http.ResponseWriter, r *http.Request) {
-	a.renderGallery(w, r, noOpenItem)
+// handleIndex はギャラリーのトップページを返す。
+func (a *app) handleIndex(w http.ResponseWriter, r *http.Request) {
+	a.renderIndex(w, r, noOpenItem)
 }
 
 // handleItem は写真ごとのURLを受け、その写真を開いた状態のギャラリーを返す。
@@ -181,13 +181,13 @@ func (a *app) handleItem(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	a.renderGallery(w, r, rank)
+	a.renderIndex(w, r, rank)
 }
 
-// renderGallery はギャラリーのHTMLを組み立てて返す。openIndex は開いた状態で
+// renderIndex はトップページのHTMLを組み立てて返す。openIndex は開いた状態で
 // 表示する写真の通し番号で、noOpenItem なら閉じたまま開く。
 // 先頭の塊を埋めた状態で返すので、開いた直後に灰色の画面が出ない。
-func (a *app) renderGallery(w http.ResponseWriter, r *http.Request, openIndex int) {
+func (a *app) renderIndex(w http.ResponseWriter, r *http.Request, openIndex int) {
 	tiles, err := a.buildRange(r, 0, a.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -214,14 +214,14 @@ func (a *app) renderGallery(w http.ResponseWriter, r *http.Request, openIndex in
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	view := galleryView{
+	view := indexView{
 		tilesView: tiles, Total: total, ChunkSize: a.chunkSize,
 		DayGroups: template.JS(raw), OpenIndex: openIndex,
 		AuthEnabled: a.auth != nil,
 	}
-	if err := a.tmpl.ExecuteTemplate(w, "gallery", view); err != nil {
+	if err := a.tmpl.ExecuteTemplate(w, "index", view); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		a.log.Error("failed to render the gallery template", "err", err)
+		a.log.Error("failed to render the index template", "err", err)
 		return
 	}
 }
