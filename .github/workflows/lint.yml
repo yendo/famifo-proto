@@ -71,3 +71,19 @@ jobs:
         with:
           version: "2026.2.1"
           build-tags: browser
+
+  tsc:
+    name: tsc type check
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7 # zizmor: ignore[unpinned-uses]
+        with:
+          persist-credentials: false
+
+      - name: Type-check JavaScript
+        run: npx --yes -p "typescript@$(jq -r .devDependencies.typescript package.json)" tsc -p jsconfig.json
