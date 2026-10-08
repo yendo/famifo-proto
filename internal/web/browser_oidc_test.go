@@ -208,7 +208,7 @@ func TestOIDCRoundTripReachesTheGallery(t *testing.T) {
 
 	require.NoError(t, chromedp.Run(rctx,
 		chromedp.Navigate(famifoURL+"/"),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 	))
 
 	var loc string

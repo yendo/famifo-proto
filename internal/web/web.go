@@ -50,7 +50,7 @@ const defaultChunkSize = 120
 // <script type="application/json" id="daygroups"> は実行されないデータブロック
 // なので、この制限に引っかからない。
 //
-// style-src だけ 'unsafe-inline' を許す。app.js が組み立てる日カードが
+// style-src だけ 'unsafe-inline' を許す。gallery.js が組み立てる日カードが
 // style 属性で grid-column と grid-template-columns を持っており（cardHTML を
 // 見よ）、マークアップ中の style 属性は style-src-attr の対象になるため、
 // 許さないと属性ごと無視されてレイアウトが崩れる。span の数だけクラスを
