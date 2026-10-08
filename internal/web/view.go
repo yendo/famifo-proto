@@ -29,9 +29,9 @@ type dayView struct {
 	Count int    `json:"n"` // その日の件数
 }
 
-// galleryView は gallery.html の入力。tilesViewを埋め込むので
+// indexView は index.html の入力。tilesViewを埋め込むので
 // {{template "tiles" .}} にそのまま渡せる。
-type galleryView struct {
+type indexView struct {
 	tilesView
 	Total     int
 	ChunkSize int
