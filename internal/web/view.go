@@ -7,28 +7,6 @@ import (
 	"github.com/yendo/famifo-proto/internal/imagefmt"
 )
 
-// mediaView は1件分のテンプレート入力。
-type mediaView struct {
-	ID       string
-	PageURL  string // その1件だけを開くURL。タイルのリンク先
-	ThumbURL string
-	FullURL  string
-	Date     string // "2006-01-02"。ローカル時刻。クライアントが日の区切りに使う
-	IsVideo  bool   // タイルに再生の印を出すか、フルビューを <video> にするか
-}
-
-// tilesView は tiles.html の入力。
-type tilesView struct {
-	Media []mediaView
-}
-
-// dayGroup は埋め込む日ごとの表の1要素。
-// 転送量を抑えるためJSONのキー名を短くしている（数千日ぶんになりうる）。
-type dayGroup struct {
-	Date  string `json:"d"` // "2006-01-02"
-	Count int    `json:"n"` // その日の件数
-}
-
 // indexView は index.html の入力。tilesViewを埋め込むので
 // {{template "tiles" .}} にそのまま渡せる。
 type indexView struct {
@@ -43,6 +21,28 @@ type indexView struct {
 	OpenIndex int
 	// AuthEnabled は認証が有効かどうか。無効ならログアウトのボタンを出さない。
 	AuthEnabled bool
+}
+
+// tilesView は tiles.html の入力。
+type tilesView struct {
+	Media []mediaView
+}
+
+// mediaView は1件分のテンプレート入力。
+type mediaView struct {
+	ID       string
+	PageURL  string // その1件だけを開くURL。タイルのリンク先
+	ThumbURL string
+	FullURL  string
+	Date     string // "2006-01-02"。ローカル時刻。クライアントが日の区切りに使う
+	IsVideo  bool   // タイルに再生の印を出すか、フルビューを <video> にするか
+}
+
+// dayGroup は埋め込む日ごとの表の1要素。
+// 転送量を抑えるためJSONのキー名を短くしている（数千日ぶんになりうる）。
+type dayGroup struct {
+	Date  string `json:"d"` // "2006-01-02"
+	Count int    `json:"n"` // その日の件数
 }
 
 // buildTilesView はオフセット指定で1窓枠分を組み立てる。
