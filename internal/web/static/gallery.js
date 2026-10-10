@@ -173,10 +173,9 @@ export const gallery = (() => {
 
 		const controller = new AbortController();
 		const job = (async () => {
-			const res = await fetch(
-				`/tiles?chunk=${ci}`,
-				{ signal: controller.signal },
-			);
+			const res = await fetch(`/tiles?chunk=${ci}`, {
+				signal: controller.signal,
+			});
 			// 401 はセッションが切れたということ。ここで握り潰すと、タイルが永久に
 			// 埋まらないまま理由の分からない画面が残る。読み直せば未認証の GET / が
 			// /login へ導いてくれる。
