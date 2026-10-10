@@ -1235,7 +1235,7 @@ func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
 // 行の高さが日ごとに変わった時点でこの比例関係は成立しない。位置から日を
 // 引くのは dayAtY の仕事である。
 //
-// 日ごとの表もサーバに聞きに行かない。かつての /dates エンドポイントは
+// DayGroups もサーバに聞きに行かない。かつての /dates エンドポイントは
 // 廃止し、ページに埋め込んだ daygroups を読む。
 func TestScrubberReachesBothEnds(t *testing.T) {
 	requireBrowser(t)

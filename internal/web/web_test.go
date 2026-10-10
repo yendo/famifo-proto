@@ -264,7 +264,7 @@ func TestTilesDefaultsToFirstWindow(t *testing.T) {
 	require.Contains(t, body, m.ID())
 }
 
-// embeddedDayGroups は初回HTMLに埋め込まれた日ごとの表を取り出す。
+// embeddedDayGroups は初回HTMLに埋め込まれた DayGroups を取り出す。
 func embeddedDayGroups(t *testing.T, body string) []struct {
 	Date  string `json:"d"`
 	Count int    `json:"n"`

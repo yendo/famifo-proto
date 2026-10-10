@@ -35,7 +35,7 @@ type mediaView struct {
 	IsVideo  bool   // タイルに再生の印を出すか、フルビューを <video> にするか
 }
 
-// dayGroup は埋め込む日ごとの表の1要素。
+// dayGroup は埋め込む DayGroups の1要素。
 // 転送量を抑えるためJSONのキー名を短くしている（数千日ぶんになりうる）。
 type dayGroup struct {
 	Date  string `json:"d"` // "2006-01-02"

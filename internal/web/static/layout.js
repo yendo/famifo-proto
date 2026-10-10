@@ -10,7 +10,7 @@
 // どれも純粋関数で、DOMにもモジュールの状態にも触らない。
 
 /**
- * 日ごとの表の1要素。サーバが初回HTMLに埋め込む。
+ * DayGroups の1要素。サーバが初回HTMLに埋め込む。
  * @typedef {object} DayGroup
  * @property {string} d 日付（"2026-02-08"）
  * @property {number} n その日の枚数
