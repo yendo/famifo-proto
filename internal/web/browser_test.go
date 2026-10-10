@@ -1458,7 +1458,6 @@ type layoutEntry struct {
 	Start int     `json:"start"`
 	N     int     `json:"n"`
 	Span  int     `json:"span"`
-	Col   int     `json:"col"`
 	Rows  int     `json:"rows"`
 }
 
@@ -1490,20 +1489,17 @@ func TestLayoutPacksDaysThatFitOneRow(t *testing.T) {
 
 	require.Len(t, got.Entries, 3)
 
-	require.Equal(t, 0, got.Entries[0].Col)
 	require.Equal(t, 1, got.Entries[0].Span)
 	require.Equal(t, float64(0), got.Entries[0].Y)
 	require.Equal(t, 0, got.Entries[0].Start)
 
-	require.Equal(t, 1, got.Entries[1].Col, "sits to the right of the single-item day")
 	require.Equal(t, 4, got.Entries[1].Span)
 	require.Equal(t, float64(0), got.Entries[1].Y, "the same stripe, so the y matches")
 	require.Equal(t, 1, got.Entries[1].Start)
 
 	// 3枚目は残り1列に4列は載らないので次のストライプ。
 	// ストライプ高 = labelH(20) + gap(4) + tileH(100) = 124。次のy = 124 + gap(4) = 128
-	require.Equal(t, 0, got.Entries[2].Col, "does not fit, so it starts the next stripe")
-	require.Equal(t, float64(128), got.Entries[2].Y)
+	require.Equal(t, float64(128), got.Entries[2].Y, "does not fit, so it starts the next stripe")
 	require.Equal(t, 5, got.Entries[2].Start)
 
 	require.Equal(t, float64(128+124), got.Height)
@@ -1524,8 +1520,7 @@ func TestLayoutGivesWholeRowsToBigDays(t *testing.T) {
 	// h = 20 + 4 + 3*100 + 2*4 = 332
 	require.Equal(t, float64(332), got.Entries[0].H)
 
-	require.Equal(t, 0, got.Entries[1].Col, "whatever follows a full-row day always starts the next stripe")
-	require.Equal(t, float64(332+4), got.Entries[1].Y)
+	require.Equal(t, float64(332+4), got.Entries[1].Y, "whatever follows a full-row day always starts the next stripe")
 	require.Equal(t, 13, got.Entries[1].Start)
 }
 

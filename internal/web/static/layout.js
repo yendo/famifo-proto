@@ -25,7 +25,6 @@
  * @property {number} start 先頭の写真の通し番号
  * @property {number} n 枚数
  * @property {number} span 占める列数
- * @property {number} col 左端の列
  * @property {number} rows 段数
  */
 
@@ -80,23 +79,13 @@ export function layout(groups, cols, tileH, labelH, gap) {
 		if (span < cols && rem >= span) {
 			// いまのストライプに載る。横並びになるのはこの経路だけ。
 			// 1行に収まる日は必ず rows===1 なので、高さはストライプと一致する。
-			entries.push({
-				d: g.d,
-				y,
-				h,
-				start,
-				n: g.n,
-				span,
-				col: cols - rem,
-				rows,
-			});
 			rem -= span;
 		} else {
 			if (stripeH > 0) y += stripeH + gap; // 前のストライプを閉じる
-			entries.push({ d: g.d, y, h, start, n: g.n, span, col: 0, rows });
 			stripeH = h;
 			rem = cols - span; // 行を占有した日(span===cols)なら0になり、次は必ず新しい行
 		}
+		entries.push({ d: g.d, y, h, start, n: g.n, span, rows });
 		start += g.n;
 	}
 
