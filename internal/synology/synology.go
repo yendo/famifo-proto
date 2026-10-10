@@ -17,7 +17,7 @@ const eaDir = "@eaDir"
 // 長辺427px）で、famifo自身が作る長辺480pxよりわずかに小さい。
 const thumbMName = "SYNOPHOTO_THUMB_M.jpg"
 
-// thumbXLName は拡大表示に借りるJPEGのファイル名。長辺1707px・約1MBで、
+// thumbXLName はフルビューに借りるJPEGのファイル名。長辺1707px・約1MBで、
 // 一覧には過大だが1枚だけ見せる場面では妥当な大きさになる。
 const thumbXLName = "SYNOPHOTO_THUMB_XL.jpg"
 
@@ -36,7 +36,7 @@ const filmName = "SYNOPHOTO_FILM_H.mp4"
 // 実在するとは限らない。あるかどうかは HasThumbM で確かめる。
 func ThumbMPath(srcPath string) string { return entryPath(srcPath, thumbMName) }
 
-// ThumbXLPath はSynologyがsrcPathの写真用に持つ拡大表示用JPEG（XL）のパスを返す。
+// ThumbXLPath はSynologyがsrcPathの写真用に持つフルビュー用JPEG（XL）のパスを返す。
 // ThumbMPath と同じディレクトリを指す。存在は確かめない。MとXLは同じ生成器が
 // 一緒に書くため、Mがあることを確かめてあればXLもあるものとして扱う。
 func ThumbXLPath(srcPath string) string { return entryPath(srcPath, thumbXLName) }

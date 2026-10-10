@@ -1,7 +1,10 @@
 {
-	"//": "The dependencies here are bundled under internal/web/static/, not installed. A version bump is only a declaration until scripts/update-idiomorph.sh replaces the bundled copy.",
+	"//": "The dependencies here are bundled under internal/web/static/, not installed. A version bump is only a declaration until scripts/update-idiomorph.sh replaces the bundled copy. The devDependencies are fetched with npx by the lint workflow, which reads the version from here.",
 	"private": true,
 	"dependencies": {
 		"idiomorph": "0.8.0"
+	},
+	"devDependencies": {
+		"typescript": "7.0.2"
 	}
 }

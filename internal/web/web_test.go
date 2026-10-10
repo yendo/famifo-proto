@@ -3,7 +3,9 @@ package web_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"io"
@@ -45,10 +47,10 @@ func newWebFixture(t *testing.T, chunkSize int) *webFixture {
 	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gallery, err := web.NewGallery(st, thumbs, nil, log)
+	h, err := web.NewHandler(st, thumbs, nil, log)
 	require.NoError(t, err)
-	gallery.SetChunkSize(chunkSize)
-	return &webFixture{h: gallery.Handler(), st: st, thumbs: thumbs, mediaDir: mediaDir}
+	h.SetChunkSize(chunkSize)
+	return &webFixture{h: h, st: st, thumbs: thumbs, mediaDir: mediaDir}
 }
 
 // thumbKind は addMedia がどのサムネイルをディスクに置くかを指定する。
@@ -115,6 +117,320 @@ func wellFormedXML(b []byte) error {
 			return err
 		}
 	}
+}
+
+func TestGalleryRendersTiles(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+
+	rec := doGet(t, f.h, "/")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
+	body := rec.Body.String()
+	require.Contains(t, body, `src="/thumb/`+m.ID()+`"`)
+	require.Contains(t, body, `data-full="/full/`+m.ID()+`"`)
+}
+
+func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 60)
+	for i := range 3 {
+		f.addMedia(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), famifoThumb)
+	}
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `data-total="3"`)
+	require.Contains(t, body, `id="spacer"`)
+	require.Contains(t, body, `id="window"`)
+	require.Equal(t, 3, strings.Count(body, `class="tile"`), "the first chunk comes back filled")
+}
+
+func TestGalleryDropsHtmx(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 60)
+	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.NotContains(t, body, "htmx.min.js")
+	require.NotContains(t, body, "hx-")
+}
+
+func TestGalleryEmptyLibrary(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 60)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `data-total="0"`)
+	require.NotContains(t, body, `class="tile"`)
+}
+
+// タイルのURLは出どころによらず /thumb/ である。どのファイルを出すかは配信時に
+// 決まるので、一覧を組み立てた時点の状態を焼き付けない。
+func TestGalleryPointsEveryTileAtThumb(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `src="/thumb/`+m.ID()+`"`,
+		"a tile points at /thumb/ even with no thumbnail; the handler falls back to the original")
+	require.NotContains(t, body, `src="/full/`+m.ID()+`"`)
+}
+
+func TestGalleryOrdersNewestFirst(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	old := f.addMedia(t, "old.jpg", time.Unix(1600000000, 0), famifoThumb)
+	recent := f.addMedia(t, "new.jpg", time.Unix(1700000000, 0), famifoThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Less(t, strings.Index(body, recent.ID()), strings.Index(body, old.ID()),
+		"ordered by capture time, newest first")
+}
+
+func TestTilesReturnsFragmentOnly(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 1)
+	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	f.addMedia(t, "b.jpg", time.Unix(1700000000, 0), famifoThumb)
+
+	rec := doGet(t, f.h, "/tiles?chunk=0")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.NotContains(t, body, "<html", "a fragment, not a whole page")
+	require.NotContains(t, body, "<body")
+	require.Contains(t, body, "/full/")
+}
+
+func TestTilesReturnsRequestedChunk(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 2)
+	var ids []string
+	for i := range 5 {
+		m := f.addMedia(t, fmt.Sprintf("p%d.jpg", i), time.Unix(int64(1600000000+i), 0), famifoThumb)
+		ids = append(ids, m.ID())
+	}
+
+	body := doGet(t, f.h, "/tiles?chunk=1").Body.String()
+
+	// 新しい順は p4,p3,p2,p1,p0 なので、2枚ずつの塊の1番目は p2,p1
+	require.Contains(t, body, ids[2])
+	require.Contains(t, body, ids[1])
+	require.NotContains(t, body, ids[3])
+	require.NotContains(t, body, ids[0])
+}
+
+func TestTilesHasNoSentinel(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 60)
+	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+
+	body := doGet(t, f.h, "/tiles?chunk=0").Body.String()
+
+	require.NotContains(t, body, "hx-", "no htmx attributes are left behind")
+	require.NotContains(t, body, "sentinel")
+}
+
+func TestTilesRejectsBadChunk(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 60)
+	for _, target := range []string{
+		"/tiles?chunk=abc",
+		"/tiles?chunk=-1",
+		"/tiles?chunk=1.5",
+		"/tiles?chunk=9223372036854775807", // 塊の大きさを掛けると溢れる
+	} {
+		t.Run(target, func(t *testing.T) {
+			require.Equal(t, http.StatusBadRequest, doGet(t, f.h, target).Code)
+		})
+	}
+}
+
+func TestTilesDefaultsToFirstWindow(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 60)
+	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+
+	body := doGet(t, f.h, "/tiles").Body.String()
+
+	require.Contains(t, body, m.ID())
+}
+
+// embeddedDayGroups は初回HTMLに埋め込まれた DayGroups を取り出す。
+func embeddedDayGroups(t *testing.T, body string) []struct {
+	Date  string `json:"d"`
+	Count int    `json:"n"`
+} {
+	t.Helper()
+	const open = `<script type="application/json" id="daygroups">`
+	i := strings.Index(body, open)
+	require.GreaterOrEqual(t, i, 0, "the per-day table is not embedded")
+	rest := body[i+len(open):]
+	j := strings.Index(rest, "</script>")
+	require.GreaterOrEqual(t, j, 0, "the script tag is not closed")
+
+	var out []struct {
+		Date  string `json:"d"`
+		Count int    `json:"n"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(rest[:j]), &out))
+	return out
+}
+
+func TestGalleryEmbedsDayGroups(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 60)
+	// 新しい順に: 2026-02-08 が2枚、2026-02-03 が1枚
+	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 18, 0, 0, 0, time.Local), famifoThumb)
+	f.addMedia(t, "b.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), famifoThumb)
+	f.addMedia(t, "c.jpg", time.Date(2026, 2, 3, 10, 0, 0, 0, time.Local), famifoThumb)
+
+	got := embeddedDayGroups(t, doGet(t, f.h, "/").Body.String())
+
+	require.Len(t, got, 2)
+	require.Equal(t, "2026-02-08", got[0].Date)
+	require.Equal(t, 2, got[0].Count)
+	require.Equal(t, "2026-02-03", got[1].Date)
+	require.Equal(t, 1, got[1].Count)
+}
+
+func TestGalleryEmbedsEmptyDayGroupsForEmptyLibrary(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 60)
+
+	got := embeddedDayGroups(t, doGet(t, f.h, "/").Body.String())
+
+	require.Empty(t, got, "embedded as an array even when empty, so JSON.parse does not fail")
+}
+
+func TestDatesEndpointIsGone(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 60)
+	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), famifoThumb)
+
+	rec := doGet(t, f.h, "/dates")
+
+	require.Equal(t, http.StatusNotFound, rec.Code,
+		"the per-day table ships in the first HTML, so there is no endpoint for it")
+}
+
+func TestTilesTagsEachTileWithLocalDate(t *testing.T) {
+	// time.Local はプロセス全体で1つしかない。書き換えるテストが並列に走ると、
+	// 同時に走っている他のテストの時刻解釈まで巻き添えで変わる。実際 -race が
+	// 競合として検出する。このテストは t.Parallel() を呼ばない。
+	f := newWebFixture(t, 60)
+	// TZ=UTC の環境でも回帰を検出できるよう、テスト中だけ固定オフセットにする。
+	orig := time.Local
+	time.Local = time.FixedZone("JST", 9*60*60)
+	t.Cleanup(func() { time.Local = orig })
+
+	// ローカルで2月8日の未明。UTCに直すと2月7日になる時刻。
+	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 0, 30, 0, 0, time.Local), famifoThumb)
+
+	body := doGet(t, f.h, "/tiles?chunk=0").Body.String()
+
+	require.Contains(t, body, `data-date="2026-02-08"`,
+		"cutting in UTC would give 2026-02-07; group by local time")
+}
+
+func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 60)
+	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local), famifoThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `data-date="2026-02-08"`,
+		"the first chunk of the initial HTML needs its date too")
+}
+
+func TestGalleryUsesTheBorrowedThumbForHEIC(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `src="/thumb/`+m.ID()+`"`,
+		"a HEIC that can borrow from @eaDir uses the thumbnail")
+}
+
+// 写真ごとのURLは、その写真を開いた状態のギャラリーを返す。クライアントは
+// 埋め込まれた通し番号でその位置へ飛ぶので、番号が一覧の並びと一致していること。
+func TestItemOpensTheGalleryAtThatItem(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	var items []string
+	for i, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+		m := f.addMedia(t, name, time.Unix(int64(1600000000+i), 0), famifoThumb)
+		items = append(items, m.ID())
+	}
+
+	// 新しい順に並ぶので c, b, a。真ん中の b は1番目。
+	rec := doGet(t, f.h, "/item/"+items[1])
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
+	body := rec.Body.String()
+	require.Contains(t, body, `data-open="1"`)
+	require.Contains(t, body, `data-total="3"`)
+}
+
+// 消えた写真のURLを共有されても、壊れた画面ではなくギャラリーを出す。
+func TestItemUnknownIDRedirectsToTheGallery(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+
+	rec := doGet(t, f.h, "/item/nosuchid")
+
+	require.Equal(t, http.StatusFound, rec.Code)
+	require.Equal(t, "/", rec.Header().Get("Location"))
+}
+
+func TestGalleryOpensNoItem(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `data-open="-1"`)
+}
+
+// タイルのリンク先は画像そのものではなく写真のページである。新しいタブで開く
+// 操作や、リンクのコピーが意味のあるURLを返すようにするため。
+func TestTilesLinkToTheItemPage(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, `href="/item/`+m.ID()+`"`)
+	require.Contains(t, body, `data-full="/full/`+m.ID()+`"`)
+}
+
+// タイルが動画かどうかはHTMLに出る。lightbox.js がフルビューの切り替えに使い、
+// CSSが再生の印を重ねるのに使う。
+func TestGalleryMarksVideoTiles(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	still := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
+	video := f.addMedia(t, "clip.mp4", time.Unix(1600000100, 0), noThumb)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Regexp(t, `id="t-`+video.ID()+`"[^>]*data-video="1"`, body)
+	require.NotRegexp(t, `id="t-`+still.ID()+`"[^>]*data-video`, body)
 }
 
 func doGet(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
@@ -205,7 +521,7 @@ func TestServeOriginal(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	original, err := os.ReadFile(m.Path())
@@ -219,7 +535,7 @@ func TestServeOriginalSetsHEICContentType(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), noThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.heic", rec.Body.String(),
@@ -232,7 +548,7 @@ func TestServeOriginalNotFoundForUnknownID(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
 
-	rec := doGet(t, f.h, "/file/deadbeef")
+	rec := doGet(t, f.h, "/full/deadbeef")
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
@@ -242,9 +558,9 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 	f := newWebFixture(t, 10)
 	// パスではなくIDでしか引けないため、traversalは構造的に成立しない
 	for _, target := range []string{
-		"/file/../../etc/passwd",
+		"/full/../../etc/passwd",
 		"/thumb/..%2f..%2fetc%2fpasswd",
-		"/file/" + media.IDFor("/etc/passwd"),
+		"/full/" + media.IDFor("/etc/passwd"),
 	} {
 		t.Run(target, func(t *testing.T) {
 			rec := doGet(t, f.h, target)
@@ -269,7 +585,7 @@ func TestServeHEICBorrowsTheLargeThumbFromEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "a.heic", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "eadir-xl-a.heic", rec.Body.String(),
@@ -283,7 +599,7 @@ func TestServeOriginalForRasterEvenWithEaDir(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-a.jpg", rec.Body.String(),
@@ -298,7 +614,7 @@ func TestServeVideoBorrowsTheTranscode(t *testing.T) {
 	m := f.addMedia(t, "clip.mp4", time.Unix(1600000000, 0), noThumb)
 	writeFileAt(t, synology.FilmPath(m.Path()), "film-clip.mp4")
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "film-clip.mp4", rec.Body.String())
@@ -311,7 +627,7 @@ func TestServeOriginalVideoWithoutATranscode(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "clip.mov", time.Unix(1600000000, 0), noThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-clip.mov", rec.Body.String())
@@ -326,7 +642,7 @@ func TestServeVideoDoesNotBorrowTheXL(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "clip.mp4", time.Unix(1600000000, 0), eadirThumb)
 
-	rec := doGet(t, f.h, "/file/"+m.ID())
+	rec := doGet(t, f.h, "/full/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original-clip.mp4", rec.Body.String(), "an XL still is not what you play")
@@ -342,7 +658,7 @@ func TestResponsesCarryTheSecurityHeaders(t *testing.T) {
 	f := newWebFixture(t, 10)
 	m := f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
 
-	for _, target := range []string{"/", "/tiles", "/static/app.css", "/thumb/" + m.ID(), "/file/" + m.ID()} {
+	for _, target := range []string{"/", "/tiles", "/static/app.css", "/thumb/" + m.ID(), "/full/" + m.ID()} {
 		t.Run(target, func(t *testing.T) {
 			rec := doGet(t, f.h, target)
 
@@ -357,7 +673,7 @@ func TestResponsesCarryTheSecurityHeaders(t *testing.T) {
 // が混ざらないことを固定する。方針を入れる理由そのものがここであり、ゆるめても
 // 画面は正常に動き続けるため、テストでしか守れない。
 //
-// style-src のほうは 'unsafe-inline' を許してある。app.js の cardHTML が
+// style-src のほうは 'unsafe-inline' を許してある。gallery.js の cardHTML が
 // style 属性を持つ日カードを組み立てており、外すとレイアウトが崩れる。
 // 取り違えて script 側に足されるのを防ぐため、両者を別々に見る。
 func TestTheContentSecurityPolicyKeepsScriptsStrict(t *testing.T) {
@@ -373,7 +689,7 @@ func TestTheContentSecurityPolicyKeepsScriptsStrict(t *testing.T) {
 	}
 	require.Equal(t, "'self'", directives["script-src"])
 	require.Contains(t, directives["style-src"], "'unsafe-inline'",
-		"the day cards carry style attributes; see cardHTML in app.js")
+		"the day cards carry style attributes; see cardHTML in gallery.js")
 	require.Equal(t, "'none'", directives["default-src"],
 		"anything not listed must stay blocked, so a new kind of resource fails loudly")
 }

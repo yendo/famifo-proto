@@ -234,8 +234,8 @@ func setupBrowserEnv() (cleanup func(), ok bool) {
 // requireBrowser はブラウザ環境が無ければ、このテストだけをスキップする。
 //
 // 判定を TestMain で行って os.Exit(0) すると、ブラウザテストだけでなく
-// 同じパッケージの非ブラウザテスト（gallery_test.go / handlers_test.go /
-// static_test.go の計25本）まで実行されないまま ok と表示されてしまう。
+// 同じパッケージの非ブラウザテスト（web_test.go / login_test.go /
+// static_test.go）まで実行されないまま ok と表示されてしまう。
 // CIが緑になるので誰も気づかない。判定は必ず各テストで行う。
 //
 // CI では FAMIFO_BROWSER_TESTS=required を立てる。ブラウザテストが
@@ -300,14 +300,14 @@ func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), er
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gallery, err := web.NewGallery(st, thumbs, nil, log)
+	h, err := web.NewHandler(st, thumbs, nil, log)
 	if err != nil {
 		st.Close()
 		return tempDir, nil, nil, err
 	}
-	gallery.SetChunkSize(testChunkSize)
+	h.SetChunkSize(testChunkSize)
 
-	srv = httptest.NewServer(gallery.Handler())
+	srv = httptest.NewServer(h)
 	return tempDir, srv, func() { st.Close() }, nil
 }
 
@@ -413,10 +413,23 @@ func newTab(t *testing.T) context.Context {
 	return ctx
 }
 
-// waitForTiles は最初のタイルが描画されるまで待つ最初のアクション列。
-func waitForTiles(timeout time.Duration) chromedp.Action {
-	return chromedp.Poll(`document.querySelectorAll('#window .tile').length > 0`, nil,
-		chromedp.WithPollingTimeout(timeout))
+// waitForGallery は最初のタイルが描画されるまで待ち、テストのJSから
+// gallery.js と layout.js を呼べるようにする。ページを開いた直後に必ず通す。
+//
+// どちらもESモジュールなので、ページのグローバルには何も出ていない。同じURLの
+// モジュールはページ内で1度しか評価されないため、ここで import すれば本体が
+// 使っているのと同じインスタンスが得られる。テストのためのグローバルを本体に
+// 置かずに済む。
+//
+// window.gallery は #gallery 要素の名前付きアクセスと同名だが、代入した値が
+// 優先される。
+func waitForGallery(timeout time.Duration) chromedp.Action {
+	return chromedp.Tasks{
+		chromedp.Poll(`document.querySelectorAll('#window .tile').length > 0`, nil,
+			chromedp.WithPollingTimeout(timeout)),
+		chromedp.Evaluate(`Promise.all([import("/static/gallery.js"), import("/static/layout.js")])
+			.then(([g, l]) => { window.gallery = g.gallery; window.layout = l; })`, nil, awaitPromise),
+	}
 }
 
 // scrollToIndexJS は写真indexが可視範囲の先頭に来るまでスクロールするJS式を返す。
@@ -427,8 +440,8 @@ func waitForTiles(timeout time.Duration) chromedp.Action {
 // yForIndex が返すのはレイアウト座標なので、toDocY で文書座標に戻す。
 func scrollToIndexJS(index int) string {
 	return fmt.Sprintf(`(() => {
-		const L = famifo.current();
-		famifo.scroller.scrollTop = famifo.toDocY(famifo.yForIndex(L, %d));
+		const L = gallery.current();
+		gallery.scroller.scrollTop = gallery.toDocY(layout.yForIndex(L, %d));
 	})()`, index)
 }
 
@@ -444,7 +457,7 @@ func expectedMediaURLs(n int) []string {
 	out := make([]string, n)
 	for i := 0; i < n; i++ {
 		path := filepath.Join(testMediaDir, fmt.Sprintf("p%04d.jpg", i))
-		out[i] = "/file/" + media.IDFor(path)
+		out[i] = "/full/" + media.IDFor(path)
 	}
 	return out
 }
@@ -463,15 +476,15 @@ const rectJS = `(() => {
 //
 // 読み込み直後に、可視範囲が写真で埋まっているかを見る。
 //
-// 注意: サーバは gallery.html の中で最初の1塊（testChunkSize枚）を #window に
+// 注意: サーバは index.html の中で最初の1塊（testChunkSize枚）を #window に
 // 直接描画して返す。そのため「タイルが存在する」「下端がビューポートを超える」
-// だけを見ると、app.js が一切動かなくても通ってしまう。仮想スクロールが
+// だけを見ると、gallery.js が一切動かなくても通ってしまう。仮想スクロールが
 // 実際に働いて塊を追加で貼ったこと（tileCount > testChunkSize）まで見る。
 func TestInitialRenderFillsViewport(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForTiles 10s) + 塊追加の貼り付け待ち(Poll 10s) +
+	//   初回描画待ち(waitForGallery 10s) + 塊追加の貼り付け待ち(Poll 10s) +
 	//   可視範囲のサムネイルデコード待ち(Poll 10s) = 30s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に
 	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
@@ -514,7 +527,7 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 2000),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 	)
 	require.NoError(t, err)
 
@@ -531,10 +544,10 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 	require.NotZero(t, res.Cols, "could not read the column count")
 	require.Greater(t, res.RowH, 0.0, "could not read the row height")
 
-	// app.js が動いていなければ、#window にはサーバが埋めた1塊しか無い。
+	// gallery.js が動いていなければ、#window にはサーバが埋めた1塊しか無い。
 	require.NoErrorf(t, pollErr,
 		"the tile count in #window stays at %d. It is still the first chunk (%d tiles) the "+
-			"server filled in, so virtual scrolling is pasting no further chunks; app.js looks dead",
+			"server filled in, so virtual scrolling is pasting no further chunks; gallery.js looks dead",
 		res.TileCount, testChunkSize)
 	require.Greater(t, res.TileCount, testChunkSize)
 
@@ -573,8 +586,8 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForTiles 10s) + 初回貼り付け待ち(Poll 10s) +
-	//   履歴書き込み猶予のSleep(0.5s) + リロード後描画待ち(waitForTiles 10s) +
+	//   初回描画待ち(waitForGallery 10s) + 初回貼り付け待ち(Poll 10s) +
+	//   履歴書き込み猶予のSleep(0.5s) + リロード後描画待ち(waitForGallery 10s) +
 	//   スクロール復元待ち(Poll 10s) + 交差枚数待ち(Poll 10s) = 50.5s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に
 	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
@@ -585,14 +598,14 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
-		chromedp.Poll(`famifo.pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Poll(`gallery.pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
 
 	var scrollBefore float64
-	err = chromedp.Run(rctx, chromedp.Evaluate(`famifo.scroller.scrollTop`, &scrollBefore))
+	err = chromedp.Run(rctx, chromedp.Evaluate(`gallery.scroller.scrollTop`, &scrollBefore))
 	require.NoError(t, err)
 	require.Greater(t, scrollBefore, 0.0)
 
@@ -604,7 +617,7 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 		if (!tile) { return false; }
 		const gap = parseFloat(getComputedStyle(win).rowGap) || 0;
 		const rowH = tile.getBoundingClientRect().height + gap;
-		return Math.abs(famifo.scroller.scrollTop - %s) < rowH / 2;
+		return Math.abs(gallery.scroller.scrollTop - %s) < rowH / 2;
 	})()`, strconv.FormatFloat(scrollBefore, 'f', -1, 64))
 	const intersectCountJS = `(() => {
 		const vh = window.innerHeight;
@@ -625,7 +638,7 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Reload())
 	require.NoError(t, err)
 
-	err = chromedp.Run(rctx, waitForTiles(10*time.Second))
+	err = chromedp.Run(rctx, waitForGallery(10*time.Second))
 	require.NoError(t, err)
 
 	// ブラウザのスクロール位置復元が効くまで待つ（history.scrollRestoration既定）。
@@ -644,7 +657,7 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 		const tile = win.querySelector('.tile');
 		const gap = parseFloat(getComputedStyle(win).rowGap) || 0;
 		const rowH = tile ? tile.getBoundingClientRect().height + gap : 0;
-		return { scrollTop: famifo.scroller.scrollTop, rowH };
+		return { scrollTop: gallery.scroller.scrollTop, rowH };
 	})()`, &scrollGeom))
 	require.NoError(t, err)
 
@@ -691,7 +704,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForTiles 10s) + 初回貼り付け待ち(Poll 10s) +
+	//   初回描画待ち(waitForGallery 10s) + 初回貼り付け待ち(Poll 10s) +
 	//   リサイズ後の列数変化待ち(Poll 10s) = 30s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に
 	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
@@ -702,9 +715,9 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
-		chromedp.Poll(`famifo.pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Poll(`gallery.pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
 
@@ -717,7 +730,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 			const r = tiles[i].getBoundingClientRect();
 			if (r.bottom > 0) { within = i; break; }
 		}
-		return { cols, topIndex: famifo.pastedRange().from + within };
+		return { cols, topIndex: gallery.pastedRange().from + within };
 	})()`
 
 	type snapshot struct {
@@ -780,7 +793,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForTiles 10s) + 貼り付け範囲静定待ち(Poll 10s) +
+	//   初回描画待ち(waitForGallery 10s) + 貼り付け範囲静定待ち(Poll 10s) +
 	//   貼り替え静定待ち(Poll 10s)×2（塊境界越えの後と、通常スクロール後の
 	//   2箇所） = 40s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に
@@ -820,14 +833,14 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	// 見当違いの再描画回数の失敗として現れる（実測）。範囲が実際に
 	// 最初の塊を超えて進んだこと（from >= chunkSize）も併せて要求する。
 	const rangeSettledJS = `(() => {
-		const r = famifo.pastedRange();
+		const r = gallery.pastedRange();
 		const k = r.from + ':' + r.to;
 		if (window.__lastRange !== k) {
 			window.__lastRange = k;
 			window.__rangeStable = 0;
 			return false;
 		}
-		return r.from >= famifo.chunkSize && (window.__rangeStable = (window.__rangeStable || 0) + 1) >= 3;
+		return r.from >= gallery.chunkSize && (window.__rangeStable = (window.__rangeStable || 0) + 1) >= 3;
 	})()`
 
 	// スクロールが落ち着いたか（__repaintsが3フレーム連続で増えていないか、
@@ -843,7 +856,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Evaluate(installObserverJS, nil),
 		// 塊境界を2つ跨ぐところまでスクロールする。
 		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
@@ -865,15 +878,15 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 		const win = document.querySelector('#window');
 		const r = win.querySelector('.tile').getBoundingClientRect();
 		const gap = parseFloat(getComputedStyle(win).rowGap) || 0;
-		famifo.scroller.scrollTop += r.height + gap;
+		gallery.scroller.scrollTop += r.height + gap;
 	})()`
 	var pastedBefore, pastedAfter int
 	err = chromedp.Run(rctx,
-		chromedp.Evaluate(`famifo.pastedRange().from`, &pastedBefore),
+		chromedp.Evaluate(`gallery.pastedRange().from`, &pastedBefore),
 		chromedp.Evaluate(`window.__lastSeen = -1; window.__stable = 0;`, nil),
 		chromedp.Evaluate(scrollOneRowJS, nil),
 		chromedp.Poll(settledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
-		chromedp.Evaluate(`famifo.pastedRange().from`, &pastedAfter),
+		chromedp.Evaluate(`gallery.pastedRange().from`, &pastedAfter),
 	)
 	require.NoError(t, err)
 
@@ -948,7 +961,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForTiles 10s) + 貼り付け範囲の静定待ち(Poll 10s) +
+	//   初回描画待ち(waitForGallery 10s) + 貼り付け範囲の静定待ち(Poll 10s) +
 	//   スクロール後の静定待ち(Poll 10s) = 30s。
 	// Evaluateなど残りの実行時間の余裕を見て60秒とする。
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -960,10 +973,10 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 	// 取得待ちで render() が早期returnし、pastedが初期値のまま固まっている
 	// ケースと区別できないため。
 	const rangeSettledJS = `(() => {
-		const r = famifo.pastedRange();
+		const r = gallery.pastedRange();
 		const k = r.from + ':' + r.to;
 		if (window.__k !== k) { window.__k = k; window.__n = 0; return false; }
-		return r.from >= famifo.chunkSize && (window.__n = (window.__n || 0) + 1) >= 3;
+		return r.from >= gallery.chunkSize && (window.__n = (window.__n || 0) + 1) >= 3;
 	})()`
 
 	// いま貼られているタイルに目印を付け、写っている写真を控える。
@@ -971,7 +984,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 		const tiles = [...document.querySelectorAll('#window .tile')];
 		window.__before = tiles.map((t) => t.dataset.full);
 		for (const t of tiles) t.__kept = true;
-		window.__pastedFrom = famifo.pastedRange().from;
+		window.__pastedFrom = gallery.pastedRange().from;
 		return tiles.length;
 	})()`
 
@@ -979,14 +992,14 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 		const win = document.querySelector('#window');
 		const r = win.querySelector('.tile').getBoundingClientRect();
 		const gap = parseFloat(getComputedStyle(win).rowGap) || 0;
-		famifo.scroller.scrollTop += r.height + gap;
+		gallery.scroller.scrollTop += r.height + gap;
 	})()`
 
 	// 貼り付け範囲が実際に動き、そのうえで落ち着くまで待つ。動いたことまで
 	// 見ないと、まだ貼り替えが起きていない状態で使い回しを数えてしまい、
 	// 実装が壊れていても全件が「残っている」と出て素通りする。
 	const movedAndSettledJS = `(() => {
-		const r = famifo.pastedRange();
+		const r = gallery.pastedRange();
 		if (r.from === window.__pastedFrom) return false;
 		const k = r.from + ':' + r.to;
 		if (window.__k2 !== k) { window.__k2 = k; window.__n2 = 0; return false; }
@@ -1011,7 +1024,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
 		chromedp.Poll(rangeSettledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
 		chromedp.Evaluate(markJS, &marked),
@@ -1065,7 +1078,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForTiles 10s) + ライトボックスが開く待ち(Poll 5s) +
+	//   初回描画待ち(waitForGallery 10s) + ライトボックスが開く待ち(Poll 5s) +
 	//   原寸画像デコード待ち(Poll 10s) = 25s。
 	// ループ本体(steps=130回、各Poll上限5s)は理論上の最大では650sにも
 	// なるが、実測では130ステップ全体が数秒で終わる（キー送りのたびに
@@ -1087,7 +1100,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
 		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(5*time.Second)),
 	)
@@ -1130,7 +1143,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 // swipeActions は #lightbox の上を1本指でなぞるアクション列を返す。
 //
 // CDPの決まりで touchEnd は点を持てず、離した位置は直前の touchMove が
-// 持っていた座標から決まる。app.js は touchmove を購読していないが、
+// 持っていた座標から決まる。lightbox.js は touchmove を購読していないが、
 // touchend で読む changedTouches の座標をここで決めるために3回に分けて送る。
 func swipeActions(fromX, fromY, toX, toY float64) []chromedp.Action {
 	at := func(x, y float64) []*input.TouchPoint {
@@ -1148,9 +1161,9 @@ func swipeActions(fromX, fromY, toX, toY float64) []chromedp.Action {
 // スワイプはこのスイートで唯一タッチイベントを使うテストである。他の操作は
 // マウス(input.DispatchMouseEvent)とキーボード(kb.ArrowRight)で足りるが、
 // 左右送りと下スワイプで閉じる経路だけは touchstart/touchend でしか通らない。
-// これが無いと、app.js のスワイプ実装が丸ごと消えても何も落ちない。
+// これが無いと、lightbox.js のスワイプ実装が丸ごと消えても何も落ちない。
 //
-// 移動量は app.js の閾値（SWIPE_X=50px, SWIPE_Y=80px）を確実に超え、かつ
+// 移動量は lightbox.js の閾値（SWIPE_X=50px, SWIPE_Y=80px）を確実に超え、かつ
 // 主たる軸の移動が他方より大きくなるようにとる。実装は「横が閾値超えかつ
 // 縦より大きい」で送り、「下が閾値超えかつ横より大きい」で閉じるため、
 // 斜めに振るとどちらとも解釈されうる。
@@ -1158,7 +1171,7 @@ func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForTiles 10s) + ライトボックスが開く待ち(Poll 5s) +
+	//   初回描画待ち(waitForGallery 10s) + ライトボックスが開く待ち(Poll 5s) +
 	//   スワイプ後のsrc変化待ち(Poll 5s)×2 + 閉じる待ち(Poll 5s) = 30s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に力尽きて
 	// 「context deadline exceeded」という診断不能な失敗になる。Evaluateなど
@@ -1171,7 +1184,7 @@ func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(800, 1000),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
 		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil,
 			chromedp.WithPollingTimeout(5*time.Second)),
@@ -1218,17 +1231,17 @@ func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
 // --- Task: TestScrubberReachesBothEnds ---
 //
 // つまみの位置から日を引くのに比例計算を使うと、ここが落ちる。かつては
-// frac * famifo.total で「全体の何割の位置か」から通し番号を出していたが、
+// frac * gallery.total で「全体の何割の位置か」から通し番号を出していたが、
 // 行の高さが日ごとに変わった時点でこの比例関係は成立しない。位置から日を
 // 引くのは dayAtY の仕事である。
 //
-// 日ごとの表もサーバに聞きに行かない。かつての /dates エンドポイントは
+// DayGroups もサーバに聞きに行かない。かつての /dates エンドポイントは
 // 廃止し、ページに埋め込んだ daygroups を読む。
 func TestScrubberReachesBothEnds(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForTiles 10s) + スクラバー表示待ち(Poll 5s)×2 +
+	//   初回描画待ち(waitForGallery 10s) + スクラバー表示待ち(Poll 5s)×2 +
 	//   ドラッグ後の静定待ち(Poll 5s)×2 = 30s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に
 	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
@@ -1240,7 +1253,7 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 	)
 	require.NoError(t, err)
 
@@ -1257,7 +1270,7 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 	showScrubber := func(scrollTopExpr string) {
 		t.Helper()
 		err := chromedp.Run(rctx,
-			chromedp.Evaluate(`famifo.scroller.scrollTop = `+scrollTopExpr, nil),
+			chromedp.Evaluate(`gallery.scroller.scrollTop = `+scrollTopExpr, nil),
 			chromedp.Poll(`document.querySelector('#scrubber').classList.contains('visible')`, nil,
 				chromedp.WithPollingTimeout(5*time.Second)),
 		)
@@ -1275,7 +1288,7 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 		// seek が requestAnimationFrame でスロットルされるようになっても
 		// 壊れないよう、scrollTop が2フレーム連続で同じ値になるまで待つ。
 		settleJS := `(() => {
-			const now = famifo.scroller.scrollTop;
+			const now = gallery.scroller.scrollTop;
 			if (window.__lastScroll === now) { return true; }
 			window.__lastScroll = now;
 			return false;
@@ -1287,7 +1300,7 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 	}
 
 	var maxScroll float64
-	err = chromedp.Run(rctx, chromedp.Evaluate(`famifo.maxScroll()`, &maxScroll))
+	err = chromedp.Run(rctx, chromedp.Evaluate(`gallery.maxScroll()`, &maxScroll))
 	require.NoError(t, err)
 	require.Greater(t, maxScroll, 0.0)
 
@@ -1298,18 +1311,18 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 	drag(x, r.Top+5, r.Bottom-5)
 
 	var scrollTop float64
-	err = chromedp.Run(rctx, chromedp.Evaluate(`famifo.scroller.scrollTop`, &scrollTop))
+	err = chromedp.Run(rctx, chromedp.Evaluate(`gallery.scroller.scrollTop`, &scrollTop))
 	require.NoError(t, err)
 	require.InDeltaf(t, maxScroll, scrollTop, maxScroll*0.05+5,
 		"dragging to the bottom leaves scrollTop (%.0f) short of maxScroll (%.0f)", scrollTop, maxScroll)
 
 	// 上端までドラッグする。
-	showScrubber(`famifo.maxScroll() - 50`)
+	showScrubber(`gallery.maxScroll() - 50`)
 	r = getScrubberRect()
 	x = r.Left + r.Width/2
 	drag(x, r.Bottom-5, r.Top+5)
 
-	err = chromedp.Run(rctx, chromedp.Evaluate(`famifo.scroller.scrollTop`, &scrollTop))
+	err = chromedp.Run(rctx, chromedp.Evaluate(`gallery.scroller.scrollTop`, &scrollTop))
 	require.NoError(t, err)
 	require.Lessf(t, scrollTop, maxScroll*0.05+5,
 		"dragging to the top leaves scrollTop (%.0f) short of 0", scrollTop)
@@ -1327,7 +1340,7 @@ func TestScrubberReachesBothEnds(t *testing.T) {
 // 帯を外れて素通りする（実測。帯を32px→8pxにしたらバグ入りでPASSした）。
 //
 // タップ点導出の根拠（Step 1 実測）:
-// #scrubber は初期HTMLでは hidden 属性付き（display:none）だが、app.jsが
+// #scrubber は初期HTMLでは hidden 属性付き（display:none）だが、scrubber.jsが
 // ロード直後に bar.hidden = false を実行するため、このテストが計測する時点
 // （タイル描画済み・visibleクラス消滅後）では既に display:none ではない
 // （実測: display="block"）。よって getBoundingClientRect() をそのまま使える。
@@ -1342,7 +1355,7 @@ func TestTileTapOpensLightbox(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForTiles 10s) + スクラバー一時表示の消滅待ち(Poll 5s) +
+	//   初回描画待ち(waitForGallery 10s) + スクラバー一時表示の消滅待ち(Poll 5s) +
 	//   タップ後のライトボックスが開く待ち(Poll 3s) = 18s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に
 	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
@@ -1354,7 +1367,7 @@ func TestTileTapOpensLightbox(t *testing.T) {
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(800, 1000),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Poll(`!document.querySelector('#scrubber').classList.contains('visible')`, nil,
 			chromedp.WithPollingTimeout(5*time.Second)),
 	)
@@ -1380,7 +1393,7 @@ func TestTileTapOpensLightbox(t *testing.T) {
 	var scrollBefore float64
 	err = chromedp.Run(rctx,
 		chromedp.Evaluate(measureJS, &m),
-		chromedp.Evaluate(`famifo.scroller.scrollTop`, &scrollBefore),
+		chromedp.Evaluate(`gallery.scroller.scrollTop`, &scrollBefore),
 	)
 	require.NoError(t, err)
 	require.Greater(t, m.Tile.Width, 0.0, "could not read the rect of the rightmost tile")
@@ -1427,7 +1440,7 @@ func TestTileTapOpensLightbox(t *testing.T) {
 			"the lightbox; the scrubber looks like it is taking the tap", x, y)
 
 	var scrollAfter float64
-	err = chromedp.Run(rctx, chromedp.Evaluate(`famifo.scroller.scrollTop`, &scrollAfter))
+	err = chromedp.Run(rctx, chromedp.Evaluate(`gallery.scroller.scrollTop`, &scrollAfter))
 	require.NoError(t, err)
 	require.Equal(t, scrollBefore, scrollAfter, "the scroll position changed, so the scrubber seeked")
 }
@@ -1437,30 +1450,29 @@ func TestTileTapOpensLightbox(t *testing.T) {
 // 貪欲詰めと二分探索は純粋関数だが、この repo にはJSを単体テストする手段が
 // 無い（Node を足さない方針のため）。実ブラウザ上で関数を直接呼んで検証する。
 
-// layoutEntry は famifo.layout が返す entries の1要素。
-type layoutEntry struct {
+// layoutCard は layout.layout が返す cards の1要素。
+type layoutCard struct {
 	D     string  `json:"d"`
 	Y     float64 `json:"y"`
 	H     float64 `json:"h"`
 	Start int     `json:"start"`
 	N     int     `json:"n"`
 	Span  int     `json:"span"`
-	Col   int     `json:"col"`
 	Rows  int     `json:"rows"`
 }
 
 type layoutResult struct {
-	Entries []layoutEntry `json:"entries"`
-	Height  float64       `json:"height"`
+	Cards  []layoutCard `json:"cards"`
+	Height float64      `json:"height"`
 }
 
-// evalLayout は famifo.layout をブラウザ上で呼ぶ。
+// evalLayout は layout.layout をブラウザ上で呼ぶ。
 // tileH=100, labelH=20, gap=4 に固定して、期待値を手計算できるようにする。
 func evalLayout(t *testing.T, ctx context.Context, groupsJSON string, cols int) layoutResult {
 	t.Helper()
 	var got layoutResult
 	err := chromedp.Run(ctx, chromedp.Evaluate(
-		fmt.Sprintf(`famifo.layout(%s, %d, 100, 20, 4)`, groupsJSON, cols), &got))
+		fmt.Sprintf(`layout.layout(%s, %d, 100, 20, 4)`, groupsJSON, cols), &got))
 	require.NoError(t, err)
 	return got
 }
@@ -1468,30 +1480,27 @@ func evalLayout(t *testing.T, ctx context.Context, groupsJSON string, cols int) 
 func TestLayoutPacksDaysThatFitOneRow(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForTiles(10*time.Second))
+	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForGallery(10*time.Second))
 	require.NoError(t, err)
 
 	// 列数6。1枚 + 4枚 = 5列で同じストライプに載り、次の3枚は入らず次へ。
 	got := evalLayout(t, ctx,
 		`[{d:"2026-02-08",n:1},{d:"2026-02-03",n:4},{d:"2026-01-20",n:3}]`, 6)
 
-	require.Len(t, got.Entries, 3)
+	require.Len(t, got.Cards, 3)
 
-	require.Equal(t, 0, got.Entries[0].Col)
-	require.Equal(t, 1, got.Entries[0].Span)
-	require.Equal(t, float64(0), got.Entries[0].Y)
-	require.Equal(t, 0, got.Entries[0].Start)
+	require.Equal(t, 1, got.Cards[0].Span)
+	require.Equal(t, float64(0), got.Cards[0].Y)
+	require.Equal(t, 0, got.Cards[0].Start)
 
-	require.Equal(t, 1, got.Entries[1].Col, "sits to the right of the single-item day")
-	require.Equal(t, 4, got.Entries[1].Span)
-	require.Equal(t, float64(0), got.Entries[1].Y, "the same stripe, so the y matches")
-	require.Equal(t, 1, got.Entries[1].Start)
+	require.Equal(t, 4, got.Cards[1].Span)
+	require.Equal(t, float64(0), got.Cards[1].Y, "the same stripe, so the y matches")
+	require.Equal(t, 1, got.Cards[1].Start)
 
 	// 3枚目は残り1列に4列は載らないので次のストライプ。
 	// ストライプ高 = labelH(20) + gap(4) + tileH(100) = 124。次のy = 124 + gap(4) = 128
-	require.Equal(t, 0, got.Entries[2].Col, "does not fit, so it starts the next stripe")
-	require.Equal(t, float64(128), got.Entries[2].Y)
-	require.Equal(t, 5, got.Entries[2].Start)
+	require.Equal(t, float64(128), got.Cards[2].Y, "does not fit, so it starts the next stripe")
+	require.Equal(t, 5, got.Cards[2].Start)
 
 	require.Equal(t, float64(128+124), got.Height)
 }
@@ -1499,75 +1508,74 @@ func TestLayoutPacksDaysThatFitOneRow(t *testing.T) {
 func TestLayoutGivesWholeRowsToBigDays(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForTiles(10*time.Second))
+	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForGallery(10*time.Second))
 	require.NoError(t, err)
 
 	// 列数6。13枚は6列を占め、3段(6+6+1)になる。
 	got := evalLayout(t, ctx, `[{d:"2026-02-08",n:13},{d:"2026-02-03",n:2}]`, 6)
 
-	require.Len(t, got.Entries, 2)
-	require.Equal(t, 6, got.Entries[0].Span, "a day with more items than columns takes the whole row")
-	require.Equal(t, 3, got.Entries[0].Rows)
+	require.Len(t, got.Cards, 2)
+	require.Equal(t, 6, got.Cards[0].Span, "a day with more items than columns takes the whole row")
+	require.Equal(t, 3, got.Cards[0].Rows)
 	// h = 20 + 4 + 3*100 + 2*4 = 332
-	require.Equal(t, float64(332), got.Entries[0].H)
+	require.Equal(t, float64(332), got.Cards[0].H)
 
-	require.Equal(t, 0, got.Entries[1].Col, "whatever follows a full-row day always starts the next stripe")
-	require.Equal(t, float64(332+4), got.Entries[1].Y)
-	require.Equal(t, 13, got.Entries[1].Start)
+	require.Equal(t, float64(332+4), got.Cards[1].Y, "whatever follows a full-row day always starts the next stripe")
+	require.Equal(t, 13, got.Cards[1].Start)
 }
 
 func TestLayoutHandlesEmptyLibrary(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForTiles(10*time.Second))
+	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForGallery(10*time.Second))
 	require.NoError(t, err)
 
 	got := evalLayout(t, ctx, `[]`, 6)
 
-	require.Empty(t, got.Entries)
+	require.Empty(t, got.Cards)
 	require.Equal(t, float64(0), got.Height, "empty gives a height of 0, never NaN")
 }
 
-func TestLayoutLookupsAgreeWithEntries(t *testing.T) {
+func TestLayoutLookupsAgreeWithCards(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForTiles(10*time.Second))
+	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForGallery(10*time.Second))
 	require.NoError(t, err)
 
-	// yForIndex と dayAtY が entries と食い違わないこと。
+	// yForIndex と dayAtY が cards と食い違わないこと。
 	// 実装が二分探索なので、境界（各グループの先頭・末尾）を総当たりで確かめる。
 	var mismatches []string
 	err = chromedp.Run(ctx, chromedp.Evaluate(`(() => {
 		const groups = [{d:"2026-02-08",n:1},{d:"2026-02-03",n:4},
 		                {d:"2026-01-20",n:13},{d:"2026-01-05",n:2}];
-		const L = famifo.layout(groups, 6, 100, 20, 4);
+		const L = layout.layout(groups, 6, 100, 20, 4);
 		const bad = [];
-		for (const e of L.entries) {
-			for (const i of [e.start, e.start + e.n - 1]) {
-				const row = Math.floor((i - e.start) / e.span);
-				const want = e.y + L.labelH + L.gap + row * (L.tileH + L.gap);
-				const got = famifo.yForIndex(L, i);
+		for (const c of L.cards) {
+			for (const i of [c.start, c.start + c.n - 1]) {
+				const row = Math.floor((i - c.start) / c.span);
+				const want = c.y + L.labelH + L.gap + row * (L.tileH + L.gap);
+				const got = layout.yForIndex(L, i);
 				if (got !== want) bad.push('yForIndex(' + i + ')=' + got + ' want=' + want);
 				// 詰めた行では複数の日が同じ y を共有するので、dayAtY は
 				// その行のどれか1つしか返せない。「同じ行の日を返すこと」
 				// までが約束できる範囲。
-				const d = famifo.dayAtY(L, want);
-				const hit = L.entries.find((x) => x.d === d);
-				if (!hit || hit.y !== e.y) {
-					bad.push('dayAtY(' + want + ')=' + d + ' は y=' + e.y + ' の行に無い');
+				const d = layout.dayAtY(L, want);
+				const hit = L.cards.find((x) => x.d === d);
+				if (!hit || hit.y !== c.y) {
+					bad.push('dayAtY(' + want + ')=' + d + ' は y=' + c.y + ' の行に無い');
 				}
 			}
 		}
 		return bad;
 	})()`, &mismatches))
 	require.NoError(t, err)
-	require.Empty(t, mismatches, "the binary search disagrees with entries")
+	require.Empty(t, mismatches, "the binary search disagrees with cards")
 }
 
 func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
-	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForTiles(10*time.Second))
+	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForGallery(10*time.Second))
 	require.NoError(t, err)
 
 	// 100枚の日（6列で17段）の途中だけを切り出せること。
@@ -1576,22 +1584,22 @@ func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
 	//
 	// 探索の起点を段の境界ちょうど(336)にしないのは、そこだと
 	// (336-24)/104 が割り切れてしまい、floor を ceil に変えても
-	// r0 が動かず、切り捨ての誤りを検出できなくなるため。
-	// 436 なら 412/104=3.96 で、ceil にすると r0 が 4 になって落ちる。
+	// firstRow が動かず、切り捨ての誤りを検出できなくなるため。
+	// 436 なら 412/104=3.96 で、ceil にすると firstRow が 4 になって落ちる。
 	var got struct {
 		From   int     `json:"from"`
 		To     int     `json:"to"`
 		PasteY float64 `json:"pasteY"`
-		Pieces int     `json:"pieces"`
+		Ranges int     `json:"ranges"`
 	}
 	err = chromedp.Run(ctx, chromedp.Evaluate(`(() => {
-		const L = famifo.layout([{d:"2026-02-08",n:100}], 6, 100, 20, 4);
-		const w = famifo.visibleWindow(L, 436, 436 + 200);
-		return {from: w.from, to: w.to, pasteY: w.pasteY, pieces: w.pieces.length};
+		const L = layout.layout([{d:"2026-02-08",n:100}], 6, 100, 20, 4);
+		const w = layout.visibleWindow(L, 436, 436 + 200);
+		return {from: w.from, to: w.to, pasteY: w.pasteY, ranges: w.ranges.length};
 	})()`, &got))
 	require.NoError(t, err)
 
-	require.Equal(t, 1, got.Pieces)
+	require.Equal(t, 1, got.Ranges)
 	require.Equal(t, 18, got.From, "the start of the fourth row = 3*6")
 	require.Equal(t, float64(336), got.PasteY, "the paste lands on the top edge of the row it cut out")
 	require.Greater(t, got.To, got.From)
@@ -1617,25 +1625,25 @@ func TestCardPositionsMatchTheLayout(t *testing.T) {
 	err := chromedp.Run(ctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Evaluate(`(() => {
-			const L = famifo.current();
+			const L = gallery.current();
 			const spacerTop = document.querySelector('#spacer').getBoundingClientRect().top;
 			const bad = [];
 			for (const card of document.querySelectorAll('.daycard')) {
 				const first = card.querySelector('.tile');
 				if (!first) continue;
 				const i = Number(first.dataset.i);
-				// このカードが属するエントリを通し番号から引く
-				const e = L.entries.find((x) => i >= x.start && i < x.start + x.n);
-				if (!e) { bad.push('entry not found for i=' + i); continue; }
-				const wantY = famifo.yForIndex(L, i);
+				// このカードに対応する Card を通し番号から引く
+				const c = L.cards.find((x) => i >= x.start && i < x.start + x.n);
+				if (!c) { bad.push('card not found for i=' + i); continue; }
+				const wantY = layout.yForIndex(L, i);
 				const gotY = card.getBoundingClientRect().top - spacerTop
 					+ (card.querySelector('.daylabel') ? L.labelH + L.gap : 0);
 				if (Math.abs(gotY - wantY) > 1) {
 					bad.push('i=' + i + ' y got=' + gotY.toFixed(1) + ' want=' + wantY.toFixed(1));
 				}
-				const wantW = e.span * L.tileH + (e.span - 1) * L.gap;
+				const wantW = c.span * L.tileH + (c.span - 1) * L.gap;
 				const gotW = card.getBoundingClientRect().width;
 				if (Math.abs(gotW - wantW) > 1) {
 					bad.push('i=' + i + ' width got=' + gotW.toFixed(1) + ' want=' + wantW.toFixed(1));
@@ -1658,7 +1666,7 @@ func TestSmallDaysSitSideBySide(t *testing.T) {
 	err := chromedp.Run(ctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Evaluate(`(() => {
 			// 上端が同じカードが2枚以上あるストライプの数
 			const tops = new Map();
@@ -1688,13 +1696,13 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 	err := chromedp.Run(ctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Evaluate(`(() => {
-			const L = famifo.current();
+			const L = gallery.current();
 			const card = document.querySelector('.daycard');
 			const win = document.querySelector('#window');
 			return {
-				span: L.entries[0].span,
+				span: L.cards[0].span,
 				label: card.querySelector('.daylabel').textContent,
 				full: Math.abs(card.getBoundingClientRect().width
 				               - win.getBoundingClientRect().width) < 1,
@@ -1740,13 +1748,13 @@ func TestScrubberLabelMatchesTheTopItem(t *testing.T) {
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 	)
 	require.NoError(t, err)
 
 	// スクラバーを一時表示させてから掴む（TestScrubberReachesBothEndsと同じ経路）。
 	err = chromedp.Run(rctx,
-		chromedp.Evaluate(`famifo.scroller.scrollTop = 50`, nil),
+		chromedp.Evaluate(`gallery.scroller.scrollTop = 50`, nil),
 		chromedp.Poll(`document.querySelector('#scrubber').classList.contains('visible')`, nil,
 			chromedp.WithPollingTimeout(5*time.Second)),
 	)
@@ -1769,7 +1777,7 @@ func TestScrubberLabelMatchesTheTopItem(t *testing.T) {
 	require.NoError(t, err)
 
 	settleJS := `(() => {
-		const now = famifo.scroller.scrollTop;
+		const now = gallery.scroller.scrollTop;
 		if (window.__lastScroll === now) { return true; }
 		window.__lastScroll = now;
 		return false;
@@ -1847,15 +1855,15 @@ func TestScrollMapsIntoLayoutSpace(t *testing.T) {
 	err := chromedp.Run(ctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
 		chromedp.Evaluate(fmt.Sprintf(`(() => {
-			const L = famifo.current();
+			const L = gallery.current();
 			const spacer = document.querySelector('#spacer');
 			return {
-				converted: famifo.toLayoutY(famifo.scroller.scrollTop),
-				expected: famifo.yForIndex(L, %d),
-				spacerTop: spacer.getBoundingClientRect().top + famifo.scroller.scrollTop,
+				converted: gallery.toLayoutY(gallery.scroller.scrollTop),
+				expected: layout.yForIndex(L, %d),
+				spacerTop: spacer.getBoundingClientRect().top + gallery.scroller.scrollTop,
 			};
 		})()`, deepScrollIndex), &got),
 	)
@@ -1924,12 +1932,11 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 
 	require.NoError(t, prepareManyTestMedia(st, mediaDir, thumbs))
 
-	gallery, err := web.NewGallery(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, err := web.NewHandler(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
-	gallery.SetChunkSize(stallChunkSize)
+	h.SetChunkSize(stallChunkSize)
 
 	var items, dropped int64
-	h := gallery.Handler()
 	gate := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/tiles" {
@@ -1973,7 +1980,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 	require.NoError(t, chromedp.Run(rctx,
 		chromedp.EmulateViewport(800, 600),
 		chromedp.Navigate(url),
-		waitForTiles(30*time.Second),
+		waitForGallery(30*time.Second),
 		chromedp.Evaluate(`document.querySelector('#spacer').offsetHeight`, &height),
 	))
 	require.Greater(t, height, 0, "could not read the layout height")
@@ -1992,7 +1999,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 	wantFrom := manyMediaCount - stallChunkSize*3
 	start := time.Now()
 	pollErr := chromedp.Run(rctx, chromedp.Poll(
-		fmt.Sprintf(`famifo.pastedRange().from >= %d`, wantFrom),
+		fmt.Sprintf(`gallery.pastedRange().from >= %d`, wantFrom),
 		nil, chromedp.WithPollingTimeout(120*time.Second)))
 	elapsed := time.Since(start)
 
@@ -2000,7 +2007,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 		From int `json:"from"`
 		To   int `json:"to"`
 	}
-	require.NoError(t, chromedp.Run(rctx, chromedp.Evaluate(`famifo.pastedRange()`, &pasted)))
+	require.NoError(t, chromedp.Run(rctx, chromedp.Evaluate(`gallery.pastedRange()`, &pasted)))
 
 	t.Logf("caught up in %v: %d /items requests during the scroll, %d in total (%d of them dropped by the browser, %d chunks in all) pasted=%d..%d",
 		elapsed.Round(time.Millisecond), duringScroll, atomic.LoadInt64(itemsSeen),
@@ -2043,8 +2050,8 @@ func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 	// (urlAt) で取りに行き、その取得中に一覧を貼り替える。配信が遅いので
 	// render() の時点で取得は必ずまだ終わっていない。
 	const js = `(async () => {
-		const p = famifo.urlAt(famifo.total - 1);
-		famifo.render();
+		const p = gallery.urlAt(gallery.total - 1);
+		gallery.render();
 		try {
 			return (await p) ? "resolved" : "url was null";
 		} catch (e) {
@@ -2056,7 +2063,7 @@ func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 	require.NoError(t, chromedp.Run(rctx,
 		chromedp.EmulateViewport(800, 600),
 		chromedp.Navigate(url),
-		waitForTiles(30*time.Second),
+		waitForGallery(30*time.Second),
 		chromedp.Evaluate(js, &got, awaitPromise),
 	))
 
@@ -2078,12 +2085,12 @@ func TestItemURLOpensTheLightbox(t *testing.T) {
 
 	const target = testChunkSize + 40 // 初回HTMLに埋まっていない位置
 	want := expectedMediaURLs(target + 1)[target]
-	id := strings.TrimPrefix(want, "/file/")
+	id := strings.TrimPrefix(want, "/full/")
 
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL+"/item/"+id),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err, "the lightbox never opened from the item URL")
@@ -2105,14 +2112,14 @@ func TestBackClosesTheLightbox(t *testing.T) {
 	defer cancel()
 
 	want := expectedMediaURLs(1)[0]
-	id := strings.TrimPrefix(want, "/file/")
+	id := strings.TrimPrefix(want, "/full/")
 
 	var path string
 	var survived bool
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Evaluate(`window.__noReload = true`, nil),
 		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
 		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(10*time.Second)),
@@ -2141,20 +2148,20 @@ func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
 	defer cancel()
 
 	urls := expectedMediaURLs(4)
-	third := strings.TrimPrefix(urls[3], "/file/")
+	third := strings.TrimPrefix(urls[3], "/full/")
 
 	var path string
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
 		chromedp.Navigate(baseURL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
 		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
 
 	for i := 1; i <= 3; i++ {
-		want := strings.Replace(urls[i], "/file/", "/item/", 1)
+		want := strings.Replace(urls[i], "/full/", "/item/", 1)
 		err = chromedp.Run(rctx,
 			chromedp.KeyEvent(kb.ArrowRight),
 			chromedp.Poll(fmt.Sprintf(`location.pathname === %s`, strconv.Quote(want)), nil,
@@ -2217,9 +2224,9 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 		media.Restore(mediaPath, time.Unix(1600000000, 0), time.Unix(1600000000, 0))))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gallery, err := web.NewGallery(st, thumbs, nil, log)
+	h, err := web.NewHandler(st, thumbs, nil, log)
 	require.NoError(t, err)
-	srv := httptest.NewServer(gallery.Handler())
+	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
 	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
@@ -2240,7 +2247,7 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 	err = chromedp.Run(rctx,
 		chromedp.EmulateViewport(1200, 900),
 		chromedp.Navigate(srv.URL),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 		chromedp.Click(`#window .tile[data-video]`, chromedp.NodeVisible),
 		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil,
 			chromedp.WithPollingTimeout(5*time.Second)),
@@ -2251,7 +2258,7 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, got.VHidden, "the video element is shown for a video")
 	require.True(t, got.IHidden, "the image element is hidden for a video")
-	require.True(t, strings.HasPrefix(got.Src, "/file/"), "got %q", got.Src)
+	require.True(t, strings.HasPrefix(got.Src, "/full/"), "got %q", got.Src)
 
 	// 次（写真）へ送ると入れ替わり、動画の src は外れる。
 	err = chromedp.Run(rctx,

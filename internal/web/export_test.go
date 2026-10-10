@@ -4,8 +4,9 @@ package web
 //
 // テストは本番の defaultChunkSize より小さい値を使う。塊の境界を跨ぐ挙動を
 // 確かめるには塊が2つ以上要るが、本番の大きさのままだと写真を何百枚も用意
-// することになるため。速さのための上書きではなく、値そのものがテストの前提を作る。
+// することになるため。ハンドラは要求のたびに chunkSize を読むので、要求を
+// 流し始める前にのみ呼ぶこと。
 //
-// ハンドラは別goroutineから chunkSize を読むので、Handler() を配信に出す前に
-// のみ呼ぶこと。
-func (g *Gallery) SetChunkSize(n int) { g.chunkSize = n }
+// NewHandler の引数で受け取る形にはしない。120は表示の寸法から測って決めた
+// ギャラリー側の事情で、呼び出し側（main）が選ぶものではない。
+func (h *Handler) SetChunkSize(n int) { h.chunkSize = n }

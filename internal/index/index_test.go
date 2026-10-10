@@ -401,7 +401,7 @@ func TestScanKeepsTheSynologyThumbnailOfADeletedPhoto(t *testing.T) {
 // 拡張子を写真のものに付け替えただけのファイルは載せない。
 //
 // 自前でデコードしない形式（HEICや動画）では thumb が原本を開かないため、ここで
-// 中身を見ないと素通りして行が入る。行が入れば /file/{id} が配信する。
+// 中身を見ないと素通りして行が入る。行が入れば /full/{id} が配信する。
 func TestScanRejectsContentThatDoesNotMatchTheExtension(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

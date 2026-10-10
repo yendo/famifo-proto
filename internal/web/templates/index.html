@@ -1,22 +1,21 @@
-{{define "gallery"}}<!doctype html>
+{{define "index"}}<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>famifo</title>
 <link rel="stylesheet" href="/static/app.css">
-{{/* 可視範囲の貼り替えを差分で当てるために使う。app.js は読み込み直後に
-     render() まで走るため、必ずこれより先に読む。どちらも defer なので
-     実行順は記述順になる。
+{{/* ES モジュールの入口。各ファイルは import でつながっているので、読み込む
+     順をここで管理しない。モジュールは既定で defer される。
 
-     ファイルは内容を変えずに同梱している。CDNから読むと、NASもiPadも
+     可視範囲の貼り替えを差分で当てるために使う idiomorph は、内容を変えずに
+     static/idiomorph.esm.js として同梱している。CDNから読むと、NASもiPadも
      インターネットに出られることが表示の条件になり、届かないとギャラリーが
      何も出なくなる。家庭内LANで完結する構成を崩さない。
 
      入手元は jsdelivr の idiomorph (0BSD)。バージョンの出所は package.json
      で、取り直しは scripts/update-idiomorph.sh が行う。手で置き換えない。 */}}
-<script src="/static/idiomorph.min.js" defer></script>
-<script src="/static/app.js" defer></script>
+<script type="module" src="/static/app.js"></script>
 </head>
 <body>
 <header class="topbar">
