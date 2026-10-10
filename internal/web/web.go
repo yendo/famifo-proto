@@ -344,7 +344,7 @@ func fullViewPath(m media.Media) (path, contentType string) {
 		if synology.HasFilm(path) {
 			path = synology.FilmPath(path)
 		}
-	case imagefmt.IsSupported(path) && !imagefmt.IsDecodable(path) && synology.HasThumbM(path):
+	case !imagefmt.IsDecodable(path) && synology.HasThumbM(path):
 		path = synology.ThumbXLPath(path)
 	}
 	return path, imagefmt.ContentType(path)
