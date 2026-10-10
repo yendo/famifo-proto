@@ -22,9 +22,9 @@ type tilesView struct {
 	Media []mediaView
 }
 
-// dayView は埋め込む日ごとの表の1要素。
+// dayGroup は埋め込む日ごとの表の1要素。
 // 転送量を抑えるためJSONのキー名を短くしている（数千日ぶんになりうる）。
-type dayView struct {
+type dayGroup struct {
 	Date  string `json:"d"` // "2006-01-02"
 	Count int    `json:"n"` // その日の件数
 }
