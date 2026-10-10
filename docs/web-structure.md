@@ -26,8 +26,8 @@ securityHeaders (CSP, nosniff)
 
 routes (methods of Handler)                               web.go
   GET /{$}         handleIndex --+
-  GET /item/{id}   handleItem  --+-> renderIndex -> buildRange -> tmpl "index"
-  GET /tiles       handleTiles ----> parseWindow -> buildRange -> tmpl "tiles"
+  GET /item/{id}   handleItem  --+-> renderIndex -> buildTilesView -> tmpl "index"
+  GET /tiles       handleTiles ----> parseWindow -> buildTilesView -> tmpl "tiles"
   GET /thumb/{id}  handleThumb ----> lookupMedia -> thumb.Provider
                                                     or serveNoPreview
   GET /full/{id}   handleFull  ----> lookupMedia -> fullViewPath

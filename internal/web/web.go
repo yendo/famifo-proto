@@ -171,7 +171,7 @@ func (h *Handler) handleTiles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad chunk", http.StatusBadRequest)
 		return
 	}
-	tiles, err := h.buildRange(r, chunk*h.chunkSize, h.chunkSize)
+	tiles, err := h.buildTilesView(r, chunk*h.chunkSize, h.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -239,7 +239,7 @@ func securityHeaders(next http.Handler) http.Handler {
 // 表示する写真の通し番号で、noOpenItem なら閉じたまま開く。
 // 先頭の塊を埋めた状態で書き込むので、開いた直後に灰色の画面が出ない。
 func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, openIndex int) {
-	tiles, err := h.buildRange(r, 0, h.chunkSize)
+	tiles, err := h.buildTilesView(r, 0, h.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
