@@ -113,7 +113,7 @@ export const gallery = (() => {
 		return layoutY + spacerTop;
 	}
 
-	// 日ごとの表は初回HTMLに埋め込まれている。これが無いと1枚も描けない。
+	// DayGroups は初回HTMLに埋め込まれている。これが無いと1枚も描けない。
 	const daysEl = document.querySelector("#daygroups");
 	const days = daysEl ? JSON.parse(daysEl.textContent) : [];
 
@@ -268,9 +268,9 @@ export const gallery = (() => {
 		const w = visibleWindow(L, top - over, top + window.innerHeight + over);
 		if (!w) return;
 
-		// 日ごとの表と総枚数はサーバが別々に読むため、開いたまま新着が入ると
-		// 表のほうが多くなりうる。総枚数で抑えないと、存在しない塊を待ち続けて
-		// 末尾が永久に更新されなくなる。
+		// DayGroups と総枚数はサーバが別々に読むため、開いたまま新着が入ると
+		// DayGroups の合計のほうが多くなりうる。総枚数で抑えないと、存在しない
+		// 塊を待ち続けて末尾が永久に更新されなくなる。
 		const from = w.from;
 		const to = Math.min(total, w.to);
 		if (from >= to) return;
@@ -339,7 +339,7 @@ export const gallery = (() => {
 	}
 
 	// 1枚のカード。占める列数はレイアウトが決め、ラベルの文言はタイル自身の
-	// data-date から作る。日ごとの表が古くても、ラベルはそのカードに実際に
+	// data-date から作る。DayGroups が古くても、ラベルはそのカードに実際に
 	// 写っている日を指す。
 	/**
 	 * @param {Piece} piece
