@@ -419,7 +419,7 @@ func TestTilesLinkToTheItemPage(t *testing.T) {
 	require.Contains(t, body, `data-full="/full/`+m.ID()+`"`)
 }
 
-// タイルが動画かどうかはHTMLに出る。lightbox.js が拡大表示の切り替えに使い、
+// タイルが動画かどうかはHTMLに出る。lightbox.js がフルビューの切り替えに使い、
 // CSSが再生の印を重ねるのに使う。
 func TestGalleryMarksVideoTiles(t *testing.T) {
 	t.Parallel()

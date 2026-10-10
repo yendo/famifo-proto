@@ -14,7 +14,7 @@ type mediaView struct {
 	ThumbURL string
 	FullURL  string
 	Date     string // "2006-01-02"。ローカル時刻。クライアントが日の区切りに使う
-	IsVideo  bool   // タイルに再生の印を出すか、拡大表示を <video> にするか
+	IsVideo  bool   // タイルに再生の印を出すか、フルビューを <video> にするか
 }
 
 // tilesView は tiles.html の入力。

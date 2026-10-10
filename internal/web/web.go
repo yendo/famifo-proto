@@ -185,7 +185,8 @@ func (h *Handler) handleTiles(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleThumb は一覧のタイルを配信する。どのファイルを出すかは thumb が決める。
+// handleThumb は一覧のタイルに表示する画像を配信する。どのファイルを出すかは
+// thumb.Provider.Path が選ぶ（@eaDir、自前のサムネイル、原本の順）。
 // 出せる絵が無ければプレースホルダに差し替えるので、404にはならない。
 func (h *Handler) handleThumb(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.lookupMedia(w, r)
@@ -203,7 +204,7 @@ func (h *Handler) handleThumb(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-// handleFull は拡大表示用の写真と動画を配信する。
+// handleFull はフルビュー用の写真と動画を配信する。
 func (h *Handler) handleFull(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.lookupMedia(w, r)
 	if !ok {
@@ -320,7 +321,7 @@ func serveNoPreview(w http.ResponseWriter) {
 	w.Write(noPreview)
 }
 
-// fullViewPath は拡大表示に配信するファイルのパスと、そのMIMEタイプを返す。
+// fullViewPath はフルビューに配信するファイルのパスと、そのMIMEタイプを返す。
 //
 // 借りるものが2種類ある。HEICはSafari以外のブラウザが表示できないので、@eaDir から
 // 借りられるなら原本ではなくSynologyのXL（長辺1707px）を返す。動画はHEVCが端末に
