@@ -235,9 +235,9 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// renderIndex はトップページのHTMLを組み立てて返す。openIndex は開いた状態で
+// renderIndex はトップページのHTMLを組み立てて w に書き込む。openIndex は開いた状態で
 // 表示する写真の通し番号で、noOpenItem なら閉じたまま開く。
-// 先頭の塊を埋めた状態で返すので、開いた直後に灰色の画面が出ない。
+// 先頭の塊を埋めた状態で書き込むので、開いた直後に灰色の画面が出ない。
 func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, openIndex int) {
 	tiles, err := h.buildRange(r, 0, h.chunkSize)
 	if err != nil {
