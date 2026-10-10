@@ -103,9 +103,11 @@ func TestValidateRejectsNestedRoots(t *testing.T) {
 	inner := filepath.Join(outer, "sub")
 	require.NoError(t, os.MkdirAll(inner, 0o755))
 
-	c := config.Config{MediaDirs: []string{outer, inner}, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
+	for _, dirs := range [][]string{{outer, inner}, {inner, outer}} {
+		c := config.Config{MediaDirs: dirs, DataDir: "./famifo-data", Addr: ":8080", ScanWorkers: 1, ScanInterval: time.Hour}
 
-	require.Error(t, c.Validate())
+		require.Error(t, c.Validate(), "order: %v", dirs)
+	}
 }
 
 // -data はどのルートの中にあってもいけない。中にあるとサムネイルを
