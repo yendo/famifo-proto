@@ -5,6 +5,7 @@ package web_test
 import (
 	"context"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -401,8 +402,10 @@ func TestSignedOutRendersWithoutASession(t *testing.T) {
 	// ログイン画面側でもサインアウトが要る旨と、DSMを条件付きで名指しする
 	// 案内が消えないことを固定する。famifoは特定のIdPに依存しないので、
 	// DSMは「使っている場合」の条件としてのみ出てよい。
-	require.Contains(t, body, "also sign out on the login screen you originally used")
-	require.Contains(t, body, "if that's DSM, sign out of DSM")
+	// 文言は表示される文字で比べる。テンプレートが ' を &#39; にエスケープする。
+	text := html.UnescapeString(body)
+	require.Contains(t, text, "also sign out on the login screen you originally used")
+	require.Contains(t, text, "if that's DSM, sign out of DSM")
 	// 認証の内側を通らないページにもCSSが当たる。
 	require.Contains(t, body, `href="/static/app.css"`)
 }

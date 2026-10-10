@@ -10,8 +10,7 @@ package web
 import (
 	"context"
 	"errors"
-	"fmt"
-	"html"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -296,8 +295,12 @@ func (a *Auth) callbackError(w http.ResponseWriter, r *http.Request, message str
 	if err := a.sessions.Destroy(r.Context()); err != nil {
 		a.log.Error("cannot discard the failed login attempt", "err", err)
 	}
-	a.writeHTMLPage(w, status, "Sign-in failed",
-		fmt.Sprintf(`<p>%s</p><p><a href="%s">Try signing in again</a></p>`, html.EscapeString(message), loginPath))
+	a.writeNotice(w, status, noticePage{
+		Title:      "Sign-in failed",
+		Paragraphs: []string{message},
+		LinkText:   "Try signing in again",
+		LinkURL:    loginPath,
+	})
 }
 
 // signedOutURL はRP-Initiated Logoutのpost_logout_redirect_uriに渡す、
@@ -307,21 +310,38 @@ func (a *Auth) signedOutURL() string {
 }
 
 func (a *Auth) renderSignedOut(w http.ResponseWriter) {
-	a.writeHTMLPage(w, http.StatusOK, "Signed out",
-		`<p>You have been signed out of famifo.</p>`+
-			`<p>The sign-in at the login screen may still be open, separately from this. That's why signing in `+
-			`again may not ask you anything.</p>`+
-			`<p>To sign in as someone else, or to sign out completely, also sign out on the login screen you `+
-			`originally used (if that's DSM, sign out of DSM).</p>`+
-			`<p><a href="`+loginPath+`">Sign in again</a></p>`)
+	a.writeNotice(w, http.StatusOK, noticePage{
+		Title: "Signed out",
+		Paragraphs: []string{
+			"You have been signed out of famifo.",
+			"The sign-in at the login screen may still be open, separately from this. " +
+				"That's why signing in again may not ask you anything.",
+			"To sign in as someone else, or to sign out completely, also sign out on the login screen " +
+				"you originally used (if that's DSM, sign out of DSM).",
+		},
+		LinkText: "Sign in again",
+		LinkURL:  loginPath,
+	})
 }
 
-// writeHTMLPage は認証の内側を経由しない小さなHTMLページを書き出す。bodyHTML
-// はすでに安全な断片であることを呼び出し側が保証する（利用者由来の文字列を
-// 混ぜるときはhtml.EscapeStringを通すこと）。
-func (a *Auth) writeHTMLPage(w http.ResponseWriter, status int, title, bodyHTML string) {
+// noticeTmpl は認証の内側を経由しない案内のページ。ファイルは埋め込みなので、
+// 失敗するのはテンプレートの書き間違いだけで、それはテストが拾う。
+var noticeTmpl = template.Must(template.ParseFS(assets, "templates/auth-notice.html"))
+
+// noticePage は案内のページに載せる中身。どれも素の文字列で、エスケープは
+// テンプレートが受け持つ。
+type noticePage struct {
+	Title      string
+	Paragraphs []string
+	LinkText   string
+	LinkURL    string
+}
+
+// writeNotice は案内のページを書き出す。
+func (a *Auth) writeNotice(w http.ResponseWriter, status int, p noticePage) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	fmt.Fprintf(w, `<!doctype html><title>%s</title><link rel="stylesheet" href="/static/app.css">%s`,
-		html.EscapeString(title), bodyHTML)
+	if err := noticeTmpl.ExecuteTemplate(w, "auth-notice", p); err != nil {
+		a.log.Error("failed to render the notice template", "err", err)
+	}
 }
