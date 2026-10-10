@@ -254,11 +254,11 @@ func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, openIndex 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	dayViews := make([]dayView, 0, len(days))
+	dayGroups := make([]dayGroup, 0, len(days))
 	for _, d := range days {
-		dayViews = append(dayViews, dayView{Date: d.Date, Count: d.Count})
+		dayGroups = append(dayGroups, dayGroup{Date: d.Date, Count: d.Count})
 	}
-	raw, err := json.Marshal(dayViews)
+	raw, err := json.Marshal(dayGroups)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

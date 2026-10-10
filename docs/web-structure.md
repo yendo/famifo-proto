@@ -40,7 +40,7 @@ indexView                          view.go
   +-- tilesView (embedded)
   |     +-- []mediaView {ID, PageURL, ThumbURL, FullURL, Date, IsVideo}
   +-- Total, ChunkSize
-  +-- DayGroups ([]dayView as JSON)
+  +-- DayGroups ([]dayGroup as JSON)
   +-- OpenIndex, AuthEnabled
 
 templates/index.html  {{define "index"}} -> {{template "tiles" .}}
