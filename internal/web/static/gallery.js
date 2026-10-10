@@ -12,7 +12,7 @@ import { layout, visibleWindow, yForIndex } from "./layout.js";
  * タイル1枚。サーバが返したHTML断片から取り出す。
  * @typedef {object} Tile
  * @property {string} html タイルのHTML
- * @property {string} url 拡大表示のURL（/full/<id>）
+ * @property {string} url フルビューのURL（/full/<id>）
  * @property {string} page その1件のページのURL（/item/<id>）
  * @property {string} date 撮影日（"2026-02-08"）
  * @property {boolean} video 動画か
