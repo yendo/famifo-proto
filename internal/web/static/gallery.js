@@ -6,7 +6,7 @@ import { Idiomorph } from "./idiomorph.esm.js";
 import { layout, visibleWindow, yForIndex } from "./layout.js";
 
 /** @typedef {import("./layout.js").Layout} Layout */
-/** @typedef {import("./layout.js").Piece} Piece */
+/** @typedef {import("./layout.js").CardRowRange} CardRowRange */
 
 /**
  * タイル1枚。サーバが返したHTML断片から取り出す。
@@ -305,15 +305,15 @@ export const gallery = (() => {
 		// 先に組み立て、1枚でも欠けていたら renderedKey を据え置いたまま抜ける。
 		// 確定を先にすると、欠けたまま貼った状態がキャッシュされて直らない。
 		const parts = [];
-		for (const p of w.pieces) {
-			const pFrom = p.e.start + p.r0 * p.e.span;
-			const pTo = Math.min(
+		for (const range of w.ranges) {
+			const rangeFrom = range.card.start + range.firstRow * range.card.span;
+			const rangeTo = Math.min(
 				to,
-				p.e.start + p.e.n,
-				p.e.start + (p.r1 + 1) * p.e.span,
+				range.card.start + range.card.n,
+				range.card.start + (range.lastRow + 1) * range.card.span,
 			);
-			if (pFrom >= pTo) continue;
-			const html = cardHTML(p, pFrom, pTo);
+			if (rangeFrom >= rangeTo) continue;
+			const html = cardHTML(range, rangeFrom, rangeTo);
 			if (!html) return;
 			parts.push(html);
 		}
@@ -342,12 +342,12 @@ export const gallery = (() => {
 	// data-date から作る。DayGroups が古くても、ラベルはそのカードに実際に
 	// 写っている日を指す。
 	/**
-	 * @param {Piece} piece
+	 * @param {CardRowRange} range
 	 * @param {number} from
 	 * @param {number} to
 	 * @returns {string} 1枚でも未取得なら空文字列
 	 */
-	function cardHTML(piece, from, to) {
+	function cardHTML(range, from, to) {
 		const tiles = [];
 		for (let i = from; i < to; i++) {
 			const t = tileAt(i);
@@ -357,12 +357,12 @@ export const gallery = (() => {
 		// 段の途中から貼るとき（大きい日をスクロールしている最中）はラベルを落とす
 		const head = tileAt(from);
 		const label =
-			piece.r0 > 0 || !head
+			range.firstRow > 0 || !head
 				? ""
 				: `<div class="daylabel">${formatDay(head.date)}</div>`;
 		return (
-			`<div class="daycard" id="d-${piece.e.d}" style="grid-column:span ${piece.e.span};` +
-			`grid-template-columns:repeat(${piece.e.span},1fr)">${label}${tiles.join("")}</div>`
+			`<div class="daycard" id="d-${range.card.d}" style="grid-column:span ${range.card.span};` +
+			`grid-template-columns:repeat(${range.card.span},1fr)">${label}${tiles.join("")}</div>`
 		);
 	}
 
