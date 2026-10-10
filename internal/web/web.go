@@ -234,36 +234,16 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// renderIndex はトップページのHTMLを組み立てて w に書き込む。openIndex は開いた状態で
+// renderIndex はトップページのHTMLを w に書き込む。openIndex は開いた状態で
 // 表示する写真の通し番号で、noOpenItem なら閉じたまま開く。
-// 先頭の塊を埋めた状態で書き込むので、開いた直後に灰色の画面が出ない。
 func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, openIndex int) {
-	tiles, err := h.buildTilesView(r, 0, h.chunkSize)
+	view, err := h.buildIndexView(r, openIndex)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
-	}
-	total, err := h.store.Count(r.Context())
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	days, err := h.store.DayGroups(r.Context())
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	dayGroups := make([]dayGroup, 0, len(days))
-	for _, d := range days {
-		dayGroups = append(dayGroups, dayGroup{Date: d.Date, Count: d.Count})
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	view := indexView{
-		tilesView: tiles, Total: total, ChunkSize: h.chunkSize,
-		DayGroups: dayGroups, OpenIndex: openIndex,
-		AuthEnabled: h.auth != nil,
-	}
 	if err := h.tmpl.ExecuteTemplate(w, "index", view); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
 		h.log.Error("failed to render the index template", "err", err)

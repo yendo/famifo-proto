@@ -42,6 +42,33 @@ type dayGroup struct {
 	Count int    `json:"n"` // その日の件数
 }
 
+// buildIndexView はトップページの入力を組み立てる。
+// 先頭の塊を埋めておくので、開いた直後に灰色の画面が出ない。
+func (h *Handler) buildIndexView(r *http.Request, openIndex int) (indexView, error) {
+	tiles, err := h.buildTilesView(r, 0, h.chunkSize)
+	if err != nil {
+		return indexView{}, err
+	}
+	total, err := h.store.Count(r.Context())
+	if err != nil {
+		return indexView{}, err
+	}
+	days, err := h.store.DayGroups(r.Context())
+	if err != nil {
+		return indexView{}, err
+	}
+	dayGroups := make([]dayGroup, 0, len(days))
+	for _, d := range days {
+		dayGroups = append(dayGroups, dayGroup{Date: d.Date, Count: d.Count})
+	}
+
+	return indexView{
+		tilesView: tiles, Total: total, ChunkSize: h.chunkSize,
+		DayGroups: dayGroups, OpenIndex: openIndex,
+		AuthEnabled: h.auth != nil,
+	}, nil
+}
+
 // buildTilesView はオフセット指定で1窓枠分を組み立てる。
 func (h *Handler) buildTilesView(r *http.Request, offset, limit int) (tilesView, error) {
 	items, err := h.store.ListRange(r.Context(), offset, limit)
