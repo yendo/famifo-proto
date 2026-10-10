@@ -1,7 +1,6 @@
 package web
 
 import (
-	"html/template"
 	"net/http"
 
 	"github.com/yendo/famifo-proto/internal/imagefmt"
@@ -13,10 +12,8 @@ type indexView struct {
 	tilesView
 	Total     int
 	ChunkSize int
-	// DayGroups は日ごとの枚数のJSON配列。html/template に再エスケープさせず
-	// そのまま出すため template.JS で渡す。中身は日付と数値だけなので
-	// "</script>" は構造上現れない。
-	DayGroups template.JS
+	// DayGroups は日ごとの件数。html/template が <script> の中でJSONにして埋め込む。
+	DayGroups []dayGroup
 	// OpenIndex は開いた状態で表示する1件の通し番号。noOpenItem なら閉じたまま。
 	OpenIndex int
 	// AuthEnabled は認証が有効かどうか。無効ならログアウトのボタンを出さない。
