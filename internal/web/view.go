@@ -45,8 +45,8 @@ type indexView struct {
 	AuthEnabled bool
 }
 
-// buildRange はオフセット指定で1窓枠分を組み立てる。
-func (h *Handler) buildRange(r *http.Request, offset, limit int) (tilesView, error) {
+// buildTilesView はオフセット指定で1窓枠分を組み立てる。
+func (h *Handler) buildTilesView(r *http.Request, offset, limit int) (tilesView, error) {
 	items, err := h.store.ListRange(r.Context(), offset, limit)
 	if err != nil {
 		return tilesView{}, err
