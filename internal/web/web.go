@@ -4,7 +4,6 @@ package web
 
 import (
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -258,16 +257,11 @@ func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, openIndex 
 	for _, d := range days {
 		dayGroups = append(dayGroups, dayGroup{Date: d.Date, Count: d.Count})
 	}
-	raw, err := json.Marshal(dayGroups)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	view := indexView{
 		tilesView: tiles, Total: total, ChunkSize: h.chunkSize,
-		DayGroups: template.JS(raw), OpenIndex: openIndex,
+		DayGroups: dayGroups, OpenIndex: openIndex,
 		AuthEnabled: h.auth != nil,
 	}
 	if err := h.tmpl.ExecuteTemplate(w, "index", view); err != nil {
