@@ -245,16 +245,16 @@ export const gallery = (() => {
 		updateLayout();
 
 		// ResizeObserver は #window 自身の高さの変化でも発火する。貼り付ける量は
-		// スクロール中に増減するため、通常のスクロールでも呼ばれる。実際に列数も
-		// タイル高も変わっていないなら、貼り直しも位置の復元も不要。
-		if (prev && L && prev.cols === L.cols && prev.tileH === L.tileH) {
-			return;
-		}
-
-		renderedKey = ""; // 列数が変われば貼り直しが必要
-		if (L && L.height > 0) {
-			// yForIndex が返すのはレイアウト座標。scrollTop は文書座標なので戻す。
-			scroller.scrollTop = toDocY(yForIndex(L, topIndex));
+		// スクロール中に増減するため、通常のスクロールでも呼ばれる。列数もタイル
+		// 高も変わっていなければ、位置の復元も貼り直しの強制も要らない。ただし
+		// 高さだけが伸びた場合は見える範囲が広がるので、描き直し（render）は
+		// どちらの場合も呼ぶ。
+		if (!prev || !L || prev.cols !== L.cols || prev.tileH !== L.tileH) {
+			renderedKey = ""; // 列数が変われば貼り直しが必要
+			if (L && L.height > 0) {
+				// yForIndex が返すのはレイアウト座標。scrollTop は文書座標なので戻す。
+				scroller.scrollTop = toDocY(yForIndex(L, topIndex));
+			}
 		}
 		render();
 	}

@@ -787,6 +787,58 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 		before.TopIndex, before.Cols, after.TopIndex, after.Cols)
 }
 
+// --- Task: TestTallerViewportIsFilled ---
+//
+// 幅を変えずに高さだけを伸ばしたとき、伸びた分まで描き直されること。
+//
+// 列数もタイル高も変わらないリサイズでは、レイアウトを作り直す必要は無いが、
+// 見える範囲は広がる。広がった分が上下の余分（OVERSCAN）を超えると、描き直さ
+// ない限り次にスクロールするまで画面の下が空白のまま残る。ここでは低い画面で
+// 貼り終えてから高さだけを大きく伸ばし、何も操作せずに画面の下端まで写真が
+// 貼られるのを待つ。
+func TestTallerViewportIsFilled(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	rctx, cancel := context.WithTimeout(ctx, 40*time.Second)
+	defer cancel()
+
+	const index = 30
+	require.NoError(t, chromedp.Run(rctx,
+		chromedp.EmulateViewport(800, 400),
+		chromedp.Navigate(baseURL),
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(scrollToIndexJS(index), nil),
+		chromedp.Poll(fmt.Sprintf(`document.querySelector('#window .tile[data-i="%d"]') !== null`, index),
+			nil, chromedp.WithPollingTimeout(10*time.Second)),
+		// 先読み中のチャンクがリサイズの後に届くと、その描き直しで伸びた分まで
+		// 埋まってしまい、リサイズ側の不具合が隠れる（実測）。先読みが済むまで待つ。
+		chromedp.Poll(`chunks.hasChunk(1)`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		// jumpTo のスクロールによる scroll イベントは次のフレームで届く。
+		// リサイズの後に届くと、その描き直しでやはり埋まってしまう（実測）。
+		chromedp.Evaluate(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`, nil, awaitPromise),
+	))
+
+	// 幅はそのままなので列数は変わらない。高さは OVERSCAN の4行ぶんを大きく
+	// 超えて伸ばす（800px 幅の1行は200px前後）。
+	require.NoError(t, chromedp.Run(rctx, chromedp.EmulateViewport(800, 2400)))
+
+	const bottomFilledJS = `(() => {
+		const vh = window.innerHeight;
+		return [...document.querySelectorAll('#window .tile')].some((t) => {
+			const r = t.getBoundingClientRect();
+			return r.top < vh && r.bottom > vh - 50;
+		});
+	})()`
+	pollErr := chromedp.Run(rctx, chromedp.Poll(bottomFilledJS, nil, chromedp.WithPollingTimeout(5*time.Second)))
+
+	var lowest float64
+	require.NoError(t, chromedp.Run(rctx, chromedp.Evaluate(
+		`Math.max(0, ...[...document.querySelectorAll('#window .tile')].map((t) => t.getBoundingClientRect().bottom))`, &lowest)))
+	require.NoErrorf(t, pollErr,
+		"after the viewport grew to 2400px tall, the lowest pasted tile ends at %.0fpx. "+
+			"A resize that keeps the column count does not repaint the newly visible area", lowest)
+}
+
 // --- Task: TestNoRepaintOnPlainScroll ---
 //
 // #window はグリッドの行数が貼り付け枚数で変わるため、チャンク境界を跨ぐたびに
