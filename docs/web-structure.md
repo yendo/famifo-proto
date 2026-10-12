@@ -52,12 +52,11 @@ templates/tiles.html  {{define "tiles"}}
 ```
 index.html
   +-- app.js (entry)
-        +-- lightbox.js --+
-        +-- scrubber.js --+--> gallery.js --> idiomorph.esm.js
-              |                    |
-              |                    +--> fetch /tiles?chunk
-              |                    |
-              +--------------------+--> layout.js
+        +-- gallery.js  --> chunk.js, layout.js, idiomorph.esm.js
+        +-- lightbox.js --> gallery.js, chunk.js
+        +-- scrubber.js --> gallery.js, chunk.js, layout.js
+
+chunk.js --> fetch /tiles?chunk
 
 <img>, <video> --> /thumb/{id}, /full/{id}
 ```
