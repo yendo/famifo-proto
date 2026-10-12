@@ -22,7 +22,6 @@ import { layout, visibleWindow, yForIndex } from "./layout.js";
  * 仮想スクロールが他のモジュールに見せるもの。
  * @typedef {object} Gallery
  * @property {number} total 全枚数
- * @property {number} chunkSize 1回に取る塊の枚数
  * @property {number} openIndex /item/<id> で開かれたときの通し番号。無ければ -1
  * @property {(i: number) => Promise<string | null>} urlAt 原本のURL。未取得なら取りに行く
  * @property {(i: number) => string | null} pageAt その1件のページのURL
@@ -31,11 +30,8 @@ import { layout, visibleWindow, yForIndex } from "./layout.js";
  * @property {(i: number) => void} ensureChunk その写真を含む塊を先読みする
  * @property {Element} scroller スクロールしている要素（文書全体）
  * @property {() => number} maxScroll スクロールできる最大量
- * @property {() => void} render 可視範囲を貼り直す
  * @property {() => Layout | null} current いまのレイアウト。未計測なら null
- * @property {() => { from: number, to: number }} pastedRange 貼ってある範囲
  * @property {(docY: number) => number} toLayoutY 文書座標をレイアウト座標へ
- * @property {(layoutY: number) => number} toDocY レイアウト座標を文書座標へ
  */
 
 /** @type {Gallery | null} */
@@ -73,7 +69,6 @@ export const gallery = (() => {
 	/** @type {Layout | null} */
 	let L = null;
 	let spacerTop = 0; // #spacer の文書上のオフセット。レイアウト座標との差
-	let pasted = { from: 0, to: 0 };
 	let renderedKey = ""; // 「どの塊を何個貼ったか」。同じなら描き直さない
 
 	// サーバが返したHTML断片を、タイル1枚ずつに割る。取得時に1回だけパースし、
@@ -318,7 +313,6 @@ export const gallery = (() => {
 		if (parts.length === 0) return;
 
 		renderedKey = key;
-		pasted = { from, to };
 		// 全置換ではなく差分で当てる。作り直すと、中身も寸法も同時に変わった
 		// 合成レイヤーになる。WebKitはこのときバッキングストアを捨てて描き直す
 		// ため、再ペイントが間に合わないフレームで背景色が露出する（iPhone /
@@ -391,8 +385,8 @@ export const gallery = (() => {
 		// scrollTop をそのまま残すと別の写真の位置に飛ぶ。いま先頭に見えていた
 		// 写真の通し番号を保持して復元する。
 		//
-		// アンカーに pasted.from は使わない。あれは OVERSCAN のぶん画面外まで
-		// 含んだ範囲の先頭なので、復元すると毎回4行ぶん手前に着地する。
+		// アンカーに貼ってある範囲の先頭は使わない。そこは OVERSCAN のぶん
+		// 画面外まで含んでいるので、復元すると毎回4行ぶん手前に着地する。
 		// オーバースキャン抜きの、いま実際に画面上端にある写真を取る。
 		const prev = L;
 		const prevTop = spacerTop; // measure() で測り直される前の値
@@ -434,7 +428,6 @@ export const gallery = (() => {
 
 	return {
 		total,
-		chunkSize,
 		openIndex,
 		urlAt,
 		pageAt,
@@ -443,10 +436,7 @@ export const gallery = (() => {
 		ensureChunk,
 		scroller,
 		maxScroll,
-		render,
 		current: () => L,
-		pastedRange: () => pasted,
 		toLayoutY,
-		toDocY,
 	};
 })();

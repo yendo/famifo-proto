@@ -423,26 +423,35 @@ func newTab(t *testing.T) context.Context {
 //
 // window.gallery は #gallery 要素の名前付きアクセスと同名だが、代入した値が
 // 優先される。
+//
+// あわせて pastedRange() を置く。#window に貼ってある範囲を、各タイルの
+// data-i（render が必ず書き、ライトボックスも読む通し番号）から読む。
+// まだ一度も貼っていなければ data-i は無く、{ from: 0, to: 0 } を返す。
 func waitForGallery(timeout time.Duration) chromedp.Action {
 	return chromedp.Tasks{
 		chromedp.Poll(`document.querySelectorAll('#window .tile').length > 0`, nil,
 			chromedp.WithPollingTimeout(timeout)),
 		chromedp.Evaluate(`Promise.all([import("/static/gallery.js"), import("/static/layout.js")])
 			.then(([g, l]) => { window.gallery = g.gallery; window.layout = l; })`, nil, awaitPromise),
+		chromedp.Evaluate(`window.pastedRange = () => {
+			const tiles = document.querySelectorAll('#window .tile');
+			if (tiles.length === 0 || tiles[0].dataset.i === undefined) return { from: 0, to: 0 };
+			return { from: Number(tiles[0].dataset.i), to: Number(tiles[tiles.length - 1].dataset.i) + 1 };
+		}`, nil),
 	}
 }
+
+// chunkSizeJS は1回に取る塊の枚数を読むJS式。サーバが #gallery に埋めた値を使う。
+const chunkSizeJS = `Number(document.querySelector('#gallery').dataset.chunk)`
 
 // scrollToIndexJS は写真indexが可視範囲の先頭に来るまでスクロールするJS式を返す。
 //
 // 以前はタイルの実測高から行を逆算していたが、行の高さが日ごとに変わるため
-// 成立しない。実装が公開している「通し番号 → y」をそのまま呼ぶ。テストが
-// レイアウト規則を写経すると、実装と一緒に間違えても気づけない。
-// yForIndex が返すのはレイアウト座標なので、toDocY で文書座標に戻す。
+// 成立しない。ライトボックスが使う jumpTo（通し番号 → y でスクロール）を
+// そのまま呼ぶ。テストがレイアウト規則を写経すると、実装と一緒に間違えても
+// 気づけない。
 func scrollToIndexJS(index int) string {
-	return fmt.Sprintf(`(() => {
-		const L = gallery.current();
-		gallery.scroller.scrollTop = gallery.toDocY(layout.yForIndex(L, %d));
-	})()`, index)
+	return fmt.Sprintf(`gallery.jumpTo(%d)`, index)
 }
 
 // expectedMediaURLs はギャラリーの並び順どおりの原寸URLをn件返す。
@@ -581,7 +590,7 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 // アンカーに貼り付け範囲の先頭（かつての pastedIndex / pasted.from）を
 // 使うのも同じ理由で駄目である。貼り付けは OVERSCAN のぶん可視範囲より
 // 手前から始まるので、先頭を復元先にすると数行ぶん上に着地する。実装が
-// 公開するのは範囲（pastedRange）であって先頭ではない。
+// 読めるのは範囲（pastedRange）であって先頭ではない。
 func TestScrollPositionSurvivesReload(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
@@ -600,7 +609,7 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 		chromedp.Navigate(baseURL),
 		waitForGallery(10*time.Second),
 		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
-		chromedp.Poll(`gallery.pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Poll(`pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
 
@@ -717,7 +726,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 		chromedp.Navigate(baseURL),
 		waitForGallery(10*time.Second),
 		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
-		chromedp.Poll(`gallery.pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Poll(`pastedRange().from > 0`, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 	require.NoError(t, err)
 
@@ -730,7 +739,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 			const r = tiles[i].getBoundingClientRect();
 			if (r.bottom > 0) { within = i; break; }
 		}
-		return { cols, topIndex: gallery.pastedRange().from + within };
+		return { cols, topIndex: pastedRange().from + within };
 	})()`
 
 	type snapshot struct {
@@ -833,14 +842,14 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	// 見当違いの再描画回数の失敗として現れる（実測）。範囲が実際に
 	// 最初の塊を超えて進んだこと（from >= chunkSize）も併せて要求する。
 	const rangeSettledJS = `(() => {
-		const r = gallery.pastedRange();
+		const r = pastedRange();
 		const k = r.from + ':' + r.to;
 		if (window.__lastRange !== k) {
 			window.__lastRange = k;
 			window.__rangeStable = 0;
 			return false;
 		}
-		return r.from >= gallery.chunkSize && (window.__rangeStable = (window.__rangeStable || 0) + 1) >= 3;
+		return r.from >= ` + chunkSizeJS + ` && (window.__rangeStable = (window.__rangeStable || 0) + 1) >= 3;
 	})()`
 
 	// スクロールが落ち着いたか（__repaintsが3フレーム連続で増えていないか、
@@ -882,11 +891,11 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	})()`
 	var pastedBefore, pastedAfter int
 	err = chromedp.Run(rctx,
-		chromedp.Evaluate(`gallery.pastedRange().from`, &pastedBefore),
+		chromedp.Evaluate(`pastedRange().from`, &pastedBefore),
 		chromedp.Evaluate(`window.__lastSeen = -1; window.__stable = 0;`, nil),
 		chromedp.Evaluate(scrollOneRowJS, nil),
 		chromedp.Poll(settledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
-		chromedp.Evaluate(`gallery.pastedRange().from`, &pastedAfter),
+		chromedp.Evaluate(`pastedRange().from`, &pastedAfter),
 	)
 	require.NoError(t, err)
 
@@ -973,10 +982,10 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 	// 取得待ちで render() が早期returnし、pastedが初期値のまま固まっている
 	// ケースと区別できないため。
 	const rangeSettledJS = `(() => {
-		const r = gallery.pastedRange();
+		const r = pastedRange();
 		const k = r.from + ':' + r.to;
 		if (window.__k !== k) { window.__k = k; window.__n = 0; return false; }
-		return r.from >= gallery.chunkSize && (window.__n = (window.__n || 0) + 1) >= 3;
+		return r.from >= ` + chunkSizeJS + ` && (window.__n = (window.__n || 0) + 1) >= 3;
 	})()`
 
 	// いま貼られているタイルに目印を付け、写っている写真を控える。
@@ -984,7 +993,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 		const tiles = [...document.querySelectorAll('#window .tile')];
 		window.__before = tiles.map((t) => t.dataset.full);
 		for (const t of tiles) t.__kept = true;
-		window.__pastedFrom = gallery.pastedRange().from;
+		window.__pastedFrom = pastedRange().from;
 		return tiles.length;
 	})()`
 
@@ -999,7 +1008,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 	// 見ないと、まだ貼り替えが起きていない状態で使い回しを数えてしまい、
 	// 実装が壊れていても全件が「残っている」と出て素通りする。
 	const movedAndSettledJS = `(() => {
-		const r = gallery.pastedRange();
+		const r = pastedRange();
 		if (r.from === window.__pastedFrom) return false;
 		const k = r.from + ':' + r.to;
 		if (window.__k2 !== k) { window.__k2 = k; window.__n2 = 0; return false; }
@@ -1999,7 +2008,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 	wantFrom := manyMediaCount - stallChunkSize*3
 	start := time.Now()
 	pollErr := chromedp.Run(rctx, chromedp.Poll(
-		fmt.Sprintf(`gallery.pastedRange().from >= %d`, wantFrom),
+		fmt.Sprintf(`pastedRange().from >= %d`, wantFrom),
 		nil, chromedp.WithPollingTimeout(120*time.Second)))
 	elapsed := time.Since(start)
 
@@ -2007,7 +2016,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 		From int `json:"from"`
 		To   int `json:"to"`
 	}
-	require.NoError(t, chromedp.Run(rctx, chromedp.Evaluate(`gallery.pastedRange()`, &pasted)))
+	require.NoError(t, chromedp.Run(rctx, chromedp.Evaluate(`pastedRange()`, &pasted)))
 
 	t.Logf("caught up in %v: %d /items requests during the scroll, %d in total (%d of them dropped by the browser, %d chunks in all) pasted=%d..%d",
 		elapsed.Round(time.Millisecond), duringScroll, atomic.LoadInt64(itemsSeen),
@@ -2051,7 +2060,7 @@ func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 	// render() の時点で取得は必ずまだ終わっていない。
 	const js = `(async () => {
 		const p = gallery.urlAt(gallery.total - 1);
-		gallery.render();
+		window.dispatchEvent(new Event("scroll"));
 		try {
 			return (await p) ? "resolved" : "url was null";
 		} catch (e) {
