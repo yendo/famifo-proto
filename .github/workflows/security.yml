@@ -33,8 +33,20 @@ jobs:
           output-format: sarif
           output-file: govulncheck.sarif
 
+      # govulncheck can write the same stack twice in a result and the
+      # same tag twice in a rule, which code scanning rejects as invalid
+      # SARIF.
+      # See https://github.com/golang/go/issues/81953
+      # and https://github.com/golang/go/issues/75890
+      - name: Fix SARIF for govulncheck bugs
+        run: >-
+          jq '(.runs[].results[] | select(.stacks) | .stacks) |= unique
+          | (.runs[].tool.driver.rules[] | select(.properties.tags)
+          | .properties.tags) |= unique'
+          govulncheck.sarif > govulncheck-deduped.sarif
+
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
-          sarif_file: govulncheck.sarif
+          sarif_file: govulncheck-deduped.sarif
           category: govulncheck
