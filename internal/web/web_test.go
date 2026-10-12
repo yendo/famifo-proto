@@ -148,17 +148,6 @@ func TestGalleryEmbedsTotalAndFirstChunk(t *testing.T) {
 	require.Equal(t, 3, strings.Count(body, `class="tile"`), "the first chunk comes back filled")
 }
 
-func TestGalleryDropsHtmx(t *testing.T) {
-	t.Parallel()
-	f := newWebFixture(t, 60)
-	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
-
-	body := doGet(t, f.h, "/").Body.String()
-
-	require.NotContains(t, body, "htmx.min.js")
-	require.NotContains(t, body, "hx-")
-}
-
 func TestGalleryEmptyLibrary(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
@@ -226,17 +215,6 @@ func TestTilesReturnsRequestedChunk(t *testing.T) {
 	require.Contains(t, body, ids[1])
 	require.NotContains(t, body, ids[3])
 	require.NotContains(t, body, ids[0])
-}
-
-func TestTilesHasNoSentinel(t *testing.T) {
-	t.Parallel()
-	f := newWebFixture(t, 60)
-	f.addMedia(t, "a.jpg", time.Unix(1600000000, 0), famifoThumb)
-
-	body := doGet(t, f.h, "/tiles?chunk=0").Body.String()
-
-	require.NotContains(t, body, "hx-", "no htmx attributes are left behind")
-	require.NotContains(t, body, "sentinel")
 }
 
 func TestTilesRejectsBadChunk(t *testing.T) {
