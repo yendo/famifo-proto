@@ -123,7 +123,7 @@ export const gallery = (() => {
 	// 直後は「一番大きい span」に押し上げられた列数を読んでしまい、本当の
 	// 列数（=このビューポート幅に自然に収まる数）より多く出る。中身が無い
 	// #colprobe ならその影響を受けない。
-	function measure() {
+	function updateLayout() {
 		const cs = getComputedStyle(probe);
 		const tracks = cs.gridTemplateColumns
 			.split(" ")
@@ -390,7 +390,7 @@ export const gallery = (() => {
 		// 画面外まで含んでいるので、復元すると毎回4行ぶん手前に着地する。
 		// オーバースキャン抜きの、いま実際に画面上端にある写真を取る。
 		const prev = L;
-		const prevTop = spacerTop; // measure() で測り直される前の値
+		const prevTop = spacerTop; // updateLayout() で測り直される前の値
 		// 高さ0の窓で問い合わせると、ストライプ間の隙間(gap)にちょうど当たった
 		// ときに空振りして null が返り、アンカーが先頭に落ちる。1行ぶんの高さを
 		// 持たせて、必ずどこかのストライプに当てる。隙間に当たった場合は次の
@@ -401,7 +401,7 @@ export const gallery = (() => {
 			: null;
 		const topIndex = at ? at.from : 0;
 
-		measure();
+		updateLayout();
 
 		// ResizeObserver は #window 自身の高さの変化でも発火する。貼り付ける量は
 		// スクロール中に増減するため、通常のスクロールでも呼ばれる。実際に列数も
@@ -419,7 +419,7 @@ export const gallery = (() => {
 	}
 
 	seedFirstChunk();
-	measure();
+	updateLayout();
 	render();
 	window.addEventListener("scroll", render, { passive: true });
 	window.addEventListener("resize", onResize);
