@@ -27,9 +27,9 @@ var assets embed.FS
 //go:embed static/no-preview.svg
 var noPreview []byte
 
-// defaultChunkSize は仮想スクロールが1回に取る塊の枚数。
+// defaultChunkSize は仮想スクロールが1回に取るチャンクの枚数。
 //
-// 先頭の1塊は初回HTMLに埋め込む。クライアントは範囲を覆う塊が揃うまで
+// 先頭の1チャンクは初回HTMLに埋め込む。クライアントは範囲を覆うチャンクが揃うまで
 // 描かないので、この値が「開いた画面 + overscan 4行」に届かないと、開いた
 // 直後に取得を1往復待つことになる。1920x950・列幅200pxで先頭に要るのは
 // 76枚（実データ4497枚で計測）で、60では足りていなかった。
@@ -162,7 +162,7 @@ func (h *Handler) handleItem(w http.ResponseWriter, r *http.Request) {
 // handleTiles は仮想スクロール用のHTML断片を返す。
 // 初回ページと同じテンプレートを使い、マークアップを1箇所に保つ。
 //
-// 受け取るのは塊の番号だけで、1塊の枚数はサーバーが決める。クライアントが
+// 受け取るのはチャンクの番号だけで、1チャンクの枚数はサーバーが決める。クライアントが
 // 件数を指定できると、大きな値1つで全件を引いて描かせられる。
 func (h *Handler) handleTiles(w http.ResponseWriter, r *http.Request) {
 	chunk, err := parseChunk(r)
@@ -251,9 +251,9 @@ func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, openIndex 
 	}
 }
 
-// parseChunk はクエリから塊の番号を読む。省略時は先頭の塊。
+// parseChunk はクエリからチャンクの番号を読む。省略時は先頭のチャンク。
 //
-// int32 に収まる値に限るのは、塊の大きさを掛けたオフセットを溢れさせないため。
+// int32 に収まる値に限るのは、チャンクの大きさを掛けたオフセットを溢れさせないため。
 func parseChunk(r *http.Request) (int, error) {
 	raw := r.URL.Query().Get("chunk")
 	if raw == "" {

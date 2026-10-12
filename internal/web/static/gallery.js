@@ -40,7 +40,7 @@ export const gallery = (() => {
 	const daysEl = document.querySelector("#daygroups");
 	const days = daysEl ? JSON.parse(daysEl.textContent) : [];
 	const OVERSCAN_ROWS = 4; // 可視範囲の上下に余分に描く行数
-	const RETRY_MS = 3000; // 取得に失敗した塊を取り直すまでの待ち時間
+	const RETRY_MS = 3000; // 取得に失敗したチャンクを取り直すまでの待ち時間
 
 	// スクロールしているのは #gallery ではなく文書全体。
 	// ライトボックスの body.locked { overflow: hidden } もこれを前提にしている。
@@ -51,7 +51,7 @@ export const gallery = (() => {
 	/** @type {Layout | null} */
 	let L = null;
 	let spacerTop = 0; // #spacer の文書上のオフセット。レイアウト座標との差
-	let renderedKey = ""; // 「どの塊を何個貼ったか」。同じなら描き直さない
+	let renderedKey = ""; // 「どのチャンクを何個貼ったか」。同じなら描き直さない
 
 	// レイアウトのy座標は #spacer の上端が0。文書のスクロール位置とは、
 	// 上部バー（sticky でも流れの中で場所を占める）とギャラリーの余白の
@@ -106,7 +106,7 @@ export const gallery = (() => {
 
 		// DayGroups と総枚数はサーバが別々に読むため、開いたまま新着が入ると
 		// DayGroups の合計のほうが多くなりうる。総枚数で抑えないと、存在しない
-		// 塊を待ち続けて末尾が永久に更新されなくなる。
+		// チャンクを待ち続けて末尾が永久に更新されなくなる。
 		const from = w.from;
 		const to = Math.min(tileCount, w.to);
 		if (from >= to) return;
@@ -114,13 +114,13 @@ export const gallery = (() => {
 		const firstChunk = chunks.chunkOf(from);
 		const lastChunk = chunks.chunkOf(to - 1);
 
-		// 切り取った範囲の前後1塊も先読みしておく。切り出す範囲は広げない。
+		// 切り取った範囲の前後1チャンクも先読みしておく。切り出す範囲は広げない。
 		const fetchFrom = Math.max(0, firstChunk - 1);
 		const fetchTo = Math.min(chunks.chunkOf(tileCount - 1), lastChunk + 1);
 		chunks.abandonOutside(fetchFrom, fetchTo);
 		// 失敗した取得は少し待って描き直す。render が呼ばれるのはスクロールと
 		// リサイズのときだけなので、そうしないと手を止めている間は空白のまま残る。
-		// 描き直しはその時点で要る塊だけを取りに行くので、範囲から外れた塊は
+		// 描き直しはその時点で要るチャンクだけを取りに行くので、範囲から外れたチャンクは
 		// 取り直さない。こちらが中断した取得（AbortError）は取り直さない。
 		for (let ci = fetchFrom; ci <= fetchTo; ci++) {
 			if (!chunks.hasChunk(ci))
@@ -132,7 +132,7 @@ export const gallery = (() => {
 					});
 		}
 
-		// 必要な塊が1つでも欠けていると穴の空いたカードになるので、揃うまで描かない
+		// 必要なチャンクが1つでも欠けていると穴の空いたカードになるので、揃うまで描かない
 		for (let ci = firstChunk; ci <= lastChunk; ci++) {
 			if (!chunks.hasChunk(ci)) return;
 		}

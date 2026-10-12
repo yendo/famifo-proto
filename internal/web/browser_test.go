@@ -60,8 +60,8 @@ const (
 
 	testChunkSize = 60
 
-	// deepScrollIndex は「複数の塊を跨いだ、十分に奥」の位置。
-	// 塊を2つ跨いだうえで、境界のちょうど上に止まらないよう半端に足す。
+	// deepScrollIndex は「複数のチャンクを跨いだ、十分に奥」の位置。
+	// チャンクを2つ跨いだうえで、境界のちょうど上に止まらないよう半端に足す。
 	deepScrollIndex = testChunkSize*2 + 30
 )
 
@@ -442,7 +442,7 @@ func waitForGallery(timeout time.Duration) chromedp.Action {
 	}
 }
 
-// chunkSizeJS は1回に取る塊の枚数を読むJS式。サーバが #gallery に埋めた値を使う。
+// chunkSizeJS は1回に取るチャンクの枚数を読むJS式。サーバが #gallery に埋めた値を使う。
 const chunkSizeJS = `Number(document.querySelector('#gallery').dataset.chunk)`
 
 // scrollToIndexJS は写真indexが可視範囲の先頭に来るまでスクロールするJS式を返す。
@@ -486,15 +486,15 @@ const rectJS = `(() => {
 //
 // 読み込み直後に、可視範囲が写真で埋まっているかを見る。
 //
-// 注意: サーバは index.html の中で最初の1塊（testChunkSize枚）を #window に
+// 注意: サーバは index.html の中で最初の1チャンク（testChunkSize枚）を #window に
 // 直接描画して返す。そのため「タイルが存在する」「下端がビューポートを超える」
 // だけを見ると、gallery.js が一切動かなくても通ってしまう。仮想スクロールが
-// 実際に働いて塊を追加で貼ったこと（tileCount > testChunkSize）まで見る。
+// 実際に働いてチャンクを追加で貼ったこと（tileCount > testChunkSize）まで見る。
 func TestInitialRenderFillsViewport(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForGallery 10s) + 塊追加の貼り付け待ち(Poll 10s) +
+	//   初回描画待ち(waitForGallery 10s) + チャンク追加の貼り付け待ち(Poll 10s) +
 	//   可視範囲のサムネイルデコード待ち(Poll 10s) = 30s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に
 	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
@@ -554,7 +554,7 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 	require.NotZero(t, res.Cols, "could not read the column count")
 	require.Greater(t, res.RowH, 0.0, "could not read the row height")
 
-	// gallery.js が動いていなければ、#window にはサーバが埋めた1塊しか無い。
+	// gallery.js が動いていなければ、#window にはサーバが埋めた1チャンクしか無い。
 	require.NoErrorf(t, pollErr,
 		"the tile count in #window stays at %d. It is still the first chunk (%d tiles) the "+
 			"server filled in, so virtual scrolling is pasting no further chunks; gallery.js looks dead",
@@ -693,7 +693,7 @@ func TestScrollPositionSurvivesReload(t *testing.T) {
 	// 1600x900・7列なら本来35枚前後が交差する。最低でも2行分を要求する。
 	wantIntersecting := cols * 2
 
-	// スクロール位置の復元と、その位置の塊の取得・描画は別のタイミングで
+	// スクロール位置の復元と、その位置のチャンクの取得・描画は別のタイミングで
 	// 起きる（描画側は非同期fetch待ち）。条件が真になるまで待ちきる。
 	// Poll が失敗したときにも枚数を報告したいので、値は Poll の後に読み直す。
 	pollErr := chromedp.Run(rctx, chromedp.Poll(
@@ -789,7 +789,7 @@ func TestScrollAnchoredOnResize(t *testing.T) {
 
 // --- Task: TestNoRepaintOnPlainScroll ---
 //
-// #window はグリッドの行数が貼り付け枚数で変わるため、塊境界を跨ぐたびに
+// #window はグリッドの行数が貼り付け枚数で変わるため、チャンク境界を跨ぐたびに
 // ResizeObserver が発火する。以前はこれを無条件に render() へつなげており、
 // 列数もタイル高も変わっていないのに DOM を丸ごと張り替えていた
 // （画像の再読み込み・スクロールのカクつきの原因）。
@@ -804,7 +804,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
 	//   初回描画待ち(waitForGallery 10s) + 貼り付け範囲静定待ち(Poll 10s) +
-	//   貼り替え静定待ち(Poll 10s)×2（塊境界越えの後と、通常スクロール後の
+	//   貼り替え静定待ち(Poll 10s)×2（チャンク境界越えの後と、通常スクロール後の
 	//   2箇所） = 40s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に
 	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
@@ -812,7 +812,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	// スクロールを始める前に観測を仕掛ける。塊境界を跨ぐ貼り替えそのものを
+	// スクロールを始める前に観測を仕掛ける。チャンク境界を跨ぐ貼り替えそのものを
 	// 数えたいので、跨いだ後に仕掛けるのでは遅い。
 	const installObserverJS = `(() => {
 		window.__repaints = 0;
@@ -834,14 +834,14 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	// この等式は貼り付け窓が最終行まで届くことに依存しており、テスト写真や
 	// viewport を変えると無言のPollタイムアウトで落ちる（元のコメント参照）。
 	// 総枚数から逆算するのをやめれば、その脆さごと消える。
-	// 「範囲が変わらない」だけでは、render()が塊の取得待ちで早期returnして
+	// 「範囲が変わらない」だけでは、render()がチャンクの取得待ちで早期returnして
 	// pastedが初期値(from=0)のまま固まっているケースを区別できない。
 	// chromedp.Pollの既定間隔(約16ms)では3回連続で約64msしか経っておらず、
 	// 混雑したDocker上ではdeepScrollIndex(150番)ぶんのfetchがそれより
-	// 長くかかりうる。そうなると「塊境界を2つ跨ぐ」という前提が満たされない
+	// 長くかかりうる。そうなると「チャンク境界を2つ跨ぐ」という前提が満たされない
 	// まま先へ進み、遅れて届いた描画が再描画計測の窓に入り込んで、
 	// 見当違いの再描画回数の失敗として現れる（実測）。範囲が実際に
-	// 最初の塊を超えて進んだこと（from >= chunkSize）も併せて要求する。
+	// 最初のチャンクを超えて進んだこと（from >= chunkSize）も併せて要求する。
 	const rangeSettledJS = `(() => {
 		const r = pastedRange();
 		const k = r.from + ':' + r.to;
@@ -868,7 +868,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 		chromedp.Navigate(baseURL),
 		waitForGallery(10*time.Second),
 		chromedp.Evaluate(installObserverJS, nil),
-		// 塊境界を2つ跨ぐところまでスクロールする。
+		// チャンク境界を2つ跨ぐところまでスクロールする。
 		chromedp.Evaluate(scrollToIndexJS(deepScrollIndex), nil),
 		chromedp.Poll(rangeSettledJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
 	)
@@ -883,7 +883,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	t.Logf("PROBE: repaints after crossing a chunk boundary=%d", afterScroll)
 
 	// ごく普通のスクロールを1行分行う。この位置・この列数では、この1行で
-	// 貼り付け範囲が1塊ぶん進む（下の NotEqual で前提として確認する）。
+	// 貼り付け範囲が1チャンクぶん進む（下の NotEqual で前提として確認する）。
 	const scrollOneRowJS = `(() => {
 		const win = document.querySelector('#window');
 		const r = win.querySelector('.tile').getBoundingClientRect();
@@ -905,8 +905,8 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("PROBE: repaints after a plain scroll=%d (paste start %d->%d)", afterPlain, pastedBefore, pastedAfter)
 
-	// 前提の確認。この1行で貼り付け範囲が1塊ぶん進んでいなければ、検証したい
-	// 「塊境界を跨ぐ貼り替え」に到達していない。到達しなければガードの有無で
+	// 前提の確認。この1行で貼り付け範囲が1チャンクぶん進んでいなければ、検証したい
+	// 「チャンク境界を跨ぐ貼り替え」に到達していない。到達しなければガードの有無で
 	// 差が出ないため、黙って合格させずにここで落とす。
 	require.NotEqualf(t, pastedBefore, pastedAfter,
 		"a one-row scroll left the pasted range unchanged (paste start still %d). "+
@@ -914,7 +914,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 		pastedBefore)
 
 	// ここが本命の検出器。貼り替えが起きてよいのは、貼り付ける内容が
-	// 変わったときだけ。範囲が1塊ぶん進んだのだから、貼り替えはちょうど1回。
+	// 変わったときだけ。範囲が1チャンクぶん進んだのだから、貼り替えはちょうど1回。
 	//
 	// 限界: render() が innerHTML の全置換をやめて差分適用になったため、
 	// 「同じ内容での貼り直し」はDOMを何も変えず、この計測器には現れない。
@@ -977,9 +977,9 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	// 深い位置へ飛ばした直後は塊の取得が続くため、範囲が落ち着く前に目印を
+	// 深い位置へ飛ばした直後はチャンクの取得が続くため、範囲が落ち着く前に目印を
 	// 付けても意味がない。範囲が3回連続で変わらないことを静定とみなす。
-	// 最初の塊を超えて進んだこと(from >= chunkSize)も併せて要求する。
+	// 最初のチャンクを超えて進んだこと(from >= chunkSize)も併せて要求する。
 	// 取得待ちで render() が早期returnし、pastedが初期値のまま固まっている
 	// ケースと区別できないため。
 	const rangeSettledJS = `(() => {
@@ -1070,17 +1070,17 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 
 // --- Task: TestLightboxCrossesChunkBoundary ---
 //
-// ライトボックスの送りが塊(testChunkSize枚)の境界で止まらないこと、
+// ライトボックスの送りがチャンク(testChunkSize枚)の境界で止まらないこと、
 // そして境界の継ぎ目で写真がずれないことを見る。
 //
-// 「srcが前回と変わったか」だけでは、2塊目以降で常に1枚ずれた写真を
+// 「srcが前回と変わったか」だけでは、2チャンク目以降で常に1枚ずれた写真を
 // 返す off-by-one を検出できない（実測でPASSした）。期待される並びと
 // 完全一致で突き合わせる。
 //
 // 現在位置の持ち方をDOMに戻すと、ここが落ちる。かつては表示中の写真を
 // タイル一覧から探して数えていた（tiles().indexOf や
 // parentElement.querySelectorAll による数え上げ）が、その方式は捨てた。
-// 仮想スクロールは可視範囲の外のタイルを捨てるので、送りが塊の境界を
+// 仮想スクロールは可視範囲の外のタイルを捨てるので、送りがチャンクの境界を
 // 跨いだ時点で「一覧の中の位置」が意味を失う。日ごとのカードに入って
 // からは、親要素を数える方式も同様に成立しない。現在位置は通し番号で
 // 持ち、URLは loadTile で引く。
@@ -1092,8 +1092,8 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	//   原寸画像デコード待ち(Poll 10s) = 25s。
 	// ループ本体(steps=130回、各Poll上限5s)は理論上の最大では650sにも
 	// なるが、実測では130ステップ全体が数秒で終わる（キー送りのたびに
-	// 塊取得済みのURLを引くだけで、境界をまたぐ2回だけ先読み済みの
-	// 次塊を使う。ネットワーク待ちはほぼ発生しない）。全ステップが
+	// チャンク取得済みのURLを引くだけで、境界をまたぐ2回だけ先読み済みの
+	// 次チャンクを使う。ネットワーク待ちはほぼ発生しない）。全ステップが
 	// 揃って5秒ぎりぎりまでかかる状況は実装が壊れている場合であり、
 	// その場合はループ内のrequireが最初の失敗でテストを止めるため、
 	// 650s分の予算を常時確保する必要はない。だが数ステップが負荷で
@@ -1103,7 +1103,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
-	// 塊の境界を2回（testChunkSize番目・testChunkSize*2番目）跨ぐのに十分な回数。
+	// チャンクの境界を2回（testChunkSize番目・testChunkSize*2番目）跨ぐのに十分な回数。
 	steps := testChunkSize*2 + 10
 	want := expectedMediaURLs(steps + 1)
 
@@ -1622,9 +1622,9 @@ func TestWindowAtClipsBigDaysToRows(t *testing.T) {
 // 違う場所に出るだけで、例外も空白も出ない）。CSS Grid の自動配置が貪欲
 // 詰めと同じ規則であるという前提そのものを、実測で確かめる。
 //
-// 列位置を自前で補正する方式に戻すと、ここが落ちる。かつては塊単位で
+// 列位置を自前で補正する方式に戻すと、ここが落ちる。かつてはチャンク単位で
 // タイルを貼り、貼り始めの列がずれるぶんを gridColumnStart で押し込んで
-// いた。日ごとのカードを導入した時点で、貼る単位（塊）と並べる単位（日）が
+// いた。日ごとのカードを導入した時点で、貼る単位（チャンク）と並べる単位（日）が
 // 一致しなくなり、この補正は意味を持たなくなった。配置はGridの自動配置に
 // 任せ、テストはその結果がレイアウトの計算と一致するかだけを見る。
 func TestCardPositionsMatchTheLayout(t *testing.T) {
@@ -1797,7 +1797,7 @@ func TestScrubberLabelMatchesTheTopItem(t *testing.T) {
 		chromedp.Poll(settleJS, nil, chromedp.WithPollingTimeout(5*time.Second)))
 	require.NoError(t, err, "the scroll position never settled after the drag")
 
-	// 貼り付け(塊のfetchを挟む非同期処理)が新しいスクロール位置に追いつくまで待つ。
+	// 貼り付け(チャンクのfetchを挟む非同期処理)が新しいスクロール位置に追いつくまで待つ。
 	const anyTileInViewJS = `(() => {
 		const vh = window.innerHeight;
 		return [...document.querySelectorAll('#window .tile')].some((t) => {
@@ -1888,9 +1888,9 @@ func TestScrollMapsIntoLayoutSpace(t *testing.T) {
 
 // --- Task: TestLongScrollDoesNotStallOnSlowServer ---
 
-// 長いスクロールの再現に使う写真。共有の200枚は塊が4つしかなく、
-// 「通り過ぎた塊の取得が滞留する」状況そのものを作れないため別に用意する。
-// 塊の数(= manyMediaCount / stallChunkSize = 60)が、下まで降りる間に
+// 長いスクロールの再現に使う写真。共有の200枚はチャンクが4つしかなく、
+// 「通り過ぎたチャンクの取得が滞留する」状況そのものを作れないため別に用意する。
+// チャンクの数(= manyMediaCount / stallChunkSize = 60)が、下まで降りる間に
 // 積み上がる取得要求の上限になる。
 const (
 	manyMediaCount = 1200
@@ -1899,13 +1899,13 @@ const (
 
 	// stallItemDelay は /items 1本あたりの応答時間。スキャンでCPUが
 	// 埋まったNASを模す。直列化と併せて「1本ずつ、250msかけて捌く」になる。
-	// 全60塊で15秒ぶん。下まで降りるスクロール自体は5秒ほどなので、
-	// 通り過ぎた塊を取り続ける限り、着いた先の塊はその後ろで待たされる。
+	// 全60チャンクで15秒ぶん。下まで降りるスクロール自体は5秒ほどなので、
+	// 通り過ぎたチャンクを取り続ける限り、着いた先のチャンクはその後ろで待たされる。
 	stallItemDelay = 250 * time.Millisecond
 
 	// stallCatchUp は手を止めてから一番古い写真が貼られるまでの許容時間。
-	// 止まった場所に必要な塊は5つ前後(可視範囲+オーバースキャン+先読み)で
-	// 1.3秒ほど。残りの塊を捌き終わるのを待つ側とはっきり分かれる値。
+	// 止まった場所に必要なチャンクは5つ前後(可視範囲+オーバースキャン+先読み)で
+	// 1.3秒ほど。残りのチャンクを捌き終わるのを待つ側とはっきり分かれる値。
 	stallCatchUp = 4 * time.Second
 )
 
@@ -1957,8 +1957,8 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 	return srv.URL, &items, &dropped
 }
 
-// newManyMediaHandler は manyMediaCount 枚を登録し、塊を stallChunkSize 枚にした
-// ハンドラを返す。共有の200枚では塊が足りない試験が、サーバの振る舞いだけを
+// newManyMediaHandler は manyMediaCount 枚を登録し、チャンクを stallChunkSize 枚にした
+// ハンドラを返す。共有の200枚ではチャンクが足りない試験が、サーバの振る舞いだけを
 // 変えて使う。
 func newManyMediaHandler(t *testing.T) *web.Handler {
 	t.Helper()
@@ -1983,9 +1983,9 @@ func newManyMediaHandler(t *testing.T) *web.Handler {
 
 // 一番古い写真まで降りたあと、画面がそこに追いつくこと。
 //
-// render() は通過中の位置の塊を loadChunk() で取りに行く。これが中断
-// されないと、止まった場所の塊が「通り過ぎただけの塊」の後ろに並ぶ。
-// 塊が1つでも欠けている間 render() は貼らずに帰るため、#window は
+// render() は通過中の位置のチャンクを loadChunk() で取りに行く。これが中断
+// されないと、止まった場所のチャンクが「通り過ぎただけのチャンク」の後ろに並ぶ。
+// チャンクが1つでも欠けている間 render() は貼らずに帰るため、#window は
 // 画面外に置かれた前回の内容を保持したまま、ビューポートには何も出ない。
 // 配信が遅いほど滞留は長く、スクロールした距離に比例して伸びる。
 func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
@@ -2005,7 +2005,7 @@ func TestLongScrollDoesNotStallOnSlowServer(t *testing.T) {
 	))
 	require.Greater(t, height, 0, "could not read the layout height")
 
-	// ホイールで下まで降りる操作。1回で飛ばすと通り過ぎる塊が無く、
+	// ホイールで下まで降りる操作。1回で飛ばすと通り過ぎるチャンクが無く、
 	// この不具合自体が起きない（スクラバーで飛ぶと1秒で着く）。
 	const steps = 200
 	for i := 1; i <= steps; i++ {
@@ -2052,10 +2052,10 @@ func awaitPromise(p *runtime.EvaluateParams) *runtime.EvaluateParams {
 	return p.WithAwaitPromise(true)
 }
 
-// ライトボックスが取りに行った塊を、一覧の貼り替えで切らないこと。
+// ライトボックスが取りに行ったチャンクを、一覧の貼り替えで切らないこと。
 //
 // 仮想スクロールではDOMに可視範囲のタイルしか無いため、ライトボックスは
-// 全体の通し番号で動く。つまり一覧の可視範囲とは無関係な位置の塊を取りに行く。
+// 全体の通し番号で動く。つまり一覧の可視範囲とは無関係な位置のチャンクを取りに行く。
 // これを abandonOutside が「可視範囲の外だから」と切ると、送った先の
 // 写真がいつまでも出ない。切ってよいのは一覧の貼り替えが始めた取得だけ。
 func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
@@ -2094,7 +2094,7 @@ func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 
 // --- Task: 写真ごとのURL ---
 //
-// 共有されたURLを直接開くと、その写真でライトボックスが開くこと。先頭の塊の
+// 共有されたURLを直接開くと、その写真でライトボックスが開くこと。先頭のチャンクの
 // 外にある写真を選ぶ。サーバーが埋めた通し番号から仮想スクロールが任意の位置へ
 // 飛べていなければ、ここで別の写真が出るか、そもそも開かない。
 func TestItemURLOpensTheLightbox(t *testing.T) {
@@ -2305,11 +2305,11 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 
 // --- Task: TestFailedChunkFetchIsRetried ---
 
-// 取得に失敗した塊を、スクロールを待たずに取り直すこと。
+// 取得に失敗したチャンクを、スクロールを待たずに取り直すこと。
 //
 // render() が呼ばれるのはスクロールとリサイズのときだけなので、失敗を握り
 // つぶしたままだと、手を止めている間その範囲は空白のまま残る。ここでは
-// 各塊の1回目の /tiles だけを 500 で落とし、深い位置へ飛んだあとは何も
+// 各チャンクの1回目の /tiles だけを 500 で落とし、深い位置へ飛んだあとは何も
 // 操作せずに、着いた先の写真が貼られるのを待つ。
 // failedFetchDelay は落とす /tiles を返すまでの時間。
 const failedFetchDelay = 500 * time.Millisecond

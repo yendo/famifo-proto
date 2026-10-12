@@ -1,7 +1,7 @@
 // @ts-check
 
-// 塊の取得と保持。写真は通し番号 chunkSize 枚ごとの塊で取りに行き、取れた
-// 塊はタイル1枚ずつに割って持っておく。i 番の写真は塊 floor(i / chunkSize)
+// チャンクの取得と保持。写真は通し番号 chunkSize 枚ごとのチャンクで取りに行き、取れた
+// チャンクはタイル1枚ずつに割って持っておく。i 番の写真はチャンク floor(i / chunkSize)
 // の i % chunkSize 番目。レイアウトや座標には触らない。
 
 /**
@@ -15,21 +15,21 @@
  */
 
 /**
- * 塊の取得と保持が他のモジュールに見せるもの。
+ * チャンクの取得と保持が他のモジュールに見せるもの。
  *
  * 名前は返すもので分ける。「名詞 + At」は取得済みのものからその場で引き、
  * 無ければ null を返す（取りに行かない）。「load + 名詞」はその名詞の
  * Promise を返し、無ければ取りに行く。動詞だけのものは何も返さない。
- * ci は塊の番号、i は写真の通し番号。
+ * ci はチャンクの番号、i は写真の通し番号。
  * @typedef {object} Chunks
  * @property {number} tileCount 写真（動画も含む）の枚数
- * @property {(i: number) => number} chunkOf その写真を含む塊の番号
- * @property {(ci: number) => boolean} hasChunk その塊を取得済みか
+ * @property {(i: number) => number} chunkOf その写真を含むチャンクの番号
+ * @property {(ci: number) => boolean} hasChunk そのチャンクを取得済みか
  * @property {(i: number) => Tile | null} tileAt 取得済みならタイル
- * @property {(ci: number) => Promise<Tile[]>} loadChunk その塊を返す。一覧が範囲外に出れば中断されうる
+ * @property {(ci: number) => Promise<Tile[]>} loadChunk そのチャンクを返す。一覧が範囲外に出れば中断されうる
  * @property {(i: number) => Promise<Tile | null>} loadTile その写真のタイルを返す。中断されない
- * @property {(i: number) => void} prefetch その写真を含む塊を先読みする。中断されない
- * @property {(from: number, to: number) => void} abandonOutside 塊の番号が範囲外の取得を中断する
+ * @property {(i: number) => void} prefetch その写真を含むチャンクを先読みする。中断されない
+ * @property {(from: number, to: number) => void} abandonOutside チャンクの番号が範囲外の取得を中断する
  */
 
 /** @type {Chunks | null} */
@@ -42,9 +42,9 @@ export const chunks = (() => {
 	const tileCount = Number(root.dataset.total);
 	const chunkSize = Number(root.dataset.chunk);
 
-	/** @type {Map<number, Tile[]>} 塊番号 -> その塊のタイル */
+	/** @type {Map<number, Tile[]>} チャンク番号 -> そのチャンクのタイル */
 	const loaded = new Map();
-	/** @type {Map<number, { job: Promise<Tile[]>, controller: AbortController, keep: boolean }>} 取得中の塊だけが入る */
+	/** @type {Map<number, { job: Promise<Tile[]>, controller: AbortController, keep: boolean }>} 取得中のチャンクだけが入る */
 	const inFlight = new Map();
 
 	// サーバが返したHTML断片を、タイル1枚ずつに割る。取得時に1回だけパースし、
@@ -69,7 +69,7 @@ export const chunks = (() => {
 		}));
 	}
 
-	// 初回ページはサーバが先頭の塊を埋めて返しているので、取得済みとして控える。
+	// 初回ページはサーバが先頭のチャンクを埋めて返しているので、取得済みとして控える。
 	function loadEmbeddedChunk() {
 		const tiles = parseTiles(win.innerHTML);
 		if (tiles.length > 0) loaded.set(0, tiles);
@@ -85,13 +85,13 @@ export const chunks = (() => {
 		return loaded.has(ci);
 	}
 
-	// 塊を取りに行く。取得済みならそれを、取得中ならその取得を返す。
+	// チャンクを取りに行く。取得済みならそれを、取得中ならその取得を返す。
 	//
 	// keep を立てた取得は abandonOutside の対象から外す。ライトボックスは
 	// 一覧の可視範囲と無関係な位置の写真を取りに行くため、貼り替えの都合で
 	// 切られると送った先の写真がいつまでも出ない。
 	/**
-	 * @param {number} ci 塊番号
+	 * @param {number} ci チャンク番号
 	 * @param {boolean} keep
 	 * @returns {Promise<Tile[]>}
 	 */
@@ -126,11 +126,11 @@ export const chunks = (() => {
 		return job;
 	}
 
-	// abandonOutside は塊の番号が [from, to] の外の取得を諦める。
+	// abandonOutside はチャンクの番号が [from, to] の外の取得を諦める。
 	// keep が立っているもの（loadTile と prefetch が始めたもの）は触らない。
 	//
 	// スクロール中は通過した位置ごとに取得が始まる。切らずに置くと、止まった
-	// 場所の塊が「通り過ぎただけの塊」の後ろに並ぶ。塊が1つでも欠けている間
+	// 場所のチャンクが「通り過ぎただけのチャンク」の後ろに並ぶ。チャンクが1つでも欠けている間
 	// render() は貼らずに帰るため、配信が遅いと画面は長く止まったままになる
 	// （フルスキャン中のNASで実測: 20,000枚を下まで降りて28秒）。
 	// 中断された取得は loaded に何も残さないので、後で必要になれば取り直す。
@@ -144,7 +144,7 @@ export const chunks = (() => {
 		}
 	}
 
-	// 取得済みの塊からタイルを引く。未取得なら null。
+	// 取得済みのチャンクからタイルを引く。未取得なら null。
 	/**
 	 * @param {number} i
 	 * @returns {Tile | null}

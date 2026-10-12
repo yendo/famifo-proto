@@ -43,7 +43,7 @@ type dayGroup struct {
 }
 
 // buildIndexView はトップページの入力を組み立てる。
-// 先頭の塊を埋めておくので、開いた直後に灰色の画面が出ない。
+// 先頭のチャンクを埋めておくので、開いた直後に灰色の画面が出ない。
 func (h *Handler) buildIndexView(r *http.Request, openIndex int) (indexView, error) {
 	tiles, err := h.buildTilesView(r, 0, h.chunkSize)
 	if err != nil {

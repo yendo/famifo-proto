@@ -221,7 +221,7 @@ func TestTilesReturnsRequestedChunk(t *testing.T) {
 
 	body := doGet(t, f.h, "/tiles?chunk=1").Body.String()
 
-	// 新しい順は p4,p3,p2,p1,p0 なので、2枚ずつの塊の1番目は p2,p1
+	// 新しい順は p4,p3,p2,p1,p0 なので、2枚ずつのチャンクの1番目は p2,p1
 	require.Contains(t, body, ids[2])
 	require.Contains(t, body, ids[1])
 	require.NotContains(t, body, ids[3])
@@ -246,7 +246,7 @@ func TestTilesRejectsBadChunk(t *testing.T) {
 		"/tiles?chunk=abc",
 		"/tiles?chunk=-1",
 		"/tiles?chunk=1.5",
-		"/tiles?chunk=9223372036854775807", // 塊の大きさを掛けると溢れる
+		"/tiles?chunk=9223372036854775807", // チャンクの大きさを掛けると溢れる
 	} {
 		t.Run(target, func(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, doGet(t, f.h, target).Code)
