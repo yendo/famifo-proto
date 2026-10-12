@@ -1929,21 +1929,7 @@ func prepareManyTestMedia(st *store.Store, mediaDir string, thumbs *thumb.Provid
 func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64) {
 	t.Helper()
 
-	tempDir := t.TempDir()
-	mediaDir := filepath.Join(tempDir, "items")
-	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
-	thumbs, err := thumb.NewProvider(filepath.Join(tempDir, "thumbs"))
-	require.NoError(t, err)
-
-	st, err := store.Open(filepath.Join(tempDir, "stall.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { st.Close() })
-
-	require.NoError(t, prepareManyTestMedia(st, mediaDir, thumbs))
-
-	h, err := web.NewHandler(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.NoError(t, err)
-	h.SetChunkSize(stallChunkSize)
+	h := newManyMediaHandler(t)
 
 	var items, dropped int64
 	gate := make(chan struct{}, 1)
@@ -1968,6 +1954,30 @@ func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64
 	t.Cleanup(srv.Close)
 
 	return srv.URL, &items, &dropped
+}
+
+// newManyMediaHandler は manyMediaCount 枚を登録し、塊を stallChunkSize 枚にした
+// ハンドラを返す。共有の200枚では塊が足りない試験が、サーバの振る舞いだけを
+// 変えて使う。
+func newManyMediaHandler(t *testing.T) *web.Handler {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	mediaDir := filepath.Join(tempDir, "items")
+	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
+	thumbs, err := thumb.NewProvider(filepath.Join(tempDir, "thumbs"))
+	require.NoError(t, err)
+
+	st, err := store.Open(filepath.Join(tempDir, "many.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { st.Close() })
+
+	require.NoError(t, prepareManyTestMedia(st, mediaDir, thumbs))
+
+	h, err := web.NewHandler(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	h.SetChunkSize(stallChunkSize)
+	return h
 }
 
 // 一番古い写真まで降りたあと、画面がそこに追いつくこと。
