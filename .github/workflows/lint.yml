@@ -66,8 +66,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Go
+        uses: actions/setup-go@v7 # zizmor: ignore[unpinned-uses]
+        with:
+          go-version-file: go.mod
+
       - name: Run staticcheck
         uses: dominikh/staticcheck-action@9716614d4101e79b4340dd97b10e54d68234e431 # v1.4.1
         with:
           version: "2026.2.1"
           build-tags: browser
+          install-go: false
