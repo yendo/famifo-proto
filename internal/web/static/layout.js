@@ -54,6 +54,8 @@
  * @property {Card} card
  * @property {number} firstRow 描く最初の段
  * @property {number} lastRow 描く最後の段
+ * @property {number} from 描く最初の写真の通し番号
+ * @property {number} to 描く最後の写真の次の通し番号
  */
 
 /**
@@ -160,7 +162,13 @@ export function windowAt(L, top, bottom) {
 		} else if (card.y + card.h < top) {
 			continue;
 		}
-		ranges.push({ card, firstRow, lastRow });
+		ranges.push({
+			card,
+			firstRow,
+			lastRow,
+			from: card.start + firstRow * card.span,
+			to: Math.min(card.start + card.n, card.start + (lastRow + 1) * card.span),
+		});
 	}
 	if (ranges.length === 0) return null;
 
@@ -173,11 +181,8 @@ export function windowAt(L, top, bottom) {
 			f.firstRow > 0
 				? f.card.y + L.labelH + L.gap + f.firstRow * (L.tileH + L.gap)
 				: f.card.y,
-		from: f.card.start + f.firstRow * f.card.span,
-		to: Math.min(
-			l.card.start + l.card.n,
-			l.card.start + (l.lastRow + 1) * l.card.span,
-		),
+		from: f.from,
+		to: l.to,
 	};
 }
 

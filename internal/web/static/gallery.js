@@ -293,12 +293,8 @@ export const gallery = (() => {
 		// 確定を先にすると、欠けたまま貼った状態がキャッシュされて直らない。
 		const parts = [];
 		for (const range of w.ranges) {
-			const rangeFrom = range.card.start + range.firstRow * range.card.span;
-			const rangeTo = Math.min(
-				to,
-				range.card.start + range.card.n,
-				range.card.start + (range.lastRow + 1) * range.card.span,
-			);
+			const rangeFrom = range.from;
+			const rangeTo = Math.min(to, range.to);
 			if (rangeFrom >= rangeTo) continue;
 			const html = cardHTML(range, rangeFrom, rangeTo);
 			if (!html) return;
