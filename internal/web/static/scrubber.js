@@ -2,13 +2,14 @@
 
 // 日付スクラバー。ドラッグで全期間の任意の位置へ飛ぶ。
 
+import { chunks } from "./chunk.js";
 import { gallery } from "./gallery.js";
 import { dayAtY } from "./layout.js";
 
 (() => {
 	/** @type {HTMLElement | null} */
 	const bar = document.querySelector("#scrubber");
-	if (!bar || !gallery || gallery.total === 0) return;
+	if (!bar || !gallery || !chunks || chunks.tileCount === 0) return;
 
 	/** @type {HTMLElement} */
 	const thumb = bar.querySelector(".scrub-thumb");

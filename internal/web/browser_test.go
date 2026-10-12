@@ -415,9 +415,9 @@ func newTab(t *testing.T) context.Context {
 }
 
 // waitForGallery は最初のタイルが描画されるまで待ち、テストのJSから
-// gallery.js と layout.js を呼べるようにする。ページを開いた直後に必ず通す。
+// gallery.js・chunk.js・layout.js を呼べるようにする。ページを開いた直後に必ず通す。
 //
-// どちらもESモジュールなので、ページのグローバルには何も出ていない。同じURLの
+// どれもESモジュールなので、ページのグローバルには何も出ていない。同じURLの
 // モジュールはページ内で1度しか評価されないため、ここで import すれば本体が
 // 使っているのと同じインスタンスが得られる。テストのためのグローバルを本体に
 // 置かずに済む。
@@ -432,8 +432,8 @@ func waitForGallery(timeout time.Duration) chromedp.Action {
 	return chromedp.Tasks{
 		chromedp.Poll(`document.querySelectorAll('#window .tile').length > 0`, nil,
 			chromedp.WithPollingTimeout(timeout)),
-		chromedp.Evaluate(`Promise.all([import("/static/gallery.js"), import("/static/layout.js")])
-			.then(([g, l]) => { window.gallery = g.gallery; window.layout = l; })`, nil, awaitPromise),
+		chromedp.Evaluate(`Promise.all([import("/static/gallery.js"), import("/static/chunk.js"), import("/static/layout.js")])
+			.then(([g, c, l]) => { window.gallery = g.gallery; window.chunks = c.chunks; window.layout = l; })`, nil, awaitPromise),
 		chromedp.Evaluate(`window.pastedRange = () => {
 			const tiles = document.querySelectorAll('#window .tile');
 			if (tiles.length === 0 || tiles[0].dataset.i === undefined) return { from: 0, to: 0 };
@@ -1083,7 +1083,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 // 仮想スクロールは可視範囲の外のタイルを捨てるので、送りが塊の境界を
 // 跨いだ時点で「一覧の中の位置」が意味を失う。日ごとのカードに入って
 // からは、親要素を数える方式も同様に成立しない。現在位置は通し番号で
-// 持ち、URLは urlAt で引く。
+// 持ち、URLは loadTile で引く。
 func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
@@ -1983,7 +1983,7 @@ func newManyMediaHandler(t *testing.T) *web.Handler {
 
 // 一番古い写真まで降りたあと、画面がそこに追いつくこと。
 //
-// render() は通過中の位置の塊を fetchChunk() で取りに行く。これが中断
+// render() は通過中の位置の塊を loadChunk() で取りに行く。これが中断
 // されないと、止まった場所の塊が「通り過ぎただけの塊」の後ろに並ぶ。
 // 塊が1つでも欠けている間 render() は貼らずに帰るため、#window は
 // 画面外に置かれた前回の内容を保持したまま、ビューポートには何も出ない。
@@ -2056,7 +2056,7 @@ func awaitPromise(p *runtime.EvaluateParams) *runtime.EvaluateParams {
 //
 // 仮想スクロールではDOMに可視範囲のタイルしか無いため、ライトボックスは
 // 全体の通し番号で動く。つまり一覧の可視範囲とは無関係な位置の塊を取りに行く。
-// これを abandonChunksOutside が「可視範囲の外だから」と切ると、送った先の
+// これを abandonOutside が「可視範囲の外だから」と切ると、送った先の
 // 写真がいつまでも出ない。切ってよいのは一覧の貼り替えが始めた取得だけ。
 func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 	requireBrowser(t)
@@ -2067,13 +2067,13 @@ func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 	defer cancel()
 
 	// 一覧は先頭を映したまま、そこから最も遠い写真をライトボックスの経路
-	// (urlAt) で取りに行き、その取得中に一覧を貼り替える。配信が遅いので
+	// (loadTile) で取りに行き、その取得中に一覧を貼り替える。配信が遅いので
 	// render() の時点で取得は必ずまだ終わっていない。
 	const js = `(async () => {
-		const p = gallery.urlAt(gallery.total - 1);
+		const p = chunks.loadTile(chunks.tileCount - 1);
 		window.dispatchEvent(new Event("scroll"));
 		try {
-			return (await p) ? "resolved" : "url was null";
+			return (await p) ? "resolved" : "tile was null";
 		} catch (e) {
 			return "aborted: " + e.name;
 		}

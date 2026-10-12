@@ -11,12 +11,13 @@
 // history.scrollRestoration は既定のままにする。リロードでスクロール位置が
 // 戻るのはブラウザのその働きによるもので、manualにすると失われる。
 
+import { chunks } from "./chunk.js";
 import { gallery } from "./gallery.js";
 
 (() => {
 	/** @type {HTMLElement | null} */
 	const box = document.querySelector("#lightbox");
-	if (!box || !gallery) return;
+	if (!box || !gallery || !chunks) return;
 
 	const img = box.querySelector("img");
 	const vid = box.querySelector("video");
@@ -35,7 +36,7 @@ import { gallery } from "./gallery.js";
 	}
 
 	let idx = -1;
-	let requestSeq = 0; // 連続スワイプで古いurlAtの解決が新しいものを上書きしないための世代番号
+	let requestSeq = 0; // 連続スワイプで古いloadTileの解決が新しいものを上書きしないための世代番号
 	// 自分で積んだ履歴エントリの上にいるか。写真のURLを直接開いた場合は積んで
 	// いないので、閉じるときに戻る先が無い。
 	let pushed = false;
@@ -48,37 +49,37 @@ import { gallery } from "./gallery.js";
 	 * @param {"push" | "replace" | "none"} mode
 	 */
 	async function show(i, mode) {
-		if (i < 0 || i >= gallery.total) return;
+		if (i < 0 || i >= chunks.tileCount) return;
 		const mySeq = ++requestSeq;
-		const url = await gallery.urlAt(i);
-		if (!url || mySeq !== requestSeq) return; // 待っている間に追い越されたら破棄
+		const tile = await chunks.loadTile(i);
+		if (!tile || mySeq !== requestSeq) return; // 待っている間に追い越されたら破棄
 		idx = i;
 		errBox.hidden = true;
-		if (gallery.isVideoAt(i)) {
+		if (tile.video) {
 			img.hidden = true;
 			img.removeAttribute("src");
 			vid.pause(); // 動画から動画へ送るとき、前の音が重ならないように
-			vid.src = url;
+			vid.src = tile.fullUrl;
 			vid.hidden = false;
 			box.classList.add("playing");
 		} else {
 			stopVideo();
 			vid.hidden = true;
-			img.src = url;
+			img.src = tile.fullUrl;
 			img.hidden = false;
 			box.classList.remove("playing");
 		}
 		// 送りで積むと、めくった枚数だけ戻るボタンを押さないとギャラリーへ
 		// 帰れなくなる。URLは追随させるが履歴には積まない。
-		const page = gallery.pageAt(i) ?? location.pathname;
+		const page = tile.pageUrl ?? location.pathname;
 		if (mode === "push") {
 			history.pushState({ i }, "", page);
 			pushed = true;
 		} else if (mode === "replace") {
 			history.replaceState({ i }, "", page);
 		}
-		gallery.ensureChunk(i + 1); // 次を先読みしておく
-		gallery.ensureChunk(i - 1);
+		chunks.prefetch(i + 1); // 次を先読みしておく
+		chunks.prefetch(i - 1);
 	}
 
 	/**

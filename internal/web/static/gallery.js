@@ -3,6 +3,7 @@
 // 仮想スクロール。全枚数分の高さを #spacer が持ち、そこから切り取った範囲
 // （可視範囲と上下の余分）だけを #window に展開する。無限スクロールと違い、
 // 任意の位置へ即座に飛べる。
+import { chunks } from "./chunk.js";
 import { Idiomorph } from "./idiomorph.esm.js";
 import { layout, windowAt, yForIndex } from "./layout.js";
 
@@ -10,25 +11,10 @@ import { layout, windowAt, yForIndex } from "./layout.js";
 /** @typedef {import("./layout.js").CardRowRange} CardRowRange */
 
 /**
- * タイル1枚。サーバが返したHTML断片から取り出す。
- * @typedef {object} Tile
- * @property {string} html タイルのHTML
- * @property {string} url フルビューのURL（/full/<id>）
- * @property {string} page その1件のページのURL（/item/<id>）
- * @property {string} date 撮影日（"2026-02-08"）
- * @property {boolean} video 動画か
- */
-
-/**
  * 仮想スクロールが他のモジュールに見せるもの。
  * @typedef {object} Gallery
- * @property {number} total 全枚数
  * @property {number} openIndex /item/<id> で開かれたときの通し番号。無ければ -1
- * @property {(i: number) => Promise<string | null>} urlAt 原本のURL。未取得なら取りに行く
- * @property {(i: number) => string | null} pageAt その1件のページのURL
- * @property {(i: number) => boolean} isVideoAt 動画か
  * @property {(i: number) => void} jumpTo その写真が見える位置までスクロールする
- * @property {(i: number) => void} ensureChunk その写真を含む塊を先読みする
  * @property {Element} scroller スクロールしている要素（文書全体）
  * @property {() => number} maxScroll スクロールできる最大量
  * @property {() => Layout | null} current いまのレイアウト。未計測なら null
@@ -44,10 +30,9 @@ export const gallery = (() => {
 	/** @type {HTMLElement | null} */
 	const win = document.querySelector("#window");
 	const probe = document.querySelector("#layoutprobe");
-	if (!root || !spacer || !win || !probe) return null;
+	if (!root || !spacer || !win || !probe || !chunks) return null;
 
-	const total = Number(root.dataset.total);
-	const chunkSize = Number(root.dataset.chunk);
+	const { tileCount } = chunks;
 	// 写真ごとのURL(/item/<id>)で開かれたとき、サーバーが埋めた「開く写真の
 	// 通し番号」。閉じたまま開く場合は -1。
 	const openIndex = Number(root.dataset.open);
@@ -63,43 +48,10 @@ export const gallery = (() => {
 	const maxScroll = () =>
 		Math.max(1, scroller.scrollHeight - window.innerHeight);
 
-	/** @type {Map<number, Tile[]>} 塊番号 -> その塊のタイル */
-	const chunks = new Map();
-	/** @type {Map<number, { job: Promise<Tile[]>, controller: AbortController, keep: boolean }>} 取得中の塊だけが入る */
-	const inFlight = new Map();
-
 	/** @type {Layout | null} */
 	let L = null;
 	let spacerTop = 0; // #spacer の文書上のオフセット。レイアウト座標との差
 	let renderedKey = ""; // 「どの塊を何個貼ったか」。同じなら描き直さない
-
-	// サーバが返したHTML断片を、タイル1枚ずつに割る。取得時に1回だけパースし、
-	// 以降はここから必要な範囲を切り出して組み立てる。data-full 属性が原本のURL、
-	// data-date 属性が日付、data-video 属性が動画かどうか、href がその1件のページ
-	// （ライトボックスを開いたときにアドレス欄へ出すURL）。
-	/**
-	 * @param {string} html
-	 * @returns {Tile[]}
-	 */
-	function parseTiles(html) {
-		const tmp = document.createElement("div");
-		tmp.innerHTML = html;
-		/** @type {NodeListOf<HTMLElement>} */
-		const tiles = tmp.querySelectorAll(".tile");
-		return [...tiles].map((a) => ({
-			html: a.outerHTML,
-			url: a.dataset.full,
-			page: a.getAttribute("href"),
-			date: a.dataset.date,
-			video: a.dataset.video === "1",
-		}));
-	}
-
-	// 初回ページはサーバが先頭の塊を埋めて返しているので、取得済みとして控える。
-	function loadEmbeddedChunk() {
-		const tiles = parseTiles(win.innerHTML);
-		if (tiles.length > 0) chunks.set(0, tiles);
-	}
 
 	// レイアウトのy座標は #spacer の上端が0。文書のスクロール位置とは、
 	// 上部バー（sticky でも流れの中で場所を占める）とギャラリーの余白の
@@ -144,112 +96,8 @@ export const gallery = (() => {
 		spacerTop = spacer.getBoundingClientRect().top + scroller.scrollTop;
 	}
 
-	// keep を立てた取得は abandonChunksOutside の対象から外す。ライトボックスは
-	// 一覧の可視範囲と無関係な位置の写真を取りに行くため、貼り替えの都合で
-	// 切られると送った先の写真がいつまでも出ない。
-	/**
-	 * @param {number} ci 塊番号
-	 * @param {{ keep?: boolean }} [opts]
-	 * @returns {Promise<Tile[]>}
-	 */
-	async function fetchChunk(ci, { keep = false } = {}) {
-		if (chunks.has(ci)) return chunks.get(ci);
-		const pending = inFlight.get(ci);
-		if (pending) {
-			if (keep) pending.keep = true; // 一覧が始めた取得でも、途中から守る側に回る
-			return pending.job;
-		}
-
-		const controller = new AbortController();
-		const job = (async () => {
-			const res = await fetch(`/tiles?chunk=${ci}`, {
-				signal: controller.signal,
-			});
-			// 401 はセッションが切れたということ。ここで握り潰すと、タイルが永久に
-			// 埋まらないまま理由の分からない画面が残る。読み直せば未認証の GET / が
-			// /login へ導いてくれる。
-			if (res.status === 401) {
-				location.reload();
-				return new Promise(() => {}); // 再読み込みまで呼び出し側を待たせる
-			}
-			if (!res.ok) throw new Error(`tiles ${res.status}`);
-			const html = await res.text();
-			const tiles = parseTiles(html);
-			chunks.set(ci, tiles);
-			return tiles;
-		})().finally(() => inFlight.delete(ci));
-
-		inFlight.set(ci, { job, controller, keep });
-		return job;
-	}
-
-	// abandonChunksOutside は [from, to] の外で取得中の塊を諦める。
-	// keep が立っているもの（ライトボックスが要求したもの）は触らない。
-	//
-	// スクロール中は通過した位置ごとに取得が始まる。切らずに置くと、止まった
-	// 場所の塊が「通り過ぎただけの塊」の後ろに並ぶ。塊が1つでも欠けている間
-	// render() は貼らずに帰るため、配信が遅いと画面は長く止まったままになる
-	// （フルスキャン中のNASで実測: 20,000枚を下まで降りて28秒）。
-	// 中断された取得は chunks に何も残さないので、後で必要になれば取り直す。
-	/**
-	 * @param {number} from
-	 * @param {number} to
-	 */
-	function abandonChunksOutside(from, to) {
-		for (const [ci, pending] of inFlight) {
-			if (!pending.keep && (ci < from || ci > to)) pending.controller.abort();
-		}
-	}
-
-	// 全体の通し番号から写真のURLを引く。未取得なら取りに行く。
-	/**
-	 * @param {number} i
-	 * @returns {Promise<string | null>}
-	 */
-	async function urlAt(i) {
-		if (i < 0 || i >= total) return null;
-		const tiles = await fetchChunk(Math.floor(i / chunkSize), { keep: true });
-		return tiles[i % chunkSize]?.url ?? null;
-	}
-
-	// 取得済みの塊からタイルを引く。未取得なら null。
-	/**
-	 * @param {number} i
-	 * @returns {Tile | null}
-	 */
-	function tileAt(i) {
-		const tiles = chunks.get(Math.floor(i / chunkSize));
-		return tiles ? (tiles[i % chunkSize] ?? null) : null;
-	}
-
-	// その1件のページURL。取得済みの塊からしか引けないので、表示中のものに
-	// 対してだけ使う。
-	/**
-	 * @param {number} i
-	 * @returns {string | null}
-	 */
-	function pageAt(i) {
-		return tileAt(i)?.page ?? null;
-	}
-
-	// その1件が動画か。pageAt と同じく取得済みの塊からしか引けない。urlAt を
-	// 待った後なら塊は必ず揃っている。
-	/**
-	 * @param {number} i
-	 * @returns {boolean}
-	 */
-	function isVideoAt(i) {
-		return tileAt(i)?.video === true;
-	}
-
-	/** @param {number} i */
-	function ensureChunk(i) {
-		if (i < 0 || i >= total) return;
-		fetchChunk(Math.floor(i / chunkSize), { keep: true }).catch(() => {});
-	}
-
 	function render() {
-		if (!L || L.height <= 0 || total === 0) return;
+		if (!L || L.height <= 0 || tileCount === 0) return;
 
 		const over = OVERSCAN_ROWS * (L.tileH + L.gap);
 		const top = toLayoutY(scroller.scrollTop);
@@ -260,26 +108,24 @@ export const gallery = (() => {
 		// DayGroups の合計のほうが多くなりうる。総枚数で抑えないと、存在しない
 		// 塊を待ち続けて末尾が永久に更新されなくなる。
 		const from = w.from;
-		const to = Math.min(total, w.to);
+		const to = Math.min(tileCount, w.to);
 		if (from >= to) return;
 
-		const firstChunk = Math.floor(from / chunkSize);
-		const lastChunk = Math.floor((to - 1) / chunkSize);
+		const firstChunk = chunks.chunkOf(from);
+		const lastChunk = chunks.chunkOf(to - 1);
 
 		// 切り取った範囲の前後1塊も先読みしておく。切り出す範囲は広げない。
 		const fetchFrom = Math.max(0, firstChunk - 1);
-		const fetchTo = Math.min(
-			Math.floor((total - 1) / chunkSize),
-			lastChunk + 1,
-		);
-		abandonChunksOutside(fetchFrom, fetchTo);
+		const fetchTo = Math.min(chunks.chunkOf(tileCount - 1), lastChunk + 1);
+		chunks.abandonOutside(fetchFrom, fetchTo);
 		// 失敗した取得は少し待って描き直す。render が呼ばれるのはスクロールと
 		// リサイズのときだけなので、そうしないと手を止めている間は空白のまま残る。
 		// 描き直しはその時点で要る塊だけを取りに行くので、範囲から外れた塊は
 		// 取り直さない。こちらが中断した取得（AbortError）は取り直さない。
 		for (let ci = fetchFrom; ci <= fetchTo; ci++) {
-			if (!chunks.has(ci))
-				fetchChunk(ci)
+			if (!chunks.hasChunk(ci))
+				chunks
+					.loadChunk(ci)
 					.then(render)
 					.catch((e) => {
 						if (e.name !== "AbortError") setTimeout(render, RETRY_MS);
@@ -288,7 +134,7 @@ export const gallery = (() => {
 
 		// 必要な塊が1つでも欠けていると穴の空いたカードになるので、揃うまで描かない
 		for (let ci = firstChunk; ci <= lastChunk; ci++) {
-			if (!chunks.has(ci)) return;
+			if (!chunks.hasChunk(ci)) return;
 		}
 
 		// 貼る内容が前回と同じなら、HTMLの組み立ても差分の計算も省く。
@@ -338,12 +184,12 @@ export const gallery = (() => {
 	function cardHTML(range, from, to) {
 		const tiles = [];
 		for (let i = from; i < to; i++) {
-			const t = tileAt(i);
+			const t = chunks.tileAt(i);
 			if (!t) return "";
 			tiles.push(t.html);
 		}
 		// 段の途中から貼るとき（大きい日をスクロールしている最中）はラベルを落とす
-		const head = tileAt(from);
+		const head = chunks.tileAt(from);
 		const label =
 			range.firstRow > 0
 				? ""
@@ -413,7 +259,6 @@ export const gallery = (() => {
 		render();
 	}
 
-	loadEmbeddedChunk();
 	updateLayout();
 	render();
 	window.addEventListener("scroll", render, { passive: true });
@@ -423,13 +268,8 @@ export const gallery = (() => {
 	new ResizeObserver(onResize).observe(win);
 
 	return {
-		total,
 		openIndex,
-		urlAt,
-		pageAt,
-		isVideoAt,
 		jumpTo,
-		ensureChunk,
 		scroller,
 		maxScroll,
 		current: () => L,
