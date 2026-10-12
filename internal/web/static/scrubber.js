@@ -21,20 +21,13 @@ import { dayAtY } from "./layout.js";
 
 	bar.hidden = false;
 
-	function show() {
+	/** @param {PointerEvent} e */
+	function startDrag(e) {
+		bar.setPointerCapture(e.pointerId);
+		dragging = true;
 		bar.classList.add("visible");
 		clearTimeout(hideTimer);
-		if (!dragging) {
-			hideTimer = setTimeout(() => bar.classList.remove("visible"), 1500);
-		}
-	}
-
-	// スクロール位置からつまみの位置を更新する
-	function sync() {
-		const frac = gallery.scroller.scrollTop / gallery.maxScroll();
-		const top = frac * (bar.clientHeight - thumb.offsetHeight);
-		thumb.style.top = `${top}px`;
-		show();
+		seek(e.clientY);
 	}
 
 	/** @param {number} clientY */
@@ -60,24 +53,29 @@ import { dayAtY } from "./layout.js";
 		}
 	}
 
-	/** @param {number} clientY */
-	function startDrag(clientY) {
-		dragging = true;
-		bar.classList.add("visible");
-		clearTimeout(hideTimer);
-		seek(clientY);
-	}
-
 	function endDrag() {
 		dragging = false;
 		label.hidden = true;
 		show();
 	}
 
-	bar.addEventListener("pointerdown", (e) => {
-		bar.setPointerCapture(e.pointerId);
-		startDrag(e.clientY);
-	});
+	// スクロール位置からつまみの位置を更新する
+	function sync() {
+		const frac = gallery.scroller.scrollTop / gallery.maxScroll();
+		const top = frac * (bar.clientHeight - thumb.offsetHeight);
+		thumb.style.top = `${top}px`;
+		show();
+	}
+
+	function show() {
+		bar.classList.add("visible");
+		clearTimeout(hideTimer);
+		if (!dragging) {
+			hideTimer = setTimeout(() => bar.classList.remove("visible"), 1500);
+		}
+	}
+
+	bar.addEventListener("pointerdown", startDrag);
 	bar.addEventListener("pointermove", (e) => {
 		if (dragging) seek(e.clientY);
 	});
