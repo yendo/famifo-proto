@@ -35,7 +35,7 @@ func TestStaticAssetsAreServed(t *testing.T) {
 	}
 }
 
-// #window と #colprobe は同じトラック定義を共有していなければならない。
+// #window と #layoutprobe は同じトラック定義を共有していなければならない。
 // 片方だけに breakpoint を足すと、測る列数と描く列数が食い違う。どちらの
 // 要素も単体では辻褄が合っているため、何も落ちないまま全部ずれる。
 //
@@ -58,7 +58,7 @@ func TestGridTracksAreSharedByWindowAndProbe(t *testing.T) {
 		require.GreaterOrEqual(t, open, 0, "no selector found: %q", block)
 		sel := block[:open]
 		require.Contains(t, sel, "#window", "selector: %q", sel)
-		require.Contains(t, sel, "#colprobe", "selector: %q", sel)
+		require.Contains(t, sel, "#layoutprobe", "selector: %q", sel)
 	}
 	require.GreaterOrEqual(t, found, 3, "the base plus two breakpoints should make at least three")
 }

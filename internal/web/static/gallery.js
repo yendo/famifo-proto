@@ -43,7 +43,7 @@ export const gallery = (() => {
 	const spacer = document.querySelector("#spacer");
 	/** @type {HTMLElement | null} */
 	const win = document.querySelector("#window");
-	const probe = document.querySelector("#colprobe");
+	const probe = document.querySelector("#layoutprobe");
 	if (!root || !spacer || !win || !probe) return null;
 
 	const total = Number(root.dataset.total);
@@ -115,14 +115,14 @@ export const gallery = (() => {
 	// 列数・列幅・gap はCSSの計算結果から読む。auto-fill の計算を自前で再現すると
 	// CSSのbreakpointと二重管理になる。ラベル高も定義はCSS側の1箇所だけ。
 	//
-	// #window ではなく #colprobe（子を持たない空のグリッド）から測る。#window
+	// #window ではなく #layoutprobe（子を持たない空のグリッド）から測る。#window
 	// には直前のレイアウトのカードが残っており、そのカードの grid-column:
 	// span N が実際に収まる数を超えていると、CSS Grid はそれを収めるために
 	// 暗黙トラックを追加してトラック列を押し広げる。#window はそれを常に
 	// フルに収める側（span を測った cols に合わせて描く側）なので、狭めた
 	// 直後は「一番大きい span」に押し上げられた列数を読んでしまい、本当の
 	// 列数（=このビューポート幅に自然に収まる数）より多く出る。中身が無い
-	// #colprobe ならその影響を受けない。
+	// #layoutprobe ならその影響を受けない。
 	function updateLayout() {
 		const cs = getComputedStyle(probe);
 		const tracks = cs.gridTemplateColumns
