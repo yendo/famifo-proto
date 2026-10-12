@@ -1,26 +1,18 @@
 // @ts-check
 
-// チャンクの取得と保持。写真は通し番号 chunkSize 枚ごとのチャンクで取りに行き、取れた
-// チャンクはタイル1枚ずつに割って持っておく。i 番の写真はチャンク floor(i / chunkSize)
-// の i % chunkSize 番目。レイアウトや座標には触らない。
-
-/**
- * タイル1枚。サーバが返したHTML断片から取り出す。
- * @typedef {object} Tile
- * @property {string} html タイルのHTML
- * @property {string} fullUrl フルビューのURL（/full/<id>）
- * @property {string} pageUrl その1件のページのURL（/item/<id>）
- * @property {string} date 撮影日（"2026-02-08"）
- * @property {boolean} video 動画か
- */
+// チャンクの取得と保持。写真は通し番号 chunkSize 枚ごとのチャンクで取りに
+// 行き、取れたチャンクはタイル1枚ずつに割って持っておく。i 番の写真は
+// チャンク floor(i / chunkSize) の i % chunkSize 番目。レイアウトや座標には
+// 触らない。
 
 /**
  * チャンクの取得と保持が他のモジュールに見せるもの。
  *
- * 名前は返すもので分ける。「名詞 + At」は取得済みのものからその場で引き、
- * 無ければ null を返す（取りに行かない）。「load + 名詞」はその名詞の
- * Promise を返し、無ければ取りに行く。動詞だけのものは何も返さない。
- * ci はチャンクの番号、i は写真の通し番号。
+ * 名前は返すもので分ける。「名詞 + Of」は状態に関係ない計算の結果を返す。
+ * 「has + 名詞」は取得済みかを真偽値で返す。「名詞 + At」は取得済みのもの
+ * からその場で引き、無ければ null を返す（取りに行かない）。「load + 名詞」
+ * はその名詞の Promise を返し、無ければ取りに行く。動詞だけのものは何も
+ * 返さない。ci はチャンクの番号、i は写真の通し番号。
  * @typedef {object} Chunks
  * @property {number} tileCount 写真（動画も含む）の枚数
  * @property {(i: number) => number} chunkOf その写真を含むチャンクの番号
@@ -30,6 +22,16 @@
  * @property {(i: number) => Promise<Tile | null>} loadTile その写真のタイルを返す。中断されない
  * @property {(i: number) => void} prefetch その写真を含むチャンクを先読みする。中断されない
  * @property {(from: number, to: number) => void} abandonOutside チャンクの番号が範囲外の取得を中断する
+ */
+
+/**
+ * タイル1枚。サーバが返したHTML断片から取り出す。
+ * @typedef {object} Tile
+ * @property {string} html タイルのHTML
+ * @property {string} fullUrl フルビューのURL（/full/<id>）
+ * @property {string} pageUrl その1件のページのURL（/item/<id>）
+ * @property {string} date 撮影日（"2026-02-08"）
+ * @property {boolean} video 動画か
  */
 
 /** @type {Chunks | null} */
@@ -47,34 +49,6 @@ export const chunks = (() => {
 	/** @type {Map<number, { job: Promise<Tile[]>, controller: AbortController, keep: boolean }>} 取得中のチャンクだけが入る */
 	const inFlight = new Map();
 
-	// サーバが返したHTML断片を、タイル1枚ずつに割る。取得時に1回だけパースし、
-	// 以降はここから必要な範囲を切り出して組み立てる。data-full 属性が原本のURL、
-	// data-date 属性が日付、data-video 属性が動画かどうか、href がその1件のページ
-	// （ライトボックスを開いたときにアドレス欄へ出すURL）。
-	/**
-	 * @param {string} html
-	 * @returns {Tile[]}
-	 */
-	function parseTiles(html) {
-		const tmp = document.createElement("div");
-		tmp.innerHTML = html;
-		/** @type {NodeListOf<HTMLElement>} */
-		const tiles = tmp.querySelectorAll(".tile");
-		return [...tiles].map((a) => ({
-			html: a.outerHTML,
-			fullUrl: a.dataset.full,
-			pageUrl: a.getAttribute("href"),
-			date: a.dataset.date,
-			video: a.dataset.video === "1",
-		}));
-	}
-
-	// 初回ページはサーバが先頭のチャンクを埋めて返しているので、取得済みとして控える。
-	function loadEmbeddedChunk() {
-		const tiles = parseTiles(win.innerHTML);
-		if (tiles.length > 0) loaded.set(0, tiles);
-	}
-
 	/** @param {number} i */
 	function chunkOf(i) {
 		return Math.floor(i / chunkSize);
@@ -83,6 +57,61 @@ export const chunks = (() => {
 	/** @param {number} ci */
 	function hasChunk(ci) {
 		return loaded.has(ci);
+	}
+
+	// 取得済みのチャンクからタイルを引く。未取得なら null。
+	/**
+	 * @param {number} i
+	 * @returns {Tile | null}
+	 */
+	function tileAt(i) {
+		const tiles = loaded.get(chunkOf(i));
+		return tiles ? (tiles[i % chunkSize] ?? null) : null;
+	}
+
+	// 一覧が貼るための取得。一覧の範囲から外れれば abandonOutside で中断される。
+	/**
+	 * @param {number} ci
+	 * @returns {Promise<Tile[]>}
+	 */
+	function loadChunk(ci) {
+		return request(ci, false);
+	}
+
+	// ライトボックスのための取得。一覧の範囲とは無関係なので中断されない。
+	/**
+	 * @param {number} i
+	 * @returns {Promise<Tile | null>}
+	 */
+	async function loadTile(i) {
+		if (i < 0 || i >= tileCount) return null;
+		const tiles = await request(chunkOf(i), true);
+		return tiles[i % chunkSize] ?? null;
+	}
+
+	/** @param {number} i */
+	function prefetch(i) {
+		if (i < 0 || i >= tileCount) return;
+		request(chunkOf(i), true).catch(() => {});
+	}
+
+	// abandonOutside はチャンクの番号が [from, to] の外の取得を諦める。
+	// keep が立っているもの（loadTile と prefetch が始めたもの）は触らない。
+	//
+	// スクロール中は通過した位置ごとに取得が始まる。切らずに置くと、止まった
+	// 場所のチャンクが「通り過ぎただけのチャンク」の後ろに並ぶ。チャンクが
+	// 1つでも欠けている間 render() は貼らずに帰るため、配信が遅いと画面は
+	// 長く止まったままになる（フルスキャン中のNASで実測: 20,000枚を下まで
+	// 降りて28秒）。
+	// 中断された取得は loaded に何も残さないので、後で必要になれば取り直す。
+	/**
+	 * @param {number} from
+	 * @param {number} to
+	 */
+	function abandonOutside(from, to) {
+		for (const [ci, pending] of inFlight) {
+			if (!pending.keep && (ci < from || ci > to)) pending.controller.abort();
+		}
 	}
 
 	// チャンクを取りに行く。取得済みならそれを、取得中ならその取得を返す。
@@ -126,58 +155,32 @@ export const chunks = (() => {
 		return job;
 	}
 
-	// abandonOutside はチャンクの番号が [from, to] の外の取得を諦める。
-	// keep が立っているもの（loadTile と prefetch が始めたもの）は触らない。
-	//
-	// スクロール中は通過した位置ごとに取得が始まる。切らずに置くと、止まった
-	// 場所のチャンクが「通り過ぎただけのチャンク」の後ろに並ぶ。チャンクが1つでも欠けている間
-	// render() は貼らずに帰るため、配信が遅いと画面は長く止まったままになる
-	// （フルスキャン中のNASで実測: 20,000枚を下まで降りて28秒）。
-	// 中断された取得は loaded に何も残さないので、後で必要になれば取り直す。
+	// サーバが返したHTML断片を、タイル1枚ずつに割る。取得時に1回だけパースし、
+	// 以降はここから必要な範囲を切り出して組み立てる。data-full 属性が原本のURL、
+	// data-date 属性が日付、data-video 属性が動画かどうか、href がその1件のページ
+	// （ライトボックスを開いたときにアドレス欄へ出すURL）。
 	/**
-	 * @param {number} from
-	 * @param {number} to
+	 * @param {string} html
+	 * @returns {Tile[]}
 	 */
-	function abandonOutside(from, to) {
-		for (const [ci, pending] of inFlight) {
-			if (!pending.keep && (ci < from || ci > to)) pending.controller.abort();
-		}
+	function parseTiles(html) {
+		const tmp = document.createElement("div");
+		tmp.innerHTML = html;
+		/** @type {NodeListOf<HTMLElement>} */
+		const tiles = tmp.querySelectorAll(".tile");
+		return [...tiles].map((a) => ({
+			html: a.outerHTML,
+			fullUrl: a.dataset.full,
+			pageUrl: a.getAttribute("href"),
+			date: a.dataset.date,
+			video: a.dataset.video === "1",
+		}));
 	}
 
-	// 取得済みのチャンクからタイルを引く。未取得なら null。
-	/**
-	 * @param {number} i
-	 * @returns {Tile | null}
-	 */
-	function tileAt(i) {
-		const tiles = loaded.get(chunkOf(i));
-		return tiles ? (tiles[i % chunkSize] ?? null) : null;
-	}
-
-	// 一覧が貼るための取得。一覧の範囲から外れれば abandonOutside で中断される。
-	/**
-	 * @param {number} ci
-	 * @returns {Promise<Tile[]>}
-	 */
-	function loadChunk(ci) {
-		return request(ci, false);
-	}
-
-	// ライトボックスのための取得。一覧の範囲とは無関係なので中断されない。
-	/**
-	 * @param {number} i
-	 * @returns {Promise<Tile | null>}
-	 */
-	async function loadTile(i) {
-		if (i < 0 || i >= tileCount) return null;
-		const tiles = await request(chunkOf(i), true);
-		return tiles[i % chunkSize] ?? null;
-	}
-
-	/** @param {number} i */
-	function prefetch(i) {
-		if (i < 0 || i >= tileCount) return;
-		request(chunkOf(i), true).catch(() => {});
+	// 初回ページはサーバが先頭のチャンクを埋めて返しているので、取得済みとして控える。
+	function loadEmbeddedChunk() {
+		const tiles = parseTiles(win.innerHTML);
+		if (tiles.length > 0) loaded.set(0, tiles);
 	}
 
 	loadEmbeddedChunk();
