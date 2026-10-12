@@ -2,6 +2,10 @@
 build:
 	CGO_ENABLED=0 go build -o famifo-proto .
 
+.PHONY: build-image
+build-image:
+	docker build --build-arg GO_VERSION=$(shell sed -n 's/^go //p' go.mod) -t ghcr.io/yendo/famifo-proto .
+
 .PHONY: vet
 vet:
 	go vet ./...
