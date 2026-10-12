@@ -96,7 +96,7 @@ export const gallery = (() => {
 	}
 
 	// 初回ページはサーバが先頭の塊を埋めて返しているので、取得済みとして控える。
-	function seedFirstChunk() {
+	function loadEmbeddedChunk() {
 		const tiles = parseTiles(win.innerHTML);
 		if (tiles.length > 0) chunks.set(0, tiles);
 	}
@@ -413,7 +413,7 @@ export const gallery = (() => {
 		render();
 	}
 
-	seedFirstChunk();
+	loadEmbeddedChunk();
 	updateLayout();
 	render();
 	window.addEventListener("scroll", render, { passive: true });
