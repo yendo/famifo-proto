@@ -1,9 +1,10 @@
 // @ts-check
 
-// 仮想スクロール。全枚数分の高さを #spacer が持ち、可視範囲だけを
-// #window に展開する。無限スクロールと違い、任意の位置へ即座に飛べる。
+// 仮想スクロール。全枚数分の高さを #spacer が持ち、そこから切り取った範囲
+// （可視範囲と上下の余分）だけを #window に展開する。無限スクロールと違い、
+// 任意の位置へ即座に飛べる。
 import { Idiomorph } from "./idiomorph.esm.js";
-import { layout, visibleWindow, yForIndex } from "./layout.js";
+import { layout, windowAt, yForIndex } from "./layout.js";
 
 /** @typedef {import("./layout.js").Layout} Layout */
 /** @typedef {import("./layout.js").CardRowRange} CardRowRange */
@@ -258,7 +259,7 @@ export const gallery = (() => {
 
 		const over = OVERSCAN_ROWS * (L.tileH + L.gap);
 		const top = toLayoutY(scroller.scrollTop);
-		const w = visibleWindow(L, top - over, top + window.innerHeight + over);
+		const w = windowAt(L, top - over, top + window.innerHeight + over);
 		if (!w) return;
 
 		// DayGroups と総枚数はサーバが別々に読むため、開いたまま新着が入ると
@@ -396,7 +397,7 @@ export const gallery = (() => {
 		// ストライプが返るが、そこが実際に最初に見える内容なので正しい。
 		const anchorY = scroller.scrollTop - prevTop;
 		const at = prev
-			? visibleWindow(prev, anchorY, anchorY + prev.tileH + prev.gap)
+			? windowAt(prev, anchorY, anchorY + prev.tileH + prev.gap)
 			: null;
 		const topIndex = at ? at.from : 0;
 

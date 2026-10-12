@@ -1581,7 +1581,7 @@ func TestLayoutLookupsAgreeWithCards(t *testing.T) {
 	require.Empty(t, mismatches, "the binary search disagrees with cards")
 }
 
-func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
+func TestWindowAtClipsBigDaysToRows(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForGallery(10*time.Second))
@@ -1603,7 +1603,7 @@ func TestVisibleWindowClipsBigDaysToRows(t *testing.T) {
 	}
 	err = chromedp.Run(ctx, chromedp.Evaluate(`(() => {
 		const L = layout.layout([{d:"2026-02-08",n:100}], 6, 100, 20, 4);
-		const w = layout.visibleWindow(L, 436, 436 + 200);
+		const w = layout.windowAt(L, 436, 436 + 200);
 		return {from: w.from, to: w.to, pasteY: w.pasteY, ranges: w.ranges.length};
 	})()`, &got))
 	require.NoError(t, err)

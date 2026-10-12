@@ -40,8 +40,8 @@
  */
 
 /**
- * visibleWindow の結果。
- * @typedef {object} VisibleWindow
+ * windowAt の結果。
+ * @typedef {object} LayoutWindow
  * @property {CardRowRange[]} ranges
  * @property {number} pasteY 貼り付ける位置（先頭のカードか段の上端）
  * @property {number} from 先頭の写真の通し番号
@@ -49,7 +49,7 @@
  */
 
 /**
- * 可視範囲にかかるカードと、その中で描く段の範囲（両端を含む）。
+ * 切り取る範囲にかかるカードと、その中で描く段の範囲（両端を含む）。
  * @typedef {object} CardRowRange
  * @property {Card} card
  * @property {number} firstRow 描く最初の段
@@ -133,9 +133,9 @@ export function dayAtY(L, y) {
  * @param {Layout} L
  * @param {number} top
  * @param {number} bottom
- * @returns {VisibleWindow | null}
+ * @returns {LayoutWindow | null}
  */
-export function visibleWindow(L, top, bottom) {
+export function windowAt(L, top, bottom) {
 	const cards = L.cards;
 	if (cards.length === 0) return null;
 
