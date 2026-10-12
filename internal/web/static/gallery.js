@@ -231,11 +231,9 @@ export const gallery = (() => {
 
 		updateLayout();
 
-		// ResizeObserver は #window 自身の高さの変化でも発火する。貼り付ける量は
-		// スクロール中に増減するため、通常のスクロールでも呼ばれる。列数もタイル
-		// 高も変わっていなければ、位置の復元も貼り直しの強制も要らない。ただし
-		// 高さだけが伸びた場合は見える範囲が広がるので、描き直し（render）は
-		// どちらの場合も呼ぶ。
+		// 列数もタイル高も変わっていなければ、位置の復元も貼り直しの強制も
+		// 要らない。ただし高さだけが伸びた場合は見える範囲が広がるので、
+		// 描き直し（render）はどちらの場合も呼ぶ。
 		if (!prev || !L || prev.cols !== L.cols || prev.tileH !== L.tileH) {
 			renderedKey = ""; // 列数が変われば貼り直しが必要
 			if (L && L.height > 0) {
@@ -266,9 +264,11 @@ export const gallery = (() => {
 	render();
 	window.addEventListener("scroll", render, { passive: true });
 	window.addEventListener("resize", onResize);
-	// スクロールバーの出現で #window の幅が変わっても resize は発火しない。
-	// 要素そのものを監視して、列数とタイル高を測り直す。
-	new ResizeObserver(onResize).observe(win);
+	// スクロールバーの出現で幅が変わっても resize は発火しない。要素そのものを
+	// 監視して、列数とタイル高を測り直す。#window ではなく #spacer を見るのは、
+	// #window の高さは貼る量で変わり、スクロールのたびに発火してしまうため。
+	// #spacer の高さが変わるのは updateLayout が書いたときだけ。
+	new ResizeObserver(onResize).observe(spacer);
 
 	return {
 		openIndex,

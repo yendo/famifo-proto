@@ -841,16 +841,20 @@ func TestTallerViewportIsFilled(t *testing.T) {
 
 // --- Task: TestNoRepaintOnPlainScroll ---
 //
-// #window はグリッドの行数が貼り付け枚数で変わるため、チャンク境界を跨ぐたびに
-// ResizeObserver が発火する。以前はこれを無条件に render() へつなげており、
-// 列数もタイル高も変わっていないのに DOM を丸ごと張り替えていた
-// （画像の再読み込み・スクロールのカクつきの原因）。
+// 普通のスクロールでチャンク境界を跨いだとき、貼り替えがちょうど1回で済むこと。
+//
+// かつては ResizeObserver で #window を監視しており、#window の高さは貼る
+// 枚数で変わるため、チャンク境界を跨ぐたびに onResize が走った。それを無条件に
+// 貼り直しへつなげていたので、列数もタイル高も変わっていないのに DOM を丸ごと
+// 張り替えていた（画像の再読み込み・スクロールのカクつきの原因）。いまは
+// #spacer を監視し（高さが変わるのは updateLayout が書いたときだけ）、onResize
+// も列数かタイル高が変わったときにしか貼り直しを強制しない。
 //
 // 「貼り付け済みのタイルに印を付け、スクロール後も残っているか」では
 // この不具合を検出できない。印を付けられるのは貼り替えが落ち着いた後で、
-// その後の小さなスクロールは貼り付け範囲を変えないため、
-// ResizeObserver のフィードバックループの入口に届かないから（実測）。
-// ここでは MutationObserver で #window の作り直し回数そのものを数える。
+// その後の小さなスクロールは貼り付け範囲を変えないため、余計な貼り替えの
+// 経路に届かないから（実測）。ここでは MutationObserver で #window の作り直し
+// 回数そのものを数える。
 func TestNoRepaintOnPlainScroll(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
@@ -975,13 +979,13 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 	// 捕まえたければ、data-i の書き戻し（render の最後で必ず起きる）を
 	// attributeFilter で観測する形に変える必要がある。
 	// 絶対回数ではなく「前後の差」を見るので、下の合体（後述）の影響を受けない。
-	// ガードが無いときの余分な貼り替えは ResizeObserver 経由で、
+	// 余計な貼り替えは ResizeObserver から onResize を経て起きるもので、
 	// レンダリングのステップ境界を跨いで別のコールバックとして配送されるため、
 	// 合体して1回に潰れることがない。
 	require.Equalf(t, afterScroll+1, afterPlain,
 		"a one-row scroll repainted the DOM even though the content to paste did not change: "+
 			"before=%d after=%d want=%d (paste start %d->%d). "+
-			"The onResize guard that does nothing while columns and tile height are unchanged looks ineffective",
+			"onResize looks like it forces a repaint even though the column count and tile height are unchanged",
 		afterScroll, afterPlain, afterScroll+1, pastedBefore, pastedAfter)
 
 	// こちらは主検出器ではなく、貼り替えの暴走を捕まえるためのゆるい健全性
