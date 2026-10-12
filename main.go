@@ -106,7 +106,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Warn("authentication is off, anyone who can reach this address can see the media")
 	}
 
-	gallery, err := web.NewGallery(st, thumbs, auth, log)
+	handler, err := web.NewHandler(st, thumbs, auth, log)
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// いつまでも保持するので、細い接続を並べるだけで待ち受けを埋められる。
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           gallery.Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 	go func() {

@@ -322,8 +322,8 @@ docker logs <container> | head -1
 
 ## Browser tests
 
-There are tests that exercise `internal/web/static/app.js` (virtual scrolling, the per-day
-layout calculation, the lightbox and the date scrubber) by actually running it in headless
+There are tests that exercise the JavaScript under `internal/web/static/` (virtual scrolling,
+the per-day layout calculation, the lightbox and the date scrubber) by actually running it in headless
 Chrome inside a Docker container. They carry `//go:build browser`, so a plain `go test ./...`
 does not include them.
 

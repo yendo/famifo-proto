@@ -5,6 +5,7 @@ package web_test
 import (
 	"context"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -83,11 +84,11 @@ func newAuthFixtureWith(t *testing.T, prov *fakeProvider, secure bool) *authFixt
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sessions.Close() })
 
-	gallery, err := web.NewGallery(st, thumbs,
+	h, err := web.NewHandler(st, thumbs,
 		web.NewAuth(prov, sessions, "https://famifo.example.invalid", log),
 		log)
 	require.NoError(t, err)
-	return &authFixture{h: gallery.Handler(), prov: prov}
+	return &authFixture{h: h, prov: prov}
 }
 
 func get(t *testing.T, h http.Handler, path string, cookies ...*http.Cookie) *http.Response {
@@ -161,7 +162,7 @@ func TestPagesRedirectToLoginWhenNotSignedIn(t *testing.T) {
 func TestDataPathsReturn401WhenNotSignedIn(t *testing.T) {
 	f := newAuthFixture(t)
 
-	for _, path := range []string{"/tiles?offset=0&limit=1", "/thumb/abc", "/file/abc"} {
+	for _, path := range []string{"/tiles?chunk=0", "/thumb/abc", "/full/abc"} {
 		resp := get(t, f.h, path)
 		require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "path %s", path)
 	}
@@ -401,8 +402,10 @@ func TestSignedOutRendersWithoutASession(t *testing.T) {
 	// ログイン画面側でもサインアウトが要る旨と、DSMを条件付きで名指しする
 	// 案内が消えないことを固定する。famifoは特定のIdPに依存しないので、
 	// DSMは「使っている場合」の条件としてのみ出てよい。
-	require.Contains(t, body, "also sign out on the login screen you originally used")
-	require.Contains(t, body, "if that's DSM, sign out of DSM")
+	// 文言は表示される文字で比べる。テンプレートが ' を &#39; にエスケープする。
+	text := html.UnescapeString(body)
+	require.Contains(t, text, "also sign out on the login screen you originally used")
+	require.Contains(t, text, "if that's DSM, sign out of DSM")
 	// 認証の内側を通らないページにもCSSが当たる。
 	require.Contains(t, body, `href="/static/app.css"`)
 }
@@ -466,10 +469,10 @@ func TestWithoutAuthEverythingIsOpen(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	thumbs, err := thumb.NewProvider(dir + "/thumbs")
 	require.NoError(t, err)
-	gallery, err := web.NewGallery(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, err := web.NewHandler(st, thumbs, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 
-	resp := get(t, gallery.Handler(), "/")
+	resp := get(t, h, "/")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NotContains(t, bodyOf(t, resp), "/logout", "the logout button must not be shown")
 }

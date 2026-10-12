@@ -7,7 +7,7 @@
 // 一切通さない。したがって Provider インターフェース、Params がセッションを
 // 往復すること、Identity.Subject がセッションのpayloadになることは、これまで
 // どこにもテストされていなかった。このファイルは、本物の oidc.Client を
-// 本物の web.Gallery に対して動かし、ブラウザで実際にリダイレクトを辿らせて
+// 本物の web.NewHandler に対して動かし、ブラウザで実際にリダイレクトを辿らせて
 // その境目を通す。
 package web_test
 
@@ -146,8 +146,8 @@ func writeOIDCJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// newOIDCTestApp は偽のIdPに対して本物のoidc.Clientとweb.Galleryを組み立て、
-// famifoのURLを返す。web.NewGalleryがredirect_uriとしてfamifo自身のURLを必要と
+// newOIDCTestApp は偽のIdPに対して本物のoidc.Clientとweb.NewHandlerを組み立て、
+// famifoのURLを返す。web.NewHandlerがredirect_uriとしてfamifo自身のURLを必要と
 // するため、httptest.NewServerでハンドラを渡す前にポートを確保しておく
 // （net.Listenで先にポートを取り、httptest.NewUnstartedServerへ差し込む）。
 func newOIDCTestApp(t *testing.T) (famifoURL string) {
@@ -183,10 +183,10 @@ func newOIDCTestApp(t *testing.T) (famifoURL string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sessions.Close() })
 
-	gallery, err := web.NewGallery(st, thumbs, web.NewAuth(client, sessions, "", log), log)
+	h, err := web.NewHandler(st, thumbs, web.NewAuth(client, sessions, "", log), log)
 	require.NoError(t, err)
 
-	ts := httptest.NewUnstartedServer(gallery.Handler())
+	ts := httptest.NewUnstartedServer(h)
 	_ = ts.Listener.Close()
 	ts.Listener = l
 	ts.Start()
@@ -208,7 +208,7 @@ func TestOIDCRoundTripReachesTheGallery(t *testing.T) {
 
 	require.NoError(t, chromedp.Run(rctx,
 		chromedp.Navigate(famifoURL+"/"),
-		waitForTiles(10*time.Second),
+		waitForGallery(10*time.Second),
 	))
 
 	var loc string

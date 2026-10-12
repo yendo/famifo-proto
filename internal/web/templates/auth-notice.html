@@ -1,0 +1,20 @@
+{{define "auth-notice"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{.Title}} - famifo</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="notice-page">
+{{/* 見出しの famifo はリンクにしない。サインアウトのあとに / へ行くと、IdP側の
+     セッションが生きていれば何も聞かれずにサインインし直してしまう。 */}}
+<main class="notice">
+  <h1>famifo</h1>
+  <h2>{{.Title}}</h2>
+  {{range .Paragraphs}}<p>{{.}}</p>
+  {{end}}<a class="notice-action" href="{{.LinkURL}}">{{.LinkText}}</a>
+</main>
+</body>
+</html>
+{{end}}
