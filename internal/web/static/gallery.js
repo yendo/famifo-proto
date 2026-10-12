@@ -265,7 +265,7 @@ export const gallery = (() => {
 		const firstChunk = Math.floor(from / chunkSize);
 		const lastChunk = Math.floor((to - 1) / chunkSize);
 
-		// 可視範囲の前後1塊も先読みしておく。切り出す範囲は広げない。
+		// 切り取った範囲の前後1塊も先読みしておく。切り出す範囲は広げない。
 		const fetchFrom = Math.max(0, firstChunk - 1);
 		const fetchTo = Math.min(
 			Math.floor((total - 1) / chunkSize),
@@ -284,8 +284,7 @@ export const gallery = (() => {
 			if (!chunks.has(ci)) return;
 		}
 
-		// 貼る内容が前回と同じなら触らない。スクロールのたびに innerHTML を
-		// 書き換えると画像の再読み込みが起きる。
+		// 貼る内容が前回と同じなら、HTMLの組み立ても差分の計算も省く。
 		const key = `${from}:${to}:${L.cols}`;
 		if (key === renderedKey) return;
 
@@ -339,7 +338,7 @@ export const gallery = (() => {
 		// 段の途中から貼るとき（大きい日をスクロールしている最中）はラベルを落とす
 		const head = tileAt(from);
 		const label =
-			range.firstRow > 0 || !head
+			range.firstRow > 0
 				? ""
 				: `<div class="daylabel">${formatDay(head.date)}</div>`;
 		return (
