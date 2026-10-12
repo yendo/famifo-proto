@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2300,4 +2301,67 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Empty(t, got.Src)
+}
+
+// --- Task: TestFailedChunkFetchIsRetried ---
+
+// 取得に失敗した塊を、スクロールを待たずに取り直すこと。
+//
+// render() が呼ばれるのはスクロールとリサイズのときだけなので、失敗を握り
+// つぶしたままだと、手を止めている間その範囲は空白のまま残る。ここでは
+// 各塊の1回目の /tiles だけを 500 で落とし、深い位置へ飛んだあとは何も
+// 操作せずに、着いた先の写真が貼られるのを待つ。
+// failedFetchDelay は落とす /tiles を返すまでの時間。
+const failedFetchDelay = 500 * time.Millisecond
+
+func TestFailedChunkFetchIsRetried(t *testing.T) {
+	requireBrowser(t)
+
+	h := newManyMediaHandler(t)
+	var mu sync.Mutex
+	failed := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/tiles" {
+			chunk := r.URL.Query().Get("chunk")
+			mu.Lock()
+			first := !failed[chunk]
+			failed[chunk] = true
+			mu.Unlock()
+			if first {
+				// すぐに落とすと、jumpTo の直後に scroll イベントで走る render が
+				// 失敗の後に来て取り直してしまい、取り直しの仕組みが無くても通る
+				// （実測）。失敗を返すのを遅らせ、自然に走る render がすべて
+				// 取得中のうちに済むようにする。
+				time.Sleep(failedFetchDelay)
+				http.Error(w, "flaky", http.StatusInternalServerError)
+				return
+			}
+		}
+		h.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx := newTab(t)
+	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	const target = manyMediaCount / 2
+	require.NoError(t, chromedp.Run(rctx,
+		chromedp.EmulateViewport(800, 600),
+		chromedp.Navigate(srv.URL),
+		waitForGallery(30*time.Second),
+		chromedp.Evaluate(scrollToIndexJS(target), nil),
+	))
+
+	pollErr := chromedp.Run(rctx, chromedp.Poll(
+		fmt.Sprintf(`document.querySelector('#window .tile[data-i="%d"]') !== null`, target),
+		nil, chromedp.WithPollingTimeout(15*time.Second)))
+
+	mu.Lock()
+	failures := len(failed)
+	mu.Unlock()
+	require.NotZero(t, failures, "no /tiles request failed, so the premise of this test does not hold")
+	require.NoErrorf(t, pollErr,
+		"item %d was never pasted after the first fetch of each chunk failed (%d chunks failed once). "+
+			"A failed fetch is not retried until the next scroll", target, failures)
 }

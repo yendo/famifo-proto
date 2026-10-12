@@ -55,6 +55,7 @@ export const gallery = (() => {
 	const daysEl = document.querySelector("#daygroups");
 	const days = daysEl ? JSON.parse(daysEl.textContent) : [];
 	const OVERSCAN_ROWS = 4; // 可視範囲の上下に余分に描く行数
+	const RETRY_MS = 3000; // 取得に失敗した塊を取り直すまでの待ち時間
 
 	// スクロールしているのは #gallery ではなく文書全体。
 	// ライトボックスの body.locked { overflow: hidden } もこれを前提にしている。
@@ -272,11 +273,17 @@ export const gallery = (() => {
 			lastChunk + 1,
 		);
 		abandonChunksOutside(fetchFrom, fetchTo);
+		// 失敗した取得は少し待って描き直す。render が呼ばれるのはスクロールと
+		// リサイズのときだけなので、そうしないと手を止めている間は空白のまま残る。
+		// 描き直しはその時点で要る塊だけを取りに行くので、範囲から外れた塊は
+		// 取り直さない。こちらが中断した取得（AbortError）は取り直さない。
 		for (let ci = fetchFrom; ci <= fetchTo; ci++) {
 			if (!chunks.has(ci))
 				fetchChunk(ci)
 					.then(render)
-					.catch(() => {});
+					.catch((e) => {
+						if (e.name !== "AbortError") setTimeout(render, RETRY_MS);
+					});
 		}
 
 		// 必要な塊が1つでも欠けていると穴の空いたカードになるので、揃うまで描かない
