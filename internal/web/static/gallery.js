@@ -53,18 +53,6 @@ export const gallery = (() => {
 	let spacerTop = 0; // #spacer の文書上のオフセット。レイアウト座標との差
 	let renderedKey = ""; // 「どのチャンクを何個貼ったか」。同じなら描き直さない
 
-	// レイアウトのy座標は #spacer の上端が0。文書のスクロール位置とは、
-	// 上部バー（sticky でも流れの中で場所を占める）とギャラリーの余白の
-	// ぶんだけずれる。変換はこの2つに集約する。
-	/** @param {number} docY */
-	function toLayoutY(docY) {
-		return docY - spacerTop;
-	}
-	/** @param {number} layoutY */
-	function toDocY(layoutY) {
-		return layoutY + spacerTop;
-	}
-
 	// 列数・列幅・gap・ラベル高はCSSの計算結果から読む。auto-fill の計算を自前で
 	// 再現するとCSSのbreakpointと二重管理になる。ラベル高も定義はCSS側の1箇所だけ。
 	//
@@ -172,6 +160,49 @@ export const gallery = (() => {
 			tiles[k].dataset.i = String(from + k);
 	}
 
+	function onResize() {
+		// 回転やリサイズで列数が変わるとレイアウト全体の高さが変わるため、
+		// scrollTop をそのまま残すと別の写真の位置に飛ぶ。いま先頭に見えていた
+		// 写真の通し番号を、測り直す前のレイアウトで求めておいて復元する。
+		const prev = L;
+		const topIndex = topIndexOnScreen();
+
+		updateLayout();
+
+		// 列数もタイル高も変わっていなければ、位置の復元も貼り直しの強制も
+		// 要らない。ただし高さだけが伸びた場合は見える範囲が広がるので、
+		// 描き直し（render）はどちらの場合も呼ぶ。
+		if (!prev || !L || prev.cols !== L.cols || prev.tileH !== L.tileH) {
+			renderedKey = ""; // 列数が変われば貼り直しが必要
+			if (L && L.height > 0) {
+				// yForIndex が返すのはレイアウト座標。scrollTop は文書座標なので戻す。
+				scroller.scrollTop = toDocY(yForIndex(L, topIndex));
+			}
+		}
+		render();
+	}
+
+	// jumpTo は通し番号の写真が見える位置までスクロールする。写真ごとのURLで
+	// 開かれたときに、背後の一覧をその写真の位置に合わせるために使う。
+	/** @param {number} i */
+	function jumpTo(i) {
+		if (!L || L.height <= 0) return;
+		scroller.scrollTop = toDocY(yForIndex(L, i));
+		render();
+	}
+
+	// レイアウトのy座標は #spacer の上端が0。文書のスクロール位置とは、
+	// 上部バー（sticky でも流れの中で場所を占める）とギャラリーの余白の
+	// ぶんだけずれる。変換はこの2つに集約する。
+	/** @param {number} docY */
+	function toLayoutY(docY) {
+		return docY - spacerTop;
+	}
+	/** @param {number} layoutY */
+	function toDocY(layoutY) {
+		return layoutY + spacerTop;
+	}
+
 	// 1枚のカード。占める列数はレイアウトが決め、ラベルの文言はタイル自身の
 	// data-date から作る。DayGroups が古くても、ラベルはそのカードに実際に
 	// 写っている日を指す。
@@ -211,37 +242,6 @@ export const gallery = (() => {
 		const [y, m, day] = d.split("-");
 		const head = Number(y) === new Date().getFullYear() ? "" : `${y}年`;
 		return `${head}${Number(m)}月${Number(day)}日`;
-	}
-
-	// jumpTo は通し番号の写真が見える位置までスクロールする。写真ごとのURLで
-	// 開かれたときに、背後の一覧をその写真の位置に合わせるために使う。
-	/** @param {number} i */
-	function jumpTo(i) {
-		if (!L || L.height <= 0) return;
-		scroller.scrollTop = toDocY(yForIndex(L, i));
-		render();
-	}
-
-	function onResize() {
-		// 回転やリサイズで列数が変わるとレイアウト全体の高さが変わるため、
-		// scrollTop をそのまま残すと別の写真の位置に飛ぶ。いま先頭に見えていた
-		// 写真の通し番号を、測り直す前のレイアウトで求めておいて復元する。
-		const prev = L;
-		const topIndex = topIndexOnScreen();
-
-		updateLayout();
-
-		// 列数もタイル高も変わっていなければ、位置の復元も貼り直しの強制も
-		// 要らない。ただし高さだけが伸びた場合は見える範囲が広がるので、
-		// 描き直し（render）はどちらの場合も呼ぶ。
-		if (!prev || !L || prev.cols !== L.cols || prev.tileH !== L.tileH) {
-			renderedKey = ""; // 列数が変われば貼り直しが必要
-			if (L && L.height > 0) {
-				// yForIndex が返すのはレイアウト座標。scrollTop は文書座標なので戻す。
-				scroller.scrollTop = toDocY(yForIndex(L, topIndex));
-			}
-		}
-		render();
 	}
 
 	// いま画面の上端にある写真の通し番号。レイアウトが無ければ0。
