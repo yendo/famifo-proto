@@ -107,15 +107,19 @@ body.locked {
 	right: 0;
 	top: 0;
 }
-/* 列数を測るためだけの空のグリッド。#window から測ると、直前のレイアウトの
-   カードが持つ grid-column: span N がトラック列を押し広げてしまい、本当の
-   列数が読めない。子を持たないこの要素なら中身に左右されない。 */
+/* レイアウトの寸法（列数・列幅・gap・ラベル高）を測るためだけの空のグリッド。
+   #window から測ると、直前のレイアウトのカードが持つ grid-column: span N が
+   トラック列を押し広げてしまい、本当の列数が読めない。子を持たないこの要素
+   なら中身に左右されない。
+   ラベル高は padding-top に写して読む。custom property は書いたままの文字列
+   で返るが、padding の計算値は rem や calc() でも px に解決される。 */
 #layoutprobe {
 	position: absolute;
 	left: 0;
 	right: 0;
 	top: 0;
 	height: 0;
+	padding-top: var(--label-h);
 	visibility: hidden;
 }
 #window,

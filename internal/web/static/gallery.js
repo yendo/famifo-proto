@@ -112,8 +112,8 @@ export const gallery = (() => {
 		return layoutY + spacerTop;
 	}
 
-	// 列数・列幅・gap はCSSの計算結果から読む。auto-fill の計算を自前で再現すると
-	// CSSのbreakpointと二重管理になる。ラベル高も定義はCSS側の1箇所だけ。
+	// 列数・列幅・gap・ラベル高はCSSの計算結果から読む。auto-fill の計算を自前で
+	// 再現するとCSSのbreakpointと二重管理になる。ラベル高も定義はCSS側の1箇所だけ。
 	//
 	// #window ではなく #layoutprobe（子を持たない空のグリッド）から測る。#window
 	// には直前のレイアウトのカードが残っており、そのカードの grid-column:
@@ -135,12 +135,7 @@ export const gallery = (() => {
 			return;
 		}
 		const gap = parseFloat(cs.rowGap) || 0;
-		const labelH =
-			parseFloat(
-				getComputedStyle(document.documentElement).getPropertyValue(
-					"--label-h",
-				),
-			) || 0;
+		const labelH = parseFloat(cs.paddingTop) || 0; // --label-h を写したもの（app.css）
 
 		L = layout(days, cols, tileW, labelH, gap); // タイルは正方形なので幅がそのまま高さ
 		spacer.style.height = `${L.height}px`;
