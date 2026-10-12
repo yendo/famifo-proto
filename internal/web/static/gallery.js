@@ -54,6 +54,9 @@ export const gallery = (() => {
 	// 写真ごとのURL(/item/<id>)で開かれたとき、サーバーが埋めた「開く写真の
 	// 通し番号」。閉じたまま開く場合は -1。
 	const openIndex = Number(root.dataset.open);
+	// DayGroups は初回HTMLに埋め込まれている。これが無いと1枚も描けない。
+	const daysEl = document.querySelector("#daygroups");
+	const days = daysEl ? JSON.parse(daysEl.textContent) : [];
 	const OVERSCAN_ROWS = 4; // 可視範囲の上下に余分に描く行数
 
 	// スクロールしているのは #gallery ではなく文書全体。
@@ -112,10 +115,6 @@ export const gallery = (() => {
 	function toDocY(layoutY) {
 		return layoutY + spacerTop;
 	}
-
-	// DayGroups は初回HTMLに埋め込まれている。これが無いと1枚も描けない。
-	const daysEl = document.querySelector("#daygroups");
-	const days = daysEl ? JSON.parse(daysEl.textContent) : [];
 
 	// 列数・列幅・gap はCSSの計算結果から読む。auto-fill の計算を自前で再現すると
 	// CSSのbreakpointと二重管理になる。ラベル高も定義はCSS側の1箇所だけ。
