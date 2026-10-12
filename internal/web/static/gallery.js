@@ -171,7 +171,7 @@ export const gallery = (() => {
 				location.reload();
 				return new Promise(() => {}); // 再読み込みまで呼び出し側を待たせる
 			}
-			if (!res.ok) throw new Error(`items ${res.status}`);
+			if (!res.ok) throw new Error(`tiles ${res.status}`);
 			const html = await res.text();
 			const tiles = parseTiles(html);
 			chunks.set(ci, tiles);
