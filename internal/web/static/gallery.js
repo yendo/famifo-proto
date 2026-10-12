@@ -49,11 +49,11 @@ export const gallery = (() => {
 	const probe = document.querySelector("#colprobe");
 	if (!root || !spacer || !win || !probe) return null;
 
-	const total = Number(root.dataset.total || 0);
-	const chunkSize = Number(root.dataset.chunk || 60);
+	const total = Number(root.dataset.total);
+	const chunkSize = Number(root.dataset.chunk);
 	// 写真ごとのURL(/item/<id>)で開かれたとき、サーバーが埋めた「開く写真の
 	// 通し番号」。閉じたまま開く場合は -1。
-	const openIndex = Number(root.dataset.open ?? -1);
+	const openIndex = Number(root.dataset.open);
 	const OVERSCAN_ROWS = 4; // 可視範囲の上下に余分に描く行数
 
 	// スクロールしているのは #gallery ではなく文書全体。
