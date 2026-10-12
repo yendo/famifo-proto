@@ -225,22 +225,9 @@ export const gallery = (() => {
 	function onResize() {
 		// 回転やリサイズで列数が変わるとレイアウト全体の高さが変わるため、
 		// scrollTop をそのまま残すと別の写真の位置に飛ぶ。いま先頭に見えていた
-		// 写真の通し番号を保持して復元する。
-		//
-		// アンカーに貼ってある範囲の先頭は使わない。そこは OVERSCAN のぶん
-		// 画面外まで含んでいるので、復元すると毎回4行ぶん手前に着地する。
-		// オーバースキャン抜きの、いま実際に画面上端にある写真を取る。
+		// 写真の通し番号を、測り直す前のレイアウトで求めておいて復元する。
 		const prev = L;
-		const prevTop = spacerTop; // updateLayout() で測り直される前の値
-		// 高さ0の窓で問い合わせると、ストライプ間の隙間(gap)にちょうど当たった
-		// ときに空振りして null が返り、アンカーが先頭に落ちる。1行ぶんの高さを
-		// 持たせて、必ずどこかのストライプに当てる。隙間に当たった場合は次の
-		// ストライプが返るが、そこが実際に最初に見える内容なので正しい。
-		const anchorY = scroller.scrollTop - prevTop;
-		const at = prev
-			? windowAt(prev, anchorY, anchorY + prev.tileH + prev.gap)
-			: null;
-		const topIndex = at ? at.from : 0;
+		const topIndex = topIndexOnScreen();
 
 		updateLayout();
 
@@ -257,6 +244,22 @@ export const gallery = (() => {
 			}
 		}
 		render();
+	}
+
+	// いま画面の上端にある写真の通し番号。レイアウトが無ければ0。
+	//
+	// 貼ってある範囲の先頭は使わない。そこは OVERSCAN のぶん画面外まで
+	// 含んでいるので、復元すると毎回4行ぶん手前に着地する。
+	//
+	// 高さ0の窓で問い合わせると、ストライプ間の隙間(gap)にちょうど当たった
+	// ときに空振りして null が返り、先頭に落ちる。1行ぶんの高さを持たせて、
+	// 必ずどこかのストライプに当てる。隙間に当たった場合は次のストライプが
+	// 返るが、そこが実際に最初に見える内容なので正しい。
+	function topIndexOnScreen() {
+		if (!L) return 0;
+		const top = toLayoutY(scroller.scrollTop);
+		const at = windowAt(L, top, top + L.tileH + L.gap);
+		return at ? at.from : 0;
 	}
 
 	updateLayout();
