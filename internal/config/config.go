@@ -53,18 +53,17 @@ func (c Config) Validate() error {
 			return fmt.Errorf("-dir is not a directory: %s", dir)
 		}
 		// 同じルートを2回走査しても無駄なだけ。入れ子は同じファイルを2回
-		// 走査し、サムネイルを2回作る。
-		for _, other := range c.MediaDirs[i+1:] {
-			nested, err := dirContains(dir, other)
+		// 走査し、サムネイルを2回作る。自分以外の全部と比べるので、
+		// 逆向きの包含は相手の番で見つかる。
+		for j, other := range c.MediaDirs {
+			if i == j {
+				continue
+			}
+			inside, err := dirContains(dir, other)
 			if err != nil {
 				return fmt.Errorf("cannot resolve -dir: %w", err)
 			}
-			if !nested {
-				if nested, err = dirContains(other, dir); err != nil {
-					return fmt.Errorf("cannot resolve -dir: %w", err)
-				}
-			}
-			if nested {
+			if inside {
 				return fmt.Errorf("-dir entries are duplicated or nested: %s and %s", dir, other)
 			}
 		}
