@@ -26,20 +26,105 @@ import { gallery } from "./gallery.js";
 	const SWIPE_X = 50; // 左右送りとみなす最小移動量(px)
 	const SWIPE_Y = 80; // 下スワイプで閉じる最小移動量(px)
 
-	// stopVideo は再生を止めて読み込みも捨てる。src を外すだけではブラウザが
-	// 取得を続けるので load() まで呼ぶ。これを忘れると、次の写真を開いても
-	// 前の動画の音が鳴り続け、裏でダウンロードも走り続ける。
-	function stopVideo() {
-		vid.pause();
-		vid.removeAttribute("src");
-		vid.load();
-	}
-
 	let idx = -1;
 	let requestSeq = 0; // 連続スワイプで古いloadTileの解決が新しいものを上書きしないための世代番号
 	// 自分で積んだ履歴エントリの上にいるか。写真のURLを直接開いた場合は積んで
 	// いないので、閉じるときに戻る先が無い。
 	let pushed = false;
+	let startX = 0;
+	let startY = 0;
+	let tracking = false;
+
+	/** @param {PopStateEvent} e */
+	function onPopState(e) {
+		const i = e.state?.i;
+		if (Number.isInteger(i)) {
+			// 「進む」で写真のエントリに戻ってきた場合。
+			pushed = true;
+			open(i, "none").catch(() => {});
+			return;
+		}
+		if (!box.hidden) close();
+	}
+
+	/** @param {MouseEvent} e */
+	function onTileClick(e) {
+		/** @type {HTMLElement | null} */
+		const tile = /** @type {Element} */ (e.target).closest("#window .tile");
+		if (!tile) return;
+		e.preventDefault();
+		const i = Number(tile.dataset.i);
+		if (!Number.isInteger(i)) return; // 通し番号が無いタイルは無視する。
+		// NaN は i < 0 も i >= total も満たさず、
+		// chunk=NaN のリクエストまで素通りする
+		open(i, "push").catch(() => {});
+	}
+
+	// 再生できない形式（HEVCを出せない端末）では要素は作られたまま失敗し、画面が
+	// 真っ黒になる。何が起きたのか分かるように文を出す。
+	function onVideoError() {
+		if (!vid.hidden) errBox.hidden = false;
+	}
+
+	/** @param {MouseEvent} e */
+	function onBoxClick(e) {
+		// 再生コントロールの操作を、閉じる動作と取り違えない
+		if (/** @type {Element} */ (e.target).closest("video")) return;
+		if (/** @type {Element} */ (e.target).closest(".lb-prev")) {
+			show(idx - 1, "replace");
+			return;
+		}
+		if (/** @type {Element} */ (e.target).closest(".lb-next")) {
+			show(idx + 1, "replace");
+			return;
+		}
+		requestClose();
+	}
+
+	/** @param {KeyboardEvent} e */
+	function onKeyDown(e) {
+		if (box.hidden) return;
+		if (e.key === "Escape") requestClose();
+		else if (e.key === "ArrowRight") show(idx + 1, "replace");
+		else if (e.key === "ArrowLeft") show(idx - 1, "replace");
+	}
+
+	/** @param {TouchEvent} e */
+	function onTouchStart(e) {
+		// 2本指はピンチズーム。ブラウザに任せる
+		tracking = e.touches.length === 1;
+		// シークバーのドラッグを左右スワイプと取り違えない
+		if (/** @type {Element} */ (e.target).closest("video")) tracking = false;
+		if (!tracking) return;
+		startX = e.touches[0].clientX;
+		startY = e.touches[0].clientY;
+	}
+
+	/** @param {TouchEvent} e */
+	function onTouchEnd(e) {
+		if (!tracking) return;
+		tracking = false;
+		const t = e.changedTouches[0];
+		const dx = t.clientX - startX;
+		const dy = t.clientY - startY;
+
+		if (Math.abs(dx) > SWIPE_X && Math.abs(dx) > Math.abs(dy)) {
+			show(dx < 0 ? idx + 1 : idx - 1, "replace");
+		} else if (dy > SWIPE_Y && Math.abs(dy) > Math.abs(dx)) {
+			requestClose();
+		}
+	}
+
+	/**
+	 * @param {number} i
+	 * @param {"push" | "replace" | "none"} mode
+	 */
+	async function open(i, mode) {
+		await show(i, mode);
+		if (idx < 0) return;
+		box.hidden = false;
+		document.body.classList.add("locked");
+	}
 
 	// mode は履歴の扱い。"push" は新しいエントリを積む（一覧から開いたとき）、
 	// "replace" はいまのエントリのURLだけ差し替える（送りと、写真のURLで
@@ -82,15 +167,13 @@ import { gallery } from "./gallery.js";
 		chunks.prefetch(i - 1);
 	}
 
-	/**
-	 * @param {number} i
-	 * @param {"push" | "replace" | "none"} mode
-	 */
-	async function open(i, mode) {
-		await show(i, mode);
-		if (idx < 0) return;
-		box.hidden = false;
-		document.body.classList.add("locked");
+	// stopVideo は再生を止めて読み込みも捨てる。src を外すだけではブラウザが
+	// 取得を続けるので load() まで呼ぶ。これを忘れると、次の写真を開いても
+	// 前の動画の音が鳴り続け、裏でダウンロードも走り続ける。
+	function stopVideo() {
+		vid.pause();
+		vid.removeAttribute("src");
+		vid.load();
 	}
 
 	// close は閉じるだけで履歴には触らない。呼ぶのは popstate と、戻る先を
@@ -120,91 +203,13 @@ import { gallery } from "./gallery.js";
 		close();
 	}
 
-	window.addEventListener("popstate", (e) => {
-		const i = e.state?.i;
-		if (Number.isInteger(i)) {
-			// 「進む」で写真のエントリに戻ってきた場合。
-			pushed = true;
-			open(i, "none").catch(() => {});
-			return;
-		}
-		if (!box.hidden) close();
-	});
-
-	document.addEventListener("click", (e) => {
-		/** @type {HTMLElement | null} */
-		const tile = /** @type {Element} */ (e.target).closest("#window .tile");
-		if (!tile) return;
-		e.preventDefault();
-		const i = Number(tile.dataset.i);
-		if (!Number.isInteger(i)) return; // 通し番号が無いタイルは無視する。
-		// NaN は i < 0 も i >= total も満たさず、
-		// chunk=NaN のリクエストまで素通りする
-		open(i, "push").catch(() => {});
-	});
-
-	// 再生できない形式（HEVCを出せない端末）では要素は作られたまま失敗し、画面が
-	// 真っ黒になる。何が起きたのか分かるように文を出す。
-	vid.addEventListener("error", () => {
-		if (!vid.hidden) errBox.hidden = false;
-	});
-
-	box.addEventListener("click", (e) => {
-		// 再生コントロールの操作を、閉じる動作と取り違えない
-		if (/** @type {Element} */ (e.target).closest("video")) return;
-		if (/** @type {Element} */ (e.target).closest(".lb-prev")) {
-			show(idx - 1, "replace");
-			return;
-		}
-		if (/** @type {Element} */ (e.target).closest(".lb-next")) {
-			show(idx + 1, "replace");
-			return;
-		}
-		requestClose();
-	});
-
-	document.addEventListener("keydown", (e) => {
-		if (box.hidden) return;
-		if (e.key === "Escape") requestClose();
-		else if (e.key === "ArrowRight") show(idx + 1, "replace");
-		else if (e.key === "ArrowLeft") show(idx - 1, "replace");
-	});
-
-	let startX = 0;
-	let startY = 0;
-	let tracking = false;
-
-	box.addEventListener(
-		"touchstart",
-		(e) => {
-			// 2本指はピンチズーム。ブラウザに任せる
-			tracking = e.touches.length === 1;
-			// シークバーのドラッグを左右スワイプと取り違えない
-			if (/** @type {Element} */ (e.target).closest("video")) tracking = false;
-			if (!tracking) return;
-			startX = e.touches[0].clientX;
-			startY = e.touches[0].clientY;
-		},
-		{ passive: true },
-	);
-
-	box.addEventListener(
-		"touchend",
-		(e) => {
-			if (!tracking) return;
-			tracking = false;
-			const t = e.changedTouches[0];
-			const dx = t.clientX - startX;
-			const dy = t.clientY - startY;
-
-			if (Math.abs(dx) > SWIPE_X && Math.abs(dx) > Math.abs(dy)) {
-				show(dx < 0 ? idx + 1 : idx - 1, "replace");
-			} else if (dy > SWIPE_Y && Math.abs(dy) > Math.abs(dx)) {
-				requestClose();
-			}
-		},
-		{ passive: true },
-	);
+	window.addEventListener("popstate", onPopState);
+	document.addEventListener("click", onTileClick);
+	vid.addEventListener("error", onVideoError);
+	box.addEventListener("click", onBoxClick);
+	document.addEventListener("keydown", onKeyDown);
+	box.addEventListener("touchstart", onTouchStart, { passive: true });
+	box.addEventListener("touchend", onTouchEnd, { passive: true });
 
 	// 写真ごとのURLで開かれた場合。サーバーが通し番号を埋めているので、背後の
 	// 一覧をその位置に合わせてから開く。閉じたときにその写真の場所が見える。
