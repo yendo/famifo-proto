@@ -25,6 +25,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Get Go version
+        id: go
+        run: echo "version=$(sed -n 's/^go //p' go.mod)" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -51,6 +55,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          build-args: GO_VERSION=${{ steps.go.outputs.version }}
           push: ${{ github.ref == 'refs/heads/main' }}
           provenance: false
           tags: ${{ steps.meta.outputs.tags }}

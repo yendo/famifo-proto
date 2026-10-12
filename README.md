@@ -232,11 +232,10 @@ The image is built `FROM scratch` around the static binary — 15MB, no runtime
 dependencies.
 
 ```bash
-docker build -t famifo .
+make build-image
 ```
 
-`.git` is part of the build context, so `go build` stamps the version by itself —
-nothing has to be passed in.
+`.git` is part of the build context, so `go build` stamps the version by itself.
 
 ### Running it
 
