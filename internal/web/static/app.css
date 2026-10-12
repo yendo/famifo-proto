@@ -94,6 +94,10 @@ body.locked {
 /* 全枚数分の高さを持つ箱。ブラウザのスクロールバーはこれを見る */
 #spacer {
 	position: relative;
+	/* スクロール位置は JS がレイアウト座標から決める。Chrome のスクロール
+	   アンカーを効かせると、リロード時に初回HTMLにある同じ id のタイルや
+	   カードを基準に復元され、別の位置へ飛ぶ。 */
+	overflow-anchor: none;
 }
 
 /* 可視範囲のタイルだけを並べる。位置は JS が translateY で動かす */
