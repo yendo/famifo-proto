@@ -131,7 +131,7 @@ export const gallery = (() => {
 		const cols = Math.max(1, tracks.length);
 		const tileW = parseFloat(tracks[0]);
 		if (!(tileW > 0)) {
-			L = null; // スタイル未適用。次の resize/scroll で測り直す
+			L = null; // スタイル未適用。次に onResize から呼ばれたときに測り直す
 			return;
 		}
 		const gap = parseFloat(cs.rowGap) || 0;
@@ -143,10 +143,8 @@ export const gallery = (() => {
 			) || 0;
 
 		L = layout(days, cols, tileW, labelH, gap); // タイルは正方形なので幅がそのまま高さ
-		spacer.style.height = `${Math.max(0, L.height)}px`;
-		// レイアウトのy座標は #spacer の上端が0。文書のスクロール位置とは、
-		// 上部バー（sticky でも流れの中で場所を占める）とギャラリーの余白の
-		// ぶんだけずれる。その差をここで1回だけ測る。
+		spacer.style.height = `${L.height}px`;
+		// toLayoutY / toDocY が使う、文書座標とレイアウト座標の差を測る。
 		spacerTop = spacer.getBoundingClientRect().top + scroller.scrollTop;
 	}
 
