@@ -27,7 +27,7 @@ securityHeaders (CSP, nosniff)
 routes (methods of Handler)                               web.go
   GET /{$}         handleIndex --+
   GET /item/{id}   handleItem  --+-> renderIndex -> buildIndexView -> tmpl "index"
-  GET /tiles       handleTiles ----> parseWindow -> buildTilesView -> tmpl "tiles"
+  GET /tiles       handleTiles ----> parseChunk -> listMedia -> JSON
   GET /thumb/{id}  handleThumb ----> lookupMedia -> thumb.Provider
                                                     or serveNoPreview
   GET /full/{id}   handleFull  ----> lookupMedia -> fullViewPath
@@ -37,14 +37,14 @@ routes (methods of Handler)                               web.go
 
 ```
 indexView                          view.go
-  +-- tilesView (embedded)
-  |     +-- []mediaView {ID, PageURL, ThumbURL, FullURL, Date, IsVideo}
   +-- Total, ChunkSize
   +-- DayGroups ([]dayGroup as JSON)
   +-- OpenIndex, AuthEnabled
 
-templates/index.html  {{define "index"}} -> {{template "tiles" .}}
-templates/tiles.html  {{define "tiles"}}
+[]mediaView (JSON from /tiles)     view.go
+  {id, pageUrl, fullUrl, thumbUrl, date, video}
+
+templates/index.html  {{define "index"}}
 ```
 
 ## Client (static/)
