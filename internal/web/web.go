@@ -4,6 +4,7 @@ package web
 
 import (
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -160,8 +161,8 @@ func (h *Handler) handleItem(w http.ResponseWriter, r *http.Request) {
 	h.renderIndex(w, r, rank)
 }
 
-// handleTiles は仮想スクロール用のHTML断片を返す。
-// 初回ページと同じテンプレートを使い、マークアップを1箇所に保つ。
+// handleTiles は仮想スクロール用に、1チャンク分の写真をJSONで返す。
+// マークアップはクライアントが組み立てる。
 //
 // 受け取るのはチャンクの番号だけで、1チャンクの枚数はサーバーが決める。クライアントが
 // 件数を指定できると、大きな値1つで全件を引いて描かせられる。
@@ -171,17 +172,16 @@ func (h *Handler) handleTiles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad chunk", http.StatusBadRequest)
 		return
 	}
-	tiles, err := h.buildTilesView(r, chunk*h.chunkSize, h.chunkSize)
+	tiles, err := h.listMedia(r, chunk*h.chunkSize, h.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "tiles", tiles); err != nil {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(tiles); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		h.log.Error("failed to render the tiles template", "err", err)
-		return
+		h.log.Error("failed to encode the tiles", "err", err)
 	}
 }
 

@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
@@ -485,14 +486,62 @@ const rectJS = `(() => {
 	return {Left:b.left, Top:b.top, Right:b.right, Bottom:b.bottom, Width:b.width, Height:b.height};
 })()`
 
+// --- Task: TestNoFlatGridBeforeCards ---
+//
+// 読み込みから最初のカードが描かれるまで、カードに入っていないタイルが
+// 描かれないこと。かつては初回HTMLに先頭のチャンクを平らなタイルの並びとして
+// 埋め込み、JSがカードに組み直していた。その間は、ほとんどのタイルが後で
+// 別の位置へ動く並びが見えており、実測でPC約70ms、スマホ相当で260〜370ms
+// 続いた（issue #61）。その間に押すと別の写真が開く。
+//
+// 見るのはフレームごとの状態なので、requestAnimationFrame で数える。
+// ページのスクリプトより先に動かすため、文書の生成時に差し込む。
+func TestNoFlatGridBeforeCards(t *testing.T) {
+	requireBrowser(t)
+	ctx := newTab(t)
+	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	// 最初のカードが現れたフレームで止まる。それまでに #window の直下に
+	// .tile があったフレームの数を __flatFrames に数える。
+	const countFlatFramesJS = `
+		window.__flatFrames = 0;
+		window.__cardSeen = false;
+		(function frame() {
+			if (document.querySelector('#window .daycard')) { window.__cardSeen = true; return; }
+			if (document.querySelector('#window > .tile')) window.__flatFrames++;
+			requestAnimationFrame(frame);
+		})();`
+
+	var res struct {
+		FlatFrames int  `json:"flatFrames"`
+		CardSeen   bool `json:"cardSeen"`
+	}
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1600, 900),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			_, err := page.AddScriptToEvaluateOnNewDocument(countFlatFramesJS).Do(ctx)
+			return err
+		}),
+		chromedp.Navigate(baseURL),
+		waitForGallery(10*time.Second),
+		chromedp.Poll(`window.__cardSeen`, nil, chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(`({ flatFrames: window.__flatFrames, cardSeen: window.__cardSeen })`, &res),
+	)
+	require.NoError(t, err)
+
+	require.True(t, res.CardSeen, "no day card was ever drawn")
+	require.Zerof(t, res.FlatFrames,
+		"tiles outside any day card were drawn in %d frames before the first card", res.FlatFrames)
+}
+
 // --- Task: TestInitialRenderFillsViewport ---
 //
 // 読み込み直後に、可視範囲が写真で埋まっているかを見る。
 //
-// 注意: サーバは index.html の中で最初の1チャンク（testChunkSize枚）を #window に
-// 直接描画して返す。そのため「タイルが存在する」「下端がビューポートを超える」
-// だけを見ると、gallery.js が一切動かなくても通ってしまう。仮想スクロールが
-// 実際に働いてチャンクを追加で貼ったこと（tileCount > testChunkSize）まで見る。
+// 1チャンク（testChunkSize枚）だけではこのビューポートを埋めきれない。
+// 「タイルが存在する」「下端がビューポートを超える」に加えて、仮想スクロールが
+// 2つ目以降のチャンクも取って貼ったこと（tileCount > testChunkSize）まで見る。
 func TestInitialRenderFillsViewport(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
@@ -557,10 +606,10 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 	require.NotZero(t, res.Cols, "could not read the column count")
 	require.Greater(t, res.RowH, 0.0, "could not read the row height")
 
-	// gallery.js が動いていなければ、#window にはサーバが埋めた1チャンクしか無い。
+	// 先頭のチャンクより先を取っていなければ、#window は1チャンクぶんで止まる。
 	require.NoErrorf(t, pollErr,
-		"the tile count in #window stays at %d. It is still the first chunk (%d tiles) the "+
-			"server filled in, so virtual scrolling is pasting no further chunks; gallery.js looks dead",
+		"the tile count in #window stays at %d, no more than the first chunk (%d tiles); "+
+			"virtual scrolling is pasting no further chunks",
 		res.TileCount, testChunkSize)
 	require.Greater(t, res.TileCount, testChunkSize)
 

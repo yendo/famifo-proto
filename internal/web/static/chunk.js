@@ -25,7 +25,7 @@
  */
 
 /**
- * タイル1枚。
+ * タイル1枚。サーバが /tiles で返した JSON の要素そのもの。
  * @typedef {object} Tile
  * @property {string} id 写真のID
  * @property {string} pageUrl その1件のページのURL（/item/<id>）
@@ -39,8 +39,7 @@
 export const chunks = (() => {
 	/** @type {HTMLElement | null} */
 	const root = document.querySelector("#gallery");
-	const win = document.querySelector("#window");
-	if (!root || !win) return null;
+	if (!root) return null;
 
 	const tileCount = Number(root.dataset.total);
 	const chunkSize = Number(root.dataset.chunk);
@@ -146,8 +145,8 @@ export const chunks = (() => {
 				return new Promise(() => {}); // 再読み込みまで呼び出し側を待たせる
 			}
 			if (!res.ok) throw new Error(`tiles ${res.status}`);
-			const html = await res.text();
-			const tiles = parseTiles(html);
+			/** @type {Tile[]} */
+			const tiles = await res.json();
 			loaded.set(ci, tiles);
 			return tiles;
 		})().finally(() => inFlight.delete(ci));
@@ -155,37 +154,6 @@ export const chunks = (() => {
 		inFlight.set(ci, { job, controller, keep });
 		return job;
 	}
-
-	// サーバが返したHTML断片を、タイル1枚ずつに割る。取得時に1回だけパースする。
-	// id 属性の "t-" の後ろが写真のID、data-full 属性が原本のURL、data-date 属性が
-	// 日付、data-video 属性が動画かどうか、href がその1件のページ（ライトボックスを
-	// 開いたときにアドレス欄へ出すURL）、<img> の src がサムネイルのURL。
-	/**
-	 * @param {string} html
-	 * @returns {Tile[]}
-	 */
-	function parseTiles(html) {
-		const tmp = document.createElement("div");
-		tmp.innerHTML = html;
-		/** @type {NodeListOf<HTMLElement>} */
-		const tiles = tmp.querySelectorAll(".tile");
-		return [...tiles].map((a) => ({
-			id: a.id.replace(/^t-/, ""),
-			pageUrl: a.getAttribute("href"),
-			fullUrl: a.dataset.full,
-			thumbUrl: a.querySelector("img").getAttribute("src"),
-			date: a.dataset.date,
-			video: a.dataset.video === "1",
-		}));
-	}
-
-	// 初回ページはサーバが先頭のチャンクを埋めて返しているので、取得済みとして控える。
-	function loadEmbeddedChunk() {
-		const tiles = parseTiles(win.innerHTML);
-		if (tiles.length > 0) loaded.set(0, tiles);
-	}
-
-	loadEmbeddedChunk();
 
 	return {
 		tileCount,
