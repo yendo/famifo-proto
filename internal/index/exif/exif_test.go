@@ -182,18 +182,18 @@ func TestReadReturnsTheEXIFDate(t *testing.T) {
 
 	got := exif.Read(path)
 
-	// 時計の値で比べる。TakenAt の Location は時差タグの有無を映すだけで、
+	// 撮影地の時刻で比べる。TakenAt の Location は時差タグの有無を映すだけで、
 	// 瞬間としては使わない。
 	require.Equal(t, "2021-03-04 05:06:07", got.TakenAt.Format("2006-01-02 15:04:05"))
 }
 
 // EXIFのDateTimeOriginalは時差を持たない。サーバのタイムゾーンで解釈し直すと、
-// 文字盤の値がそのタイムゾーンの瞬間にすり替わる。時計の値はそのまま返す。
-func TestReadKeepsTheDialTimeWhenTheEXIFDateHasNoOffset(t *testing.T) {
+// 撮影地の時刻がそのタイムゾーンの瞬間にすり替わる。撮影地の時刻はそのまま返す。
+func TestReadKeepsTheLocalTimeWhenTheEXIFDateHasNoOffset(t *testing.T) {
 	// time.Local はプロセス全体で1つしかない。書き換えるテストが並列に走ると、
 	// 同時に走っている他のテストの時刻解釈まで巻き添えで変わる。実際 -race が
 	// 競合として検出する。このテストは t.Parallel() を呼ばない。
-	// TZ=UTC の環境では付け替えても時計の値が変わらず、回帰を検出できないため
+	// TZ=UTC の環境では付け替えても時刻が変わらず、回帰を検出できないため
 	// JST にする。
 	orig := time.Local
 	time.Local = time.FixedZone("JST", 9*60*60)
@@ -203,10 +203,10 @@ func TestReadKeepsTheDialTimeWhenTheEXIFDateHasNoOffset(t *testing.T) {
 	got := exif.Read(path)
 
 	require.Equal(t, "2025-05-24 09:08:31", got.TakenAt.Format("2006-01-02 15:04:05"),
-		"the dial time is kept as it is: got=%v", got.TakenAt)
+		"the local time where it was taken is kept: got=%v", got.TakenAt)
 }
 
-// OffsetTimeOriginal がある写真も、撮影地の時計の値をそのまま返す。
+// OffsetTimeOriginal がある写真も、撮影地の時刻をそのまま返す。
 // サーバの時差で見直すと、旅行先の夜に撮った写真が日本の翌日に回る。
 func TestReadKeepsTheEXIFOffset(t *testing.T) {
 	t.Parallel()

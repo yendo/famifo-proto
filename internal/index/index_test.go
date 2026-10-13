@@ -285,7 +285,7 @@ func TestScanReadsTheCaptureTimeFromTheContainer(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
-	// mp4 の mvhd はUTCの瞬間なので、サーバの時刻で見た時計の値になる。
+	// mp4 の mvhd はUTCの瞬間なので、サーバの time.Local の時刻になる。
 	require.Equal(t, want.Local().Format("2006-01-02T15:04:05"), got.TakenAtLocal())
 }
 
@@ -302,7 +302,7 @@ func TestScanFallsBackToModTimeForAnUnreadableVideo(t *testing.T) {
 	require.NoError(t, err)
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
-	// mtimeは瞬間なので、サーバの時刻で見た時計の値になる。秒より下は残らない。
+	// mtimeは瞬間なので、サーバの time.Local の時刻になる。秒より下は残らない。
 	require.Equal(t, fi.ModTime().Local().Format("2006-01-02T15:04:05"), got.TakenAtLocal())
 }
 

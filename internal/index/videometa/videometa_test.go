@@ -43,7 +43,7 @@ func mvhd(raw uint32) []byte {
 	return bx("mvhd", p)
 }
 
-// raw1904 は「その文字盤の時刻をUTCとみなした値」を1904年起点の秒に直す。
+// raw1904 は「その撮影地の時刻をUTCとみなした値」を1904年起点の秒に直す。
 func raw1904(y int, mo time.Month, d, h, mi, s int) uint32 {
 	return uint32(time.Date(y, mo, d, h, mi, s, 0, time.UTC).Unix() + epochOffset)
 }
@@ -104,9 +104,9 @@ func TestReadTreatsIsoBrandAsUTC(t *testing.T) {
 	require.True(t, got.Equal(time.Date(2026, 9, 9, 9, 39, 6, 0, time.UTC)), "got %v", got)
 }
 
-// QuickTimeブランドでAppleのキーが無ければ、mvhd は文字盤の時刻である。
+// QuickTimeブランドでAppleのキーが無ければ、mvhd は撮影地の時刻である。
 // Canon PowerShot S95 がこれで、同じファイル内のEXIFと一致することを確認済み。
-func TestReadTreatsQuickTimeWithoutAppleKeyAsDialTime(t *testing.T) {
+func TestReadTreatsQuickTimeWithoutAppleKeyAsLocalTime(t *testing.T) {
 	t.Parallel()
 	path := write(t, "a.mov",
 		ftyp("qt  ", "qt  "),

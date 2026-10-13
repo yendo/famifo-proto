@@ -18,7 +18,7 @@ import (
 // Meta は写真1枚から読み取れたEXIF。読めなかった項目は既定値になる。
 type Meta struct {
 	// TakenAt はEXIFの撮影日時。持たない写真ではゼロ値。
-	// 時計の値（Location で見た年月日と時刻）が撮影地の時刻であり、瞬間としては
+	// Location で見た年月日と時刻が撮影地の時刻であり、瞬間としては
 	// 扱わない。Location は時差タグがあれば撮影地の固定ゾーン、無ければ UTC だが、
 	// 後者の UTC は「時差が分からない」ことの代わりで、本物の UTC ではない。
 	TakenAt time.Time

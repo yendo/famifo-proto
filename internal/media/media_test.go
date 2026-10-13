@@ -52,7 +52,7 @@ func TestNewFillsTheFields(t *testing.T) {
 	require.True(t, m.ModTime().Equal(testModTime))
 }
 
-// issue #44 のパリの例。時差タグのある写真は撮影地の時計の値で入り、
+// issue #44 のパリの例。時差タグのある写真は撮影地の時刻で入り、
 // サーバのタイムゾーンによらず撮影地の日になる。
 func TestNewKeepsTheLocalTimeWhereItWasShot(t *testing.T) {
 	t.Parallel()
@@ -66,8 +66,8 @@ func TestNewKeepsTheLocalTimeWhereItWasShot(t *testing.T) {
 	require.Equal(t, "2026-03-01", m.Day())
 }
 
-// 時差の分からない値は UTC のラベル付きで届く。ラベルは無視して時計の値を使う。
-func TestNewKeepsTheDialTimeOfAnUnknownOffset(t *testing.T) {
+// 時差の分からない値は UTC のラベル付きで届く。ラベルは無視して撮影地の時刻として使う。
+func TestNewKeepsTheLocalTimeOfAnUnknownOffset(t *testing.T) {
 	t.Parallel()
 	takenAt := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
 
@@ -82,7 +82,7 @@ func TestNewFallsBackToModTimeWithoutACaptureTime(t *testing.T) {
 	m, err := media.New("/items/a.jpg", time.Time{}, testModTime)
 
 	require.NoError(t, err)
-	// mtimeは瞬間なので、サーバの時刻で見た時計の値になる
+	// mtimeは瞬間なので、サーバの time.Local の時刻になる
 	require.Equal(t, testModTime.Local().Format("2006-01-02T15:04:05"), m.TakenAtLocal(),
 		"a item with no capture time still stays in the gallery")
 }

@@ -26,7 +26,7 @@ import (
 // IsCandidate を満たすことを、このパッケージの外で崩せないようにするため。
 type Media struct {
 	path         string    // ディスク上の絶対パス
-	takenAtLocal string    // 撮影地の時計の値（localLayout）。読み取れなければmtime
+	takenAtLocal string    // 撮影地の時刻（localLayout）。読み取れなければmtime
 	modTime      time.Time // ファイルのmtime。再スキャン時の変更検知に使う
 }
 
@@ -38,13 +38,13 @@ const localLayout = "2006-01-02T15:04:05"
 //
 // takenAt はファイルから読み取った撮影日時。写真ならEXIF、動画ならコンテナから
 // 読み取り側が解釈を済ませた値である。瞬間としては扱わず、その Location で見た
-// 時計の値だけを使う。時差の分からない値は UTC のラベル付きで、時差の分かる値は
-// 撮影地の固定ゾーンで届くが、どちらも時計の値が撮影地の時刻である。
+// 年月日と時刻だけを使う。時差の分からない値は UTC のラベル付きで、時差の分かる値は
+// 撮影地の固定ゾーンで届くが、どちらもそれが撮影地の時刻である。
 //
 // ゼロ値は「読み取れなかった」ことを表し、mtimeで代替される。撮影日時が取れない
 // ファイル（スクリーンショット、GIF、WebP、EXIFを削ぎ落とされた画像、コンテナの
 // 壊れた動画）は普通に存在し、それらを一覧から落とさないため。mtimeは瞬間なので、
-// サーバの time.Local で見た時計の値になる。
+// サーバの time.Local の時刻になる。
 //
 // サムネイルの調達より先に組み立てる。ModTime が原本の版であり、
 // サムネイルの置き場所はその版から決まるため。
@@ -79,7 +79,7 @@ func (m Media) ID() string { return IDFor(m.path) }
 // Path はディスク上の絶対パスを返す。
 func (m Media) Path() string { return m.path }
 
-// TakenAtLocal は撮影地の時計の値を "2006-01-02T15:04:05" で返す。時差は持たない。
+// TakenAtLocal は撮影地の時刻を "2006-01-02T15:04:05" で返す。時差は持たない。
 // ファイルから読み取れなければmtimeをサーバの時刻で見た値。
 func (m Media) TakenAtLocal() string { return m.takenAtLocal }
 

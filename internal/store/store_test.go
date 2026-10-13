@@ -27,7 +27,7 @@ func openTestStore(t *testing.T) *store.Store {
 // mtimeは撮影日時とずらす。SELECTの列順とScanの並びが入れ替わったとき、
 // 同じ値だと往復で気づけない。
 //
-// New を通すのは、時計の値の整形を store のテストで書き直さないため。
+// New を通すのは、撮影地の時刻の整形を store のテストで書き直さないため。
 func mediaAt(t *testing.T, path string, takenAt time.Time) media.Media {
 	t.Helper()
 	m, err := media.New(path, takenAt, takenAt.Add(time.Hour))
@@ -383,7 +383,7 @@ func TestDayGroupsCountsEachDay(t *testing.T) {
 	}, got)
 }
 
-// 日は撮影地の時計の値で決まる。パリで夜に撮った写真は、サーバが JST でも
+// 日は撮影地の時刻で決まる。パリで夜に撮った写真は、サーバが JST でも
 // その日に入る。瞬間をサーバの日で切ると翌日に回る。
 func TestDayGroupsUsesTheDayWhereItWasShot(t *testing.T) {
 	// time.Local はプロセス全体で1つしかない。書き換えるテストが並列に走ると、
