@@ -26,6 +26,7 @@ import (
 // Meta は動画1本から読み取れた情報。読めなかった項目は既定値になる。
 type Meta struct {
 	// TakenAt は撮影日時。読めなければゼロ値。
+	// exif と同じく、時計の値（Location で見た年月日と時刻）が撮影地の時刻である。
 	// 呼び出し側はゼロ値をmtimeに落とす（EXIFが無い写真と同じ扱い）。
 	TakenAt time.Time
 }
@@ -337,10 +338,12 @@ func resolve(quicktime bool, creation uint64, appleDate string) time.Time {
 		return time.Time{} // 1970年より前は壊れた値として捨てる
 	}
 	if quicktime {
-		// QuickTimeの古い機種は文字盤の時刻を書く。UTCとして読むと時差ぶんずれる。
-		u := time.Unix(secs, 0).UTC()
-		return time.Date(u.Year(), u.Month(), u.Day(), u.Hour(), u.Minute(), u.Second(), 0, time.Local)
+		// QuickTimeの古い機種は文字盤の時刻を書く。時差は分からないので、
+		// EXIF と同じく UTC のラベルのまま時計の値として返す。
+		return time.Unix(secs, 0).UTC()
 	}
+	// それ以外は UTC の瞬間で、撮影地の時差はファイルに無い。サーバの
+	// time.Local で見た時計の値になる（time.Unix が Local を付ける）。
 	return time.Unix(secs, 0)
 }
 
