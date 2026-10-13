@@ -463,11 +463,14 @@ func scrollToIndexJS(index int) string {
 // 通し番号がそのまま並び順になる。サーバの ListRange を呼ばずにここで
 // 組み立てるのは、クライアント側のオフセット計算をサーバと独立に検証する
 // ため。両方が同じ計算を共有すると、ずれが打ち消し合って見えなくなる。
-func expectedMediaURLs(n int) []string {
+func expectedMediaURLs(t *testing.T, n int) []string {
+	t.Helper()
 	out := make([]string, n)
 	for i := 0; i < n; i++ {
 		path := filepath.Join(testMediaDir, fmt.Sprintf("p%04d.jpg", i))
-		out[i] = "/full/" + media.IDFor(path)
+		m, err := media.New(path, time.Time{}, time.Time{})
+		require.NoError(t, err)
+		out[i] = "/full/" + m.ID()
 	}
 	return out
 }
@@ -1161,7 +1164,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 
 	// チャンクの境界を2回（testChunkSize番目・testChunkSize*2番目）跨ぐのに十分な回数。
 	steps := testChunkSize*2 + 10
-	want := expectedMediaURLs(steps + 1)
+	want := expectedMediaURLs(t, steps+1)
 
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1600, 900),
@@ -1245,7 +1248,7 @@ func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	want := expectedMediaURLs(2)
+	want := expectedMediaURLs(t, 2)
 
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(800, 1000),
@@ -2160,7 +2163,7 @@ func TestItemURLOpensTheLightbox(t *testing.T) {
 	defer cancel()
 
 	const target = testChunkSize + 40 // 初回HTMLに埋まっていない位置
-	want := expectedMediaURLs(target + 1)[target]
+	want := expectedMediaURLs(t, target+1)[target]
 	id := strings.TrimPrefix(want, "/full/")
 
 	err := chromedp.Run(rctx,
@@ -2187,7 +2190,7 @@ func TestBackClosesTheLightbox(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	want := expectedMediaURLs(1)[0]
+	want := expectedMediaURLs(t, 1)[0]
 	id := strings.TrimPrefix(want, "/full/")
 
 	var path string
@@ -2223,7 +2226,7 @@ func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	urls := expectedMediaURLs(4)
+	urls := expectedMediaURLs(t, 4)
 	third := strings.TrimPrefix(urls[3], "/full/")
 
 	var path string

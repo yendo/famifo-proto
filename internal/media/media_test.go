@@ -8,13 +8,19 @@ import (
 	"github.com/yendo/famifo-proto/internal/media"
 )
 
-func TestIDForIsStableAndDistinct(t *testing.T) {
+// IDはパスだけから決まる。撮影日時やmtimeが変わっても同じ1件として追跡される。
+func TestIDIsStableAndDistinct(t *testing.T) {
 	t.Parallel()
-	a := media.IDFor("/items/a.jpg")
+	a, err := media.New("/items/a.jpg", time.Time{}, testModTime)
+	require.NoError(t, err)
+	again, err := media.New("/items/a.jpg", time.Time{}, testModTime.Add(time.Hour))
+	require.NoError(t, err)
+	b, err := media.New("/items/b.jpg", time.Time{}, testModTime)
+	require.NoError(t, err)
 
-	require.Len(t, a, 32)
-	require.Equal(t, a, media.IDFor("/items/a.jpg"))
-	require.NotEqual(t, a, media.IDFor("/items/b.jpg"))
+	require.Len(t, a.ID(), 32)
+	require.Equal(t, a.ID(), again.ID())
+	require.NotEqual(t, a.ID(), b.ID())
 }
 
 func TestIsCandidate(t *testing.T) {
@@ -47,7 +53,6 @@ func TestNewFillsTheFields(t *testing.T) {
 	m, err := media.New(path, time.Time{}, testModTime)
 
 	require.NoError(t, err)
-	require.Equal(t, media.IDFor(path), m.ID(), "the ID is derived from the path")
 	require.Equal(t, path, m.Path())
 	require.True(t, m.ModTime().Equal(testModTime))
 }
@@ -108,7 +113,6 @@ func TestRestoreKeepsTheStoredValues(t *testing.T) {
 
 	m := media.Restore(path, "2021-03-04T05:06:07", testModTime)
 
-	require.Equal(t, media.IDFor(path), m.ID())
 	require.Equal(t, path, m.Path())
 	require.Equal(t, "2021-03-04T05:06:07", m.TakenAtLocal())
 	require.Equal(t, "2021-03-04", m.Day())

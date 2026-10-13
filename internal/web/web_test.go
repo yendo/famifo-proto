@@ -535,11 +535,14 @@ func TestServeOriginalNotFoundForUnknownID(t *testing.T) {
 func TestUnindexedPathsAreNotReachable(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
+	// インデックスに載っていない1件。IDは組み立てられても配信されない
+	unindexed, err := media.New(filepath.Join(f.mediaDir, "never.jpg"), time.Time{}, time.Time{})
+	require.NoError(t, err)
 	// パスではなくIDでしか引けないため、traversalは構造的に成立しない
 	for _, target := range []string{
 		"/full/../../etc/passwd",
 		"/thumb/..%2f..%2fetc%2fpasswd",
-		"/full/" + media.IDFor("/etc/passwd"),
+		"/full/" + unindexed.ID(),
 	} {
 		t.Run(target, func(t *testing.T) {
 			rec := doGet(t, f.h, target)

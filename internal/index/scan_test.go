@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/index"
-	"github.com/yendo/famifo-proto/internal/media"
 )
 
 func TestScanIndexesNestedMedia(t *testing.T) {
@@ -166,7 +165,7 @@ func TestScanSkipsUnchangedFiles(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(ctx))
 
-	_, err = f.st.GetByID(ctx, media.IDFor(path))
+	_, err = f.st.GetByID(ctx, idOf(t, path))
 	require.NoError(t, err, "not reread while the mtime is unchanged")
 	require.Len(t, f.generatedThumbs(t), 1)
 }
@@ -178,7 +177,7 @@ func TestScanReindexesModifiedFiles(t *testing.T) {
 	ctx := context.Background()
 	path := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	require.NoError(t, f.sc.ScanOnce(ctx))
-	before, err := f.st.GetByID(ctx, media.IDFor(path))
+	before, err := f.st.GetByID(ctx, idOf(t, path))
 	require.NoError(t, err)
 	beforeThumb, _, ok := f.thumbs.Path(before)
 	require.True(t, ok)
@@ -190,7 +189,7 @@ func TestScanReindexesModifiedFiles(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(ctx))
 
-	after, err := f.st.GetByID(ctx, media.IDFor(path))
+	after, err := f.st.GetByID(ctx, idOf(t, path))
 	require.NoError(t, err)
 	require.Equal(t, future.Unix(), after.ModTime().Unix(), "the row carries the new version")
 	afterThumb, _, ok := f.thumbs.Path(after)

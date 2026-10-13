@@ -252,10 +252,10 @@ func TestRemoveFamifoThumbs(t *testing.T) {
 	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 	require.NoError(t, provide(t, pv, src, 1))
 
-	require.NoError(t, pv.RemoveFamifoThumbs(media.IDFor(src)))
+	require.NoError(t, pv.RemoveFamifoThumbs(mediaOf(t, src).ID()))
 
 	requireNoFamifoThumb(t, pv, src)
-	require.NoError(t, pv.RemoveFamifoThumbs(media.IDFor(src)), "deleting a thumbnail that does not exist is not an error")
+	require.NoError(t, pv.RemoveFamifoThumbs(mediaOf(t, src).ID()), "deleting a thumbnail that does not exist is not an error")
 }
 
 // TestGenerateAppliesOrientation は、渡されたOrientationがサムネイルの

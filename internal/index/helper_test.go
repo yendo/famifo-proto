@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yendo/famifo-proto/internal/media"
 )
 
 // testJPEG は指定サイズのJPEGのバイト列を返す。
@@ -39,4 +41,12 @@ func testHEIC() []byte {
 // 無いので、撮影日時は読めない。「コンテナとして壊れている動画」を作るのに使う。
 func testMP4Stub() []byte {
 	return append([]byte{0, 0, 0, 0x10}, []byte("ftypisom\x00\x00\x00\x00")...)
+}
+
+// idOf は path の1件のIDを返す。取り込まれた行を GetByID で引くのに使う。
+func idOf(t *testing.T, path string) string {
+	t.Helper()
+	m, err := media.New(path, time.Time{}, time.Time{})
+	require.NoError(t, err)
+	return m.ID()
 }

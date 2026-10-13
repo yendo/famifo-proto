@@ -261,8 +261,11 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 	same := time.Unix(1600000000, 0)
+	var items []media.Media
 	for _, name := range []string{"a", "b", "c"} {
-		require.NoError(t, s.Upsert(ctx, mediaAt(t, "/items/"+name+".jpg", same)))
+		m := mediaAt(t, "/items/"+name+".jpg", same)
+		require.NoError(t, s.Upsert(ctx, m))
+		items = append(items, m)
 	}
 
 	// 撮影日時が同じ場合は id の降順で安定すること。
@@ -272,9 +275,11 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 	// ORDER BY 句から id DESC を外しただけではこのテストは落ちない。
 	// 不変条件は「ORDER BY 句 + インデックス」の組で担保されており、
 	// テストで句の削除だけを検出することは原理的にできない。
-	paths := []string{"/items/a.jpg", "/items/b.jpg", "/items/c.jpg"}
-	want := append([]string(nil), paths...)
-	sort.Slice(want, func(i, j int) bool { return media.IDFor(want[i]) > media.IDFor(want[j]) })
+	sort.Slice(items, func(i, j int) bool { return items[i].ID() > items[j].ID() })
+	var want []string
+	for _, m := range items {
+		want = append(want, m.Path())
+	}
 
 	var seen []string
 	for i := range 3 {
@@ -352,7 +357,7 @@ func TestRankOfMissingReturnsErrNotFound(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 
-	_, err := s.RankOf(context.Background(), media.IDFor("/items/gone.jpg"))
+	_, err := s.RankOf(context.Background(), "deadbeef")
 
 	require.ErrorIs(t, err, store.ErrNotFound)
 }

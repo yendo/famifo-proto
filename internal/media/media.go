@@ -75,7 +75,12 @@ func Restore(path, takenAtLocal string, modTime time.Time) Media {
 }
 
 // ID はパスから導出した安定IDを返す。URLに露出させる。
-func (m Media) ID() string { return IDFor(m.path) }
+// URLにファイルシステムのパスを露出させないためと、
+// 未インデックスのパスを配信させないための両方の役割を持つ。
+func (m Media) ID() string {
+	sum := sha256.Sum256([]byte(m.path))
+	return hex.EncodeToString(sum[:])[:32]
+}
 
 // Path はディスク上の絶対パスを返す。
 func (m Media) Path() string { return m.path }
@@ -103,12 +108,4 @@ func (m Media) ModTime() time.Time { return m.modTime }
 // 複数枚に見える。
 func IsCandidate(path string) bool {
 	return imagefmt.IsSupported(path) && !synology.InManagedDir(path)
-}
-
-// IDFor はパスから安定したIDを導出する。
-// URLにファイルシステムのパスを露出させないためと、
-// 未インデックスのパスを配信させないための両方の役割を持つ。
-func IDFor(path string) string {
-	sum := sha256.Sum256([]byte(path))
-	return hex.EncodeToString(sum[:])[:32]
 }
