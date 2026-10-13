@@ -84,9 +84,10 @@ CREATE INDEX IF NOT EXISTS idx_media_day   ON media(day);
   39 ms → 13 ms）。Go 側で畳む処理と、`strftime` についての不正確なコメントは消す
 - 公開 API は変わらない
 
-列名を `taken_at` のまま使い回さないのは、古い DB を確実に断るためである。
-`probeReadable` は `selectCols` を選ぶだけなので、`taken_at` が INTEGER のまま
-残っていても通り、epoch の数字が文字列として読まれてしまう。
+古い DB は `Open` が断る。`taken_at INTEGER` の世代は `day` を持たないので、
+`idx_media_day` の作成で止まる。列名を `taken_at` のまま使い回さないのは、
+`day` が揃っている DB でも `probeReadable` で止めるためである。使い回すと、
+INTEGER の列が文字列として読まれて通ってしまう。
 
 ### web
 

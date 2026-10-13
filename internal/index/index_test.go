@@ -285,7 +285,8 @@ func TestScanReadsTheCaptureTimeFromTheContainer(t *testing.T) {
 
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
-	require.True(t, got.TakenAt().Equal(want), "got %v", got.TakenAt())
+	// mp4 の mvhd はUTCの瞬間なので、サーバの時刻で見た時計の値になる。
+	require.Equal(t, want.Local().Format("2006-01-02T15:04:05"), got.TakenAtLocal())
 }
 
 // コンテナから読めない動画はmtimeに落ちる。EXIFの無い写真と同じ扱いである。
@@ -301,8 +302,8 @@ func TestScanFallsBackToModTimeForAnUnreadableVideo(t *testing.T) {
 	require.NoError(t, err)
 	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
 	require.NoError(t, err)
-	// インデックスは撮影日時をUnix秒で持つので、mtimeのナノ秒までは残らない。
-	require.Equal(t, fi.ModTime().Unix(), got.TakenAt().Unix())
+	// mtimeは瞬間なので、サーバの時刻で見た時計の値になる。秒より下は残らない。
+	require.Equal(t, fi.ModTime().Local().Format("2006-01-02T15:04:05"), got.TakenAtLocal())
 }
 
 func TestScanRejectsBrokenRasterImage(t *testing.T) {

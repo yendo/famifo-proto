@@ -25,19 +25,26 @@ import (
 // Restore（インデックスからの復元）だけを通る。インデックスに載る1件が
 // IsCandidate を満たすことを、このパッケージの外で崩せないようにするため。
 type Media struct {
-	path    string    // ディスク上の絶対パス
-	takenAt time.Time // 読み取れた撮影日時、無ければmtime
-	modTime time.Time // ファイルのmtime。再スキャン時の変更検知に使う
+	path         string    // ディスク上の絶対パス
+	takenAtLocal string    // 撮影地の時計の値（localLayout）。読み取れなければmtime
+	modTime      time.Time // ファイルのmtime。再スキャン時の変更検知に使う
 }
+
+// localLayout は TakenAtLocal の書式。時差を持たず、辞書順が時系列順と一致する。
+const localLayout = "2006-01-02T15:04:05"
 
 // New はインデックスに載せる1件を組み立てる。IsCandidate を満たさない
 // パスはエラーにする。
 //
 // takenAt はファイルから読み取った撮影日時。写真ならEXIF、動画ならコンテナから
-// 読み取り側が解釈を済ませた値である。ゼロ値は「読み取れなかった」ことを表し、
-// mtimeで代替される。撮影日時が取れないファイル（スクリーンショット、GIF、WebP、
-// EXIFを削ぎ落とされた画像、コンテナの壊れた動画）は普通に存在し、それらを
-// 一覧から落とさないため。
+// 読み取り側が解釈を済ませた値である。瞬間としては扱わず、その Location で見た
+// 時計の値だけを使う。時差の分からない値は UTC のラベル付きで、時差の分かる値は
+// 撮影地の固定ゾーンで届くが、どちらも時計の値が撮影地の時刻である。
+//
+// ゼロ値は「読み取れなかった」ことを表し、mtimeで代替される。撮影日時が取れない
+// ファイル（スクリーンショット、GIF、WebP、EXIFを削ぎ落とされた画像、コンテナの
+// 壊れた動画）は普通に存在し、それらを一覧から落とさないため。mtimeは瞬間なので、
+// サーバの time.Local で見た時計の値になる。
 //
 // サムネイルの調達より先に組み立てる。ModTime が原本の版であり、
 // サムネイルの置き場所はその版から決まるため。
@@ -46,23 +53,23 @@ func New(path string, takenAt, modTime time.Time) (Media, error) {
 		return Media{}, fmt.Errorf("%s cannot be indexed", path)
 	}
 	if takenAt.IsZero() {
-		takenAt = modTime
+		takenAt = modTime.Local()
 	}
 	return Media{
-		path:    path,
-		takenAt: takenAt,
-		modTime: modTime,
+		path:         path,
+		takenAtLocal: takenAt.Format(localLayout),
+		modTime:      modTime,
 	}, nil
 }
 
 // Restore はインデックスに保存済みの1件を組み立て直す。store が読み出しに使う。
 //
 // 条件は確かめない。インデックスの行は New を通ったものだけである。
-func Restore(path string, takenAt, modTime time.Time) Media {
+func Restore(path, takenAtLocal string, modTime time.Time) Media {
 	return Media{
-		path:    path,
-		takenAt: takenAt,
-		modTime: modTime,
+		path:         path,
+		takenAtLocal: takenAtLocal,
+		modTime:      modTime,
 	}
 }
 
@@ -72,8 +79,15 @@ func (m Media) ID() string { return IDFor(m.path) }
 // Path はディスク上の絶対パスを返す。
 func (m Media) Path() string { return m.path }
 
-// TakenAt は撮影日時を返す。ファイルから読み取れなければmtime。
-func (m Media) TakenAt() time.Time { return m.takenAt }
+// TakenAtLocal は撮影地の時計の値を "2006-01-02T15:04:05" で返す。時差は持たない。
+// ファイルから読み取れなければmtimeをサーバの時刻で見た値。
+func (m Media) TakenAtLocal() string { return m.takenAtLocal }
+
+// Day は撮った日を "2006-01-02" で返す。一覧の区切りに使う。
+//
+// TakenAtLocal から切り出す。インデックスには両方を書くので、別に持つと
+// 2つがずれる経路ができる。
+func (m Media) Day() string { return m.takenAtLocal[:len("2006-01-02")] }
 
 // ModTime はファイルのmtimeを返す。再スキャン時の変更検知と、
 // サムネイルがどの版から作られたかの判別に使う。

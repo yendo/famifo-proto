@@ -17,7 +17,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 日付の切り出しは time.Local に依存する（撮影日時の解釈も、日ごとの区切りも）。
+// 撮影日時の一部は time.Local に依存する（mtimeに落ちたファイルと、mp4 の UTC の瞬間を
+// 時計の値に直すとき）。
 // Goは実行時に /etc/localtime か /usr/share/zoneinfo からタイムゾーンを解決するが、
 // 配布先の scratch コンテナにはどちらも無い。TZ=Asia/Tokyo を設定しても、名前を
 // 引くデータが無いため UTC にフォールバックする（実測で確認済み）。

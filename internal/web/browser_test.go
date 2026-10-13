@@ -2294,10 +2294,12 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 
 	// 動画のほうを新しくして先頭に並べる。
 	bg := context.Background()
-	require.NoError(t, st.Upsert(bg,
-		media.Restore(videoPath, time.Unix(1600000100, 0), time.Unix(1600000100, 0))))
-	require.NoError(t, st.Upsert(bg,
-		media.Restore(mediaPath, time.Unix(1600000000, 0), time.Unix(1600000000, 0))))
+	video, err := media.New(videoPath, time.Unix(1600000100, 0), time.Unix(1600000100, 0))
+	require.NoError(t, err)
+	require.NoError(t, st.Upsert(bg, video))
+	still, err := media.New(mediaPath, time.Unix(1600000000, 0), time.Unix(1600000000, 0))
+	require.NoError(t, err)
+	require.NoError(t, st.Upsert(bg, still))
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h, err := web.NewHandler(st, thumbs, nil, log)

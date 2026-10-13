@@ -85,7 +85,7 @@ func (h *Handler) buildTilesView(r *http.Request, offset, limit int) (tilesView,
 			PageURL:  "/item/" + m.ID(),
 			FullURL:  "/full/" + m.ID(),
 			ThumbURL: "/thumb/" + m.ID(),
-			Date:     m.TakenAt().Format("2006-01-02"),
+			Date:     m.Day(),
 			IsVideo:  imagefmt.IsVideo(m.Path()),
 		})
 	}
