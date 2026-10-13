@@ -1024,7 +1024,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 //
 // 同一性の目印にはDOM要素のエキスパンドプロパティを使う。属性ではないので
 // HTMLの文字列には現れず、要素が作り直されれば必ず消える。写真の照合には
-// data-full（写真ごとに一意なURL）を使う。id属性の付け方にテストが依存しない
+// href（写真ごとに一意なURL）を使う。id属性の付け方にテストが依存しない
 // ようにするため。
 func TestTilesSurviveAPlainScroll(t *testing.T) {
 	requireBrowser(t)
@@ -1051,7 +1051,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 	// いま貼られているタイルに目印を付け、写っている写真を控える。
 	const markJS = `(() => {
 		const tiles = [...document.querySelectorAll('#window .tile')];
-		window.__before = tiles.map((t) => t.dataset.full);
+		window.__before = tiles.map((t) => t.getAttribute('href'));
 		for (const t of tiles) t.__kept = true;
 		window.__pastedFrom = pastedRange().from;
 		return tiles.length;
@@ -1082,7 +1082,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 		let common = 0;
 		let reused = 0;
 		for (const t of tiles) {
-			if (!before.has(t.dataset.full)) continue;
+			if (!before.has(t.getAttribute('href'))) continue;
 			common++;
 			if (t.__kept) reused++;
 		}
@@ -1783,7 +1783,7 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 	require.Equal(t, 7, res.Span, "1600px is 7 columns, and a day of 20 items takes all of them")
 	require.True(t, res.Full, "a day that takes the row spans the full width of the grid")
 
-	// ラベルはタイルの data-date から作る。テスト写真の先頭の日と一致すること。
+	// ラベルはタイルの日付から作る。テスト写真の先頭の日と一致すること。
 	day := dayOfMedia(0) // "2026-01-01"
 	parts := strings.Split(day, "-")
 	wantMonth, wantDay := strings.TrimLeft(parts[1], "0"), strings.TrimLeft(parts[2], "0")

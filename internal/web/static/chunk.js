@@ -25,11 +25,12 @@
  */
 
 /**
- * タイル1枚。サーバが返したHTML断片から取り出す。
+ * タイル1枚。
  * @typedef {object} Tile
- * @property {string} html タイルのHTML
- * @property {string} fullUrl フルビューのURL（/full/<id>）
+ * @property {string} id 写真のID
  * @property {string} pageUrl その1件のページのURL（/item/<id>）
+ * @property {string} fullUrl フルビューのURL（/full/<id>）
+ * @property {string} thumbUrl サムネイルのURL（/thumb/<id>）
  * @property {string} date 撮影日（"2026-02-08"）
  * @property {boolean} video 動画か
  */
@@ -155,10 +156,10 @@ export const chunks = (() => {
 		return job;
 	}
 
-	// サーバが返したHTML断片を、タイル1枚ずつに割る。取得時に1回だけパースし、
-	// 以降はここから必要な範囲を切り出して組み立てる。data-full 属性が原本のURL、
-	// data-date 属性が日付、data-video 属性が動画かどうか、href がその1件のページ
-	// （ライトボックスを開いたときにアドレス欄へ出すURL）。
+	// サーバが返したHTML断片を、タイル1枚ずつに割る。取得時に1回だけパースする。
+	// id 属性の "t-" の後ろが写真のID、data-full 属性が原本のURL、data-date 属性が
+	// 日付、data-video 属性が動画かどうか、href がその1件のページ（ライトボックスを
+	// 開いたときにアドレス欄へ出すURL）、<img> の src がサムネイルのURL。
 	/**
 	 * @param {string} html
 	 * @returns {Tile[]}
@@ -169,9 +170,10 @@ export const chunks = (() => {
 		/** @type {NodeListOf<HTMLElement>} */
 		const tiles = tmp.querySelectorAll(".tile");
 		return [...tiles].map((a) => ({
-			html: a.outerHTML,
-			fullUrl: a.dataset.full,
+			id: a.id.replace(/^t-/, ""),
 			pageUrl: a.getAttribute("href"),
+			fullUrl: a.dataset.full,
+			thumbUrl: a.querySelector("img").getAttribute("src"),
 			date: a.dataset.date,
 			video: a.dataset.video === "1",
 		}));

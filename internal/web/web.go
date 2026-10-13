@@ -50,9 +50,10 @@ const defaultChunkSize = 120
 // なので、この制限に引っかからない。
 //
 // style-src だけ 'unsafe-inline' を許す。gallery.js が組み立てる日カードが
-// style 属性で grid-column と grid-template-columns を持っており（cardHTML を
-// 見よ）、マークアップ中の style 属性は style-src-attr の対象になるため、
-// 許さないと属性ごと無視されてレイアウトが崩れる。span の数だけクラスを
+// style 属性で grid-column と grid-template-columns を持っており（cardEl を
+// 見よ）、貼り替えのとき Idiomorph が既存の要素へ setAttribute("style", …) で
+// 写す。これは style-src-attr の対象になるため、許さないと属性ごと無視されて
+// レイアウトが崩れる。span の数だけクラスを
 // 用意すれば外せるが、XSSを止めるのは script-src のほうなので、レイアウトの
 // 中心を書き換えてまで得るものは少ない。
 // JSからの spacer.style.height のようなCSSOM経由の代入はCSPの対象外なので、
