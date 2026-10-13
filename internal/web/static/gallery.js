@@ -253,10 +253,11 @@ export const gallery = (() => {
 		a.href = t.pageUrl;
 		if (t.video) a.dataset.video = "1";
 		const img = document.createElement("img");
-		img.src = t.thumbUrl;
 		img.alt = "";
 		img.loading = "lazy";
 		img.decoding = "async";
+		// src は最後に代入する。Firefox と WebKit は src を設定した時点で lazy かどうかを決めるため、先に入れると即時取得になる。
+		img.src = t.thumbUrl;
 		a.append(img);
 		return a;
 	}
