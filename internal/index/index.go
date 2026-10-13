@@ -53,11 +53,9 @@ func NewIndexer(roots []string, st *store.Store, thumbs *thumb.Provider, log *sl
 // indexFile は1ファイルをインデックスに反映する。載せられなかったときはエラーを
 // 返し、そのパスの行とサムネイルを残さない。
 //
-// 渡すのは、パスだけで決まる条件を入口が確かめたものに限る。拡張子が対応形式で
-// あること、Synologyの管理用ディレクトリの下に無いことである。入口はどのみち
-// これで絞っている（枠や保留を写真でないものに使わないため）ので、ここでは
-// 見直さない。中身の照合はこの前提に依っている。対応外の拡張子では照合の相手が
-// application/octet-stream になり、どんな中身も通ってしまう。
+// 渡すのは media.IsCandidate を入口が確かめたパスに限る。入口はどのみちこれで
+// 絞っている（枠や保留を写真でないものに使わないため）ので、ここでは先に
+// 見直さない。入口が確かめ損ねても、最後の media.New が断るので行は入らない。
 //
 // ここで見るのはファイルの今の状態で決まる条件である。入口が見てから読むまでの
 // 間に変わりうるので、読む直前にしか確かめられない。
@@ -144,7 +142,10 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) (err error) {
 	// Mediaを先に組み立てる。ModTime が原本の版であり、thumb はそれを見て出力の
 	// 名前を決める。ここで確定させておけば、インデックスに載る版とサムネイルの
 	// 名前に入る版が食い違いようがない。
-	m := media.New(path, fi, takenAt)
+	m, err := media.New(path, takenAt, fi.ModTime())
+	if err != nil {
+		return err
+	}
 	if err := ix.thumbs.Prepare(m, orientation); err != nil {
 		return err
 	}

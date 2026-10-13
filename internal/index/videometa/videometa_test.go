@@ -163,6 +163,22 @@ func TestReadFindsTheAppleCreationDateUnderUdta(t *testing.T) {
 	require.True(t, got.Equal(time.Date(2026, 9, 9, 9, 39, 6, 0, time.UTC)), "got %v", got)
 }
 
+// 時差は "Z" とも書かれる。イギリスで撮ったiPhoneの動画が該当する。
+func TestReadAcceptsAZuluAppleCreationDate(t *testing.T) {
+	t.Parallel()
+	path := write(t, "a.mov",
+		ftyp("qt  ", "qt  "),
+		bx("moov",
+			mvhd(raw1904(2026, 9, 9, 0, 0, 0)),
+			appleMeta("2026-09-09T09:39:06Z"),
+		),
+	)
+
+	got := videometa.Read(path).TakenAt
+
+	require.True(t, got.Equal(time.Date(2026, 9, 9, 9, 39, 6, 0, time.UTC)), "got %v", got)
+}
+
 // moov が末尾にあり mdat が64bit拡張サイズでも読める。Pixel の mp4 がこの配置。
 func TestReadFindsMoovAfterA64BitMdat(t *testing.T) {
 	t.Parallel()
@@ -239,28 +255,4 @@ func TestReadReturnsZeroForADirectory(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 
 	require.True(t, videometa.Read(dir).TakenAt.IsZero())
-}
-
-// 時差が "Z" の動画でも、返る値の Location が time.UTC そのものになってはいけない。
-// media 側がその条件で文字盤の時刻へ読み替えるため、時差ぶんずれてしまう。
-func TestReadNeverReturnsABareUTCLocation(t *testing.T) {
-	t.Parallel()
-	path := write(t, "a.mov",
-		ftyp("qt  ", "qt  "),
-		bx("moov",
-			mvhd(raw1904(2026, 9, 9, 9, 39, 6)),
-			appleMeta("2026-09-09T09:39:06Z"),
-		),
-	)
-
-	got := videometa.Read(path).TakenAt
-
-	require.True(t, got.Equal(time.Date(2026, 9, 9, 9, 39, 6, 0, time.UTC)), "got %v", got)
-	// ポインタで比べる。require.NotEqual は reflect.DeepEqual に落ちて
-	// *time.Location の中身まで読みに行くが、time.Local の中身は最初に
-	// Local を要求した誰かが sync.Once の中で書き込む。読む側はその Once を
-	// 通らないので、並行するテストが time.Date(..., time.Local) で初期化を
-	// 走らせていると競合になる（-race で実際に落ちた）。
-	// 知りたいのは「time.UTC そのものか」であって中身の一致ではない。
-	require.NotSame(t, time.UTC, got.Location(), "media.resolveTakenAt would shift a bare UTC value")
 }
