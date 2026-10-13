@@ -18,6 +18,10 @@ import (
 	"github.com/yendo/famifo-proto/internal/synology"
 )
 
+// layoutWithoutTZ は TakenAtLocal の書式。時差を書かないので、Location は落ちる。
+// 辞書順が時系列順と一致する。
+const layoutWithoutTZ = "2006-01-02T15:04:05"
+
 // Media はインデックス上の1件。インデックスの1行に対応し、ファイルが
 // 差し替わって中身もmtimeも変わっても、同じパスであれば同じ1件として追跡される。
 //
@@ -26,12 +30,9 @@ import (
 // IsCandidate を満たすことを、このパッケージの外で崩せないようにするため。
 type Media struct {
 	path         string    // ディスク上の絶対パス
-	takenAtLocal string    // 撮影地の時刻（localLayout）。読み取れなければmtime
+	takenAtLocal string    // 撮影地の時刻（layoutWithoutTZ）。読み取れなければmtime
 	modTime      time.Time // ファイルのmtime。再スキャン時の変更検知に使う
 }
-
-// localLayout は TakenAtLocal の書式。時差を持たず、辞書順が時系列順と一致する。
-const localLayout = "2006-01-02T15:04:05"
 
 // New はインデックスに載せる1件を組み立てる。IsCandidate を満たさない
 // パスはエラーにする。
@@ -57,7 +58,7 @@ func New(path string, takenAt, modTime time.Time) (Media, error) {
 	}
 	return Media{
 		path:         path,
-		takenAtLocal: takenAt.Format(localLayout),
+		takenAtLocal: takenAt.Format(layoutWithoutTZ),
 		modTime:      modTime,
 	}, nil
 }
