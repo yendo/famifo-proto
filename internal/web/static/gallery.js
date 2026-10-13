@@ -251,7 +251,7 @@ export const gallery = (() => {
 		a.className = "tile";
 		a.id = `t-${t.id}`;
 		a.href = t.pageUrl;
-		if (t.video) a.dataset.video = "1";
+		if (t.isVideo) a.dataset.video = "1";
 		const img = document.createElement("img");
 		img.alt = "";
 		img.loading = "lazy";

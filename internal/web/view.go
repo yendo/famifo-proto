@@ -26,8 +26,8 @@ type mediaView struct {
 	PageURL  string `json:"pageUrl"` // その1件だけを開くURL。タイルのリンク先
 	FullURL  string `json:"fullUrl"`
 	ThumbURL string `json:"thumbUrl"`
-	Date     string `json:"date"`  // "2006-01-02"。撮影地の日。クライアントが日の区切りに使う
-	Video    bool   `json:"video"` // タイルに再生の印を出すか、フルビューを <video> にするか
+	Date     string `json:"date"`    // "2006-01-02"。撮影地の日。クライアントが日の区切りに使う
+	IsVideo  bool   `json:"isVideo"` // タイルに再生の印を出すか、フルビューを <video> にするか
 }
 
 // dayGroup は埋め込む DayGroups の1要素。
@@ -77,7 +77,7 @@ func (h *Handler) listMedia(r *http.Request, offset, limit int) ([]mediaView, er
 			FullURL:  "/full/" + m.ID(),
 			ThumbURL: "/thumb/" + m.ID(),
 			Date:     m.Day(),
-			Video:    imagefmt.IsVideo(m.Path()),
+			IsVideo:  imagefmt.IsVideo(m.Path()),
 		})
 	}
 	return out, nil

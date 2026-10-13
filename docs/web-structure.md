@@ -42,7 +42,7 @@ indexView                          view.go
   +-- OpenIndex, AuthEnabled
 
 []mediaView (JSON from /tiles)     view.go
-  {id, pageUrl, fullUrl, thumbUrl, date, video}
+  {id, pageUrl, fullUrl, thumbUrl, date, isVideo}
 
 templates/index.html  {{define "index"}}
 ```

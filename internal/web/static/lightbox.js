@@ -140,7 +140,7 @@ import { gallery } from "./gallery.js";
 		if (!tile || mySeq !== requestSeq) return; // 待っている間に追い越されたら破棄
 		idx = i;
 		errBox.hidden = true;
-		if (tile.video) {
+		if (tile.isVideo) {
 			img.hidden = true;
 			img.removeAttribute("src");
 			vid.pause(); // 動画から動画へ送るとき、前の音が重ならないように

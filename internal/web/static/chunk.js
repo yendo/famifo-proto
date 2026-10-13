@@ -32,7 +32,7 @@
  * @property {string} fullUrl フルビューのURL（/full/<id>）
  * @property {string} thumbUrl サムネイルのURL（/thumb/<id>）
  * @property {string} date 撮影日（"2026-02-08"）
- * @property {boolean} video 動画か
+ * @property {boolean} isVideo 動画か
  */
 
 /** @type {Chunks | null} */

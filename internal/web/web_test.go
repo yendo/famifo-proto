@@ -189,7 +189,7 @@ func TestTilesDescribeEachItem(t *testing.T) {
 		FullURL:  "/full/" + m.ID(),
 		ThumbURL: "/thumb/" + m.ID(),
 		Date:     "2026-02-08",
-		Video:    false,
+		IsVideo:  false,
 	}}, got)
 }
 
@@ -240,8 +240,8 @@ func TestTilesMarkVideos(t *testing.T) {
 	got := getTiles(t, f.h, "/tiles?chunk=0")
 
 	require.Equal(t, []string{video.ID(), still.ID()}, tileIDs(got))
-	require.True(t, got[0].Video)
-	require.False(t, got[1].Video)
+	require.True(t, got[0].IsVideo)
+	require.False(t, got[1].IsVideo)
 }
 
 func TestTilesReturnsRequestedChunk(t *testing.T) {
@@ -312,7 +312,7 @@ type tile struct {
 	FullURL  string `json:"fullUrl"`
 	ThumbURL string `json:"thumbUrl"`
 	Date     string `json:"date"`
-	Video    bool   `json:"video"`
+	IsVideo  bool   `json:"isVideo"`
 }
 
 // getTiles は target（/tiles?...）を取り、応答をタイルの配列として読む。

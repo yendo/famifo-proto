@@ -50,7 +50,7 @@ type mediaView struct {
 	FullURL  string `json:"fullUrl"`
 	ThumbURL string `json:"thumbUrl"`
 	Date     string `json:"date"`
-	Video    bool   `json:"video"`
+	IsVideo  bool   `json:"isVideo"`
 }
 ```
 
@@ -78,14 +78,14 @@ type mediaView struct {
  * @property {string} fullUrl フルビューのURL（/full/<id>）
  * @property {string} thumbUrl サムネイルのURL（/thumb/<id>）
  * @property {string} date 撮影日（"2026-02-08"）
- * @property {boolean} video 動画か
+ * @property {boolean} isVideo 動画か
  */
 ```
 
 - `request` は `res.json()` の結果をそのまま `loaded` に入れる。
 - `parseTiles`、`loadEmbeddedChunk`、`Tile.html` を削除する。`#window` も見なくなる。
 - 公開している `Chunks` の 8 つは変えない。`lightbox.js` は `fullUrl`・`pageUrl`・
-  `video` しか使わないので変更が要らない。
+  `isVideo` しか使わない。
 
 `gallery.js`
 
@@ -166,7 +166,7 @@ famifo を見るのは家族の端末の標準ブラウザで、JS を切って�
 - 初回ページでタイルの中身を見ていたテスト（`TestGalleryRendersTiles`、
   `PointsEveryTileAtThumb`、`OrdersNewestFirst`、`UsesTheBorrowedThumbForHEIC`、
   `MarksVideoTiles`、`TestTilesLinkToTheItemPage`）は、`/tiles` の JSON を
-  デコードして `thumbUrl`・`fullUrl`・`pageUrl`・`video`・順序を見る形に移し、
+  デコードして `thumbUrl`・`fullUrl`・`pageUrl`・`isVideo`・順序を見る形に移し、
   名前を `TestTiles…` にそろえる。
 - `TestGalleryEmbedsTotalAndFirstChunk` は、総数と `#spacer`・`#window` があり、
   タイルが入っていないことを見る。
