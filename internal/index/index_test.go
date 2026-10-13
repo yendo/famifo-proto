@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/index"
 
-	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -220,7 +219,7 @@ func TestScanStoresRasterPhotoWithThumb(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), idOf(t, path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path())
 	require.Len(t, f.generatedThumbs(t), 1, "nothing to borrow, so it makes its own")
@@ -250,7 +249,7 @@ func TestScanStoresHEICWithoutThumb(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), idOf(t, path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path(), "indexed even with no thumbnail")
 	require.Empty(t, f.generatedThumbs(t), "HEIC cannot be decoded")
@@ -267,7 +266,7 @@ func TestScanIndexesVideosWithoutAThumbnail(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), idOf(t, path))
 	require.NoError(t, err)
 	require.Equal(t, path, got.Path())
 	require.Empty(t, f.generatedThumbs(t), "famifo never generates a thumbnail for a video")
@@ -283,9 +282,10 @@ func TestScanReadsTheCaptureTimeFromTheContainer(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), idOf(t, path))
 	require.NoError(t, err)
-	require.True(t, got.TakenAt().Equal(want), "got %v", got.TakenAt())
+	// mp4 の mvhd はUTCの瞬間なので、サーバの time.Local の時刻になる。
+	require.Equal(t, want.Local().Format("2006-01-02T15:04:05"), got.TakenAtLocal())
 }
 
 // コンテナから読めない動画はmtimeに落ちる。EXIFの無い写真と同じ扱いである。
@@ -299,10 +299,10 @@ func TestScanFallsBackToModTimeForAnUnreadableVideo(t *testing.T) {
 
 	fi, err := os.Stat(path)
 	require.NoError(t, err)
-	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), idOf(t, path))
 	require.NoError(t, err)
-	// インデックスは撮影日時をUnix秒で持つので、mtimeのナノ秒までは残らない。
-	require.Equal(t, fi.ModTime().Unix(), got.TakenAt().Unix())
+	// mtimeは瞬間なので、サーバの time.Local の時刻になる。秒より下は残らない。
+	require.Equal(t, fi.ModTime().Local().Format("2006-01-02T15:04:05"), got.TakenAtLocal())
 }
 
 func TestScanRejectsBrokenRasterImage(t *testing.T) {
@@ -334,7 +334,7 @@ func TestScanBorrowsTheSynologyThumbnail(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), idOf(t, path))
 	require.NoError(t, err)
 	require.Empty(t, f.generatedThumbs(t), "makes none of its own when it can borrow")
 	served, _, _ := f.thumbs.Path(got)
@@ -350,7 +350,7 @@ func TestScanBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), idOf(t, path))
 	require.NoError(t, err)
 	served, _, _ := f.thumbs.Path(got)
 	require.Equal(t, synology.ThumbMPath(path), served,
@@ -369,7 +369,7 @@ func TestScanLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	got, err := f.st.GetByID(context.Background(), media.IDFor(path))
+	got, err := f.st.GetByID(context.Background(), idOf(t, path))
 	require.NoError(t, err)
 	require.Empty(t, f.generatedThumbs(t))
 	_, _, ok := f.thumbs.Path(got)

@@ -43,7 +43,7 @@ func mvhd(raw uint32) []byte {
 	return bx("mvhd", p)
 }
 
-// raw1904 は「その文字盤の時刻をUTCとみなした値」を1904年起点の秒に直す。
+// raw1904 は「その撮影地の時刻をUTCとみなした値」を1904年起点の秒に直す。
 func raw1904(y int, mo time.Month, d, h, mi, s int) uint32 {
 	return uint32(time.Date(y, mo, d, h, mi, s, 0, time.UTC).Unix() + epochOffset)
 }
@@ -104,7 +104,7 @@ func TestReadTreatsIsoBrandAsUTC(t *testing.T) {
 	require.True(t, got.Equal(time.Date(2026, 9, 9, 9, 39, 6, 0, time.UTC)), "got %v", got)
 }
 
-// QuickTimeブランドでAppleのキーが無ければ、mvhd は文字盤の時刻である。
+// QuickTimeブランドでAppleのキーが無ければ、mvhd は撮影地の時刻である。
 // Canon PowerShot S95 がこれで、同じファイル内のEXIFと一致することを確認済み。
 func TestReadTreatsQuickTimeWithoutAppleKeyAsLocalTime(t *testing.T) {
 	t.Parallel()
@@ -115,7 +115,7 @@ func TestReadTreatsQuickTimeWithoutAppleKeyAsLocalTime(t *testing.T) {
 
 	got := videometa.Read(path).TakenAt
 
-	require.True(t, got.Equal(time.Date(2011, 1, 11, 20, 5, 54, 0, time.Local)), "got %v", got)
+	require.Equal(t, "2011-01-11 20:05:54", got.Format("2006-01-02 15:04:05"), "got %v", got)
 }
 
 // 互換ブランドにだけ qt があってもQuickTimeとみなす。
@@ -128,7 +128,7 @@ func TestReadDetectsQuickTimeFromACompatibleBrand(t *testing.T) {
 
 	got := videometa.Read(path).TakenAt
 
-	require.True(t, got.Equal(time.Date(2011, 1, 11, 20, 5, 54, 0, time.Local)), "got %v", got)
+	require.Equal(t, "2011-01-11 20:05:54", got.Format("2006-01-02 15:04:05"), "got %v", got)
 }
 
 // Appleのキーがあればそれが mvhd より優先される。時差を持つ唯一の出どころである。

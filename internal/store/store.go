@@ -24,12 +24,14 @@ type Store struct{ db *sql.DB }
 
 const schema = `
 CREATE TABLE IF NOT EXISTS media (
-    id        TEXT PRIMARY KEY,
-    path      TEXT NOT NULL UNIQUE,
-    taken_at  INTEGER NOT NULL,
-    mod_time  INTEGER NOT NULL
+    id             TEXT PRIMARY KEY,
+    path           TEXT NOT NULL UNIQUE,
+    taken_at_local TEXT NOT NULL,
+    mod_time       INTEGER NOT NULL,
+    day            TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_media_order ON media(taken_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_media_order ON media(taken_at_local DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_media_day ON media(day);
 `
 
 // Open はDBを開き、スキーマを作成する。親ディレクトリが無ければ作る。
@@ -80,17 +82,18 @@ func probeReadable(db *sql.DB) error {
 func (s *Store) Close() error { return s.db.Close() }
 
 const upsertSQL = `
-INSERT INTO media (id, path, taken_at, mod_time)
-VALUES (?, ?, ?, ?)
+INSERT INTO media (id, path, taken_at_local, mod_time, day)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
-    path      = excluded.path,
-    taken_at  = excluded.taken_at,
-    mod_time  = excluded.mod_time`
+    path           = excluded.path,
+    taken_at_local = excluded.taken_at_local,
+    mod_time       = excluded.mod_time,
+    day            = excluded.day`
 
 // Upsert は1件を登録または更新する。
 func (s *Store) Upsert(ctx context.Context, m media.Media) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
-		m.ID(), m.Path(), m.TakenAt().Unix(), m.ModTime().Unix())
+		m.ID(), m.Path(), m.TakenAtLocal(), m.ModTime().Unix(), m.Day())
 	if err != nil {
 		return fmt.Errorf("cannot save the media (%s): %w", m.Path(), err)
 	}
@@ -193,7 +196,7 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]media.Media
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+selectCols+` FROM media
-		 ORDER BY taken_at DESC, id DESC
+		 ORDER BY taken_at_local DESC, id DESC
 		 LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("cannot list the media: %w", err)
@@ -215,12 +218,12 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]media.Media
 // 開くとき、クライアントは通し番号で位置を決めるため、IDから番号へ引き直す経路が要る。
 // 該当が無い場合は ErrNotFound を返す。
 //
-// 並びは ListRange と同じ taken_at DESC, id DESC でなければならない。順序式が
+// 並びは ListRange と同じ taken_at_local DESC, id DESC でなければならない。順序式が
 // 二重になるが、片方だけ変えるとURLが別の1件の位置を指すため、
 // TestRankOfLocatesTheItemInListRange が両者の一致を縛っている。
 func (s *Store) RankOf(ctx context.Context, id string) (int, error) {
-	var takenAt int64
-	err := s.db.QueryRowContext(ctx, `SELECT taken_at FROM media WHERE id = ?`, id).Scan(&takenAt)
+	var takenAtLocal string
+	err := s.db.QueryRowContext(ctx, `SELECT taken_at_local FROM media WHERE id = ?`, id).Scan(&takenAtLocal)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
 	}
@@ -233,8 +236,8 @@ func (s *Store) RankOf(ctx context.Context, id string) (int, error) {
 	var rank int
 	err = s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM media
-		 WHERE taken_at > ? OR (taken_at = ? AND id > ?)`,
-		takenAt, takenAt, id).Scan(&rank)
+		 WHERE taken_at_local > ? OR (taken_at_local = ? AND id > ?)`,
+		takenAtLocal, takenAtLocal, id).Scan(&rank)
 	if err != nil {
 		return 0, fmt.Errorf("cannot count the media before it: %w", err)
 	}
@@ -272,23 +275,16 @@ func (s *Store) Count(ctx context.Context) (int, error) {
 
 // DayGroup は、その日に撮った件数。一覧の区切りに使う。
 type DayGroup struct {
-	Date  string // "2006-01-02" 形式。ローカル時刻で判定する
+	Date  string // "2006-01-02" 形式。撮影地の日
 	Count int
 }
 
 // DayGroups は日ごとの件数を新しい順に返す。一覧の区切りとスクラバーの目盛りに使う。
 //
-// 日に切るのは Go 側で、SQLの GROUP BY は使わない。strftime に 'localtime' を
-// 付ければ現地の日で切れるので、UTCになることは理由ではない。使わないのは、式で
-// 束ねると idx_media_order が効かず一時B-treeに積み直すためである（実測で3倍遅い）。
-// 式インデックスで先回りする道も無い。'localtime' はTZ次第で結果が変わるため、
-// SQLiteが非決定的として索引に使わせない。
-//
-// 索引は taken_at の降順なので同じ日は必ず連続する。その前提で1パスで畳んでいる。
-// strftime が単調であることはSQLiteに伝えられないが、呼び出し側は知っている。
+// day に索引があるので、SQLiteは索引を順に読むだけで束ね、一時B-treeに積み直さない。
 func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT taken_at FROM media ORDER BY taken_at DESC, id DESC`)
+		`SELECT day, COUNT(*) FROM media GROUP BY day ORDER BY day DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("cannot get the capture dates: %w", err)
 	}
@@ -296,30 +292,26 @@ func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 
 	var out []DayGroup
 	for rows.Next() {
-		var takenAt int64
-		if err := rows.Scan(&takenAt); err != nil {
+		var g DayGroup
+		if err := rows.Scan(&g.Date, &g.Count); err != nil {
 			return nil, fmt.Errorf("cannot read the capture dates: %w", err)
 		}
-		day := time.Unix(takenAt, 0).Format("2006-01-02")
-		if len(out) > 0 && out[len(out)-1].Date == day {
-			out[len(out)-1].Count++
-			continue
-		}
-		out = append(out, DayGroup{Date: day, Count: 1})
+		out = append(out, g)
 	}
 	return out, rows.Err()
 }
 
 // selectCols は scanMedia の Scan と列順を合わせるための並び。idは含めない。
-// パスから導ける値なので、復元は media.Restore に任せる。
-const selectCols = `path, taken_at, mod_time`
+// パスから導ける値なので、復元は media.Restore に任せる。day も同じく
+// taken_at_local から導けるので含めない。
+const selectCols = `path, taken_at_local, mod_time`
 
 // scanMedia は1行を復元する。引数の並びは selectCols と一致していなければならない。
 func scanMedia(row interface{ Scan(...any) error }) (media.Media, error) {
-	var path string
-	var takenAt, modTime int64
-	if err := row.Scan(&path, &takenAt, &modTime); err != nil {
+	var path, takenAtLocal string
+	var modTime int64
+	if err := row.Scan(&path, &takenAtLocal, &modTime); err != nil {
 		return media.Media{}, err
 	}
-	return media.Restore(path, time.Unix(takenAt, 0), time.Unix(modTime, 0)), nil
+	return media.Restore(path, takenAtLocal, time.Unix(modTime, 0)), nil
 }

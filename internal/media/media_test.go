@@ -8,13 +8,19 @@ import (
 	"github.com/yendo/famifo-proto/internal/media"
 )
 
-func TestIDForIsStableAndDistinct(t *testing.T) {
+// IDはパスだけから決まる。撮影日時やmtimeが変わっても同じ1件として追跡される。
+func TestIDIsStableAndDistinct(t *testing.T) {
 	t.Parallel()
-	a := media.IDFor("/items/a.jpg")
+	a, err := media.New("/items/a.jpg", time.Time{}, testModTime)
+	require.NoError(t, err)
+	again, err := media.New("/items/a.jpg", time.Time{}, testModTime.Add(time.Hour))
+	require.NoError(t, err)
+	b, err := media.New("/items/b.jpg", time.Time{}, testModTime)
+	require.NoError(t, err)
 
-	require.Len(t, a, 32)
-	require.Equal(t, a, media.IDFor("/items/a.jpg"))
-	require.NotEqual(t, a, media.IDFor("/items/b.jpg"))
+	require.Len(t, a.ID(), 32)
+	require.Equal(t, a.ID(), again.ID())
+	require.NotEqual(t, a.ID(), b.ID())
 }
 
 func TestIsCandidate(t *testing.T) {
@@ -47,19 +53,33 @@ func TestNewFillsTheFields(t *testing.T) {
 	m, err := media.New(path, time.Time{}, testModTime)
 
 	require.NoError(t, err)
-	require.Equal(t, media.IDFor(path), m.ID(), "the ID is derived from the path")
 	require.Equal(t, path, m.Path())
 	require.True(t, m.ModTime().Equal(testModTime))
 }
 
-func TestNewUsesTheCaptureTimeWhenPresent(t *testing.T) {
+// issue #44 のパリの例。時差タグのある写真は撮影地の時刻で入り、
+// サーバのタイムゾーンによらず撮影地の日になる。
+func TestNewKeepsTheLocalTimeWhereItWasShot(t *testing.T) {
+	t.Parallel()
+	paris := time.FixedZone("CET", 60*60)
+	takenAt := time.Date(2026, 3, 1, 21, 0, 0, 0, paris)
+
+	m, err := media.New("/items/a.jpg", takenAt, testModTime)
+
+	require.NoError(t, err)
+	require.Equal(t, "2026-03-01T21:00:00", m.TakenAtLocal())
+	require.Equal(t, "2026-03-01", m.Day())
+}
+
+// 時差の分からない値は UTC のラベル付きで届く。ラベルは無視して撮影地の時刻として使う。
+func TestNewKeepsTheLocalTimeOfAnUnknownOffset(t *testing.T) {
 	t.Parallel()
 	takenAt := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
 
 	m, err := media.New("/items/a.jpg", takenAt, testModTime)
 
 	require.NoError(t, err)
-	require.True(t, m.TakenAt().Equal(takenAt), "the capture time wins: got=%v", m.TakenAt())
+	require.Equal(t, "2021-03-04T05:06:07", m.TakenAtLocal())
 }
 
 func TestNewFallsBackToModTimeWithoutACaptureTime(t *testing.T) {
@@ -67,7 +87,9 @@ func TestNewFallsBackToModTimeWithoutACaptureTime(t *testing.T) {
 	m, err := media.New("/items/a.jpg", time.Time{}, testModTime)
 
 	require.NoError(t, err)
-	require.True(t, m.TakenAt().Equal(testModTime), "a item with no capture time still stays in the gallery")
+	// mtimeは瞬間なので、サーバの time.Local の時刻になる
+	require.Equal(t, testModTime.Local().Format("2006-01-02T15:04:05"), m.TakenAtLocal(),
+		"a item with no capture time still stays in the gallery")
 }
 
 func TestNewRejectsAPathThatIsNotACandidate(t *testing.T) {
@@ -88,12 +110,11 @@ func TestNewRejectsAPathThatIsNotACandidate(t *testing.T) {
 func TestRestoreKeepsTheStoredValues(t *testing.T) {
 	t.Parallel()
 	const path = "/items/a.jpg"
-	takenAt := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
 
-	m := media.Restore(path, takenAt, testModTime)
+	m := media.Restore(path, "2021-03-04T05:06:07", testModTime)
 
-	require.Equal(t, media.IDFor(path), m.ID())
 	require.Equal(t, path, m.Path())
-	require.True(t, m.TakenAt().Equal(takenAt))
+	require.Equal(t, "2021-03-04T05:06:07", m.TakenAtLocal())
+	require.Equal(t, "2021-03-04", m.Day())
 	require.True(t, m.ModTime().Equal(testModTime))
 }

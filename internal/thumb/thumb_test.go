@@ -24,7 +24,9 @@ func mediaOf(t *testing.T, src string) media.Media {
 	t.Helper()
 	fi, err := os.Stat(src)
 	require.NoError(t, err)
-	return media.Restore(src, fi.ModTime(), fi.ModTime())
+	m, err := media.New(src, fi.ModTime(), fi.ModTime())
+	require.NoError(t, err)
+	return m
 }
 
 // famifoThumbOf は src の自前のサムネイルを Path 経由で引き当てる。置き場の規則は
@@ -238,7 +240,8 @@ func TestGenerateFailsOnMissingFile(t *testing.T) {
 	pv := newTestProvider(t)
 	// 消えた直後にイベントを拾った状況。行だけあって原本が無い1枚を組み立てる。
 	missing := filepath.Join(t.TempDir(), "nope.jpg")
-	m := media.Restore(missing, time.Unix(1600000000, 0), time.Unix(1600000000, 0))
+	m, err := media.New(missing, time.Unix(1600000000, 0), time.Unix(1600000000, 0))
+	require.NoError(t, err)
 
 	require.Error(t, pv.Prepare(m, 1))
 }
@@ -249,10 +252,10 @@ func TestRemoveFamifoThumbs(t *testing.T) {
 	src := writeImage(t, t.TempDir(), "a.jpg", 400, 200)
 	require.NoError(t, provide(t, pv, src, 1))
 
-	require.NoError(t, pv.RemoveFamifoThumbs(media.IDFor(src)))
+	require.NoError(t, pv.RemoveFamifoThumbs(mediaOf(t, src).ID()))
 
 	requireNoFamifoThumb(t, pv, src)
-	require.NoError(t, pv.RemoveFamifoThumbs(media.IDFor(src)), "deleting a thumbnail that does not exist is not an error")
+	require.NoError(t, pv.RemoveFamifoThumbs(mediaOf(t, src).ID()), "deleting a thumbnail that does not exist is not an error")
 }
 
 // TestGenerateAppliesOrientation は、渡されたOrientationがサムネイルの

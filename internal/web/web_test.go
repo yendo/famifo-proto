@@ -77,7 +77,8 @@ func (f *webFixture) addMedia(t *testing.T, name string, takenAt time.Time, kind
 	}
 	require.NoError(t, os.WriteFile(path, body, 0o644))
 
-	m := media.Restore(path, takenAt, takenAt)
+	m, err := media.New(path, takenAt, takenAt)
+	require.NoError(t, err)
 	require.NoError(t, f.st.Upsert(context.Background(), m))
 
 	switch kind {
@@ -267,9 +268,9 @@ func TestGalleryEmbedsDayGroups(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
 	// 新しい順に: 2026-02-08 が2枚、2026-02-03 が1枚
-	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 18, 0, 0, 0, time.Local), famifoThumb)
-	f.addMedia(t, "b.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), famifoThumb)
-	f.addMedia(t, "c.jpg", time.Date(2026, 2, 3, 10, 0, 0, 0, time.Local), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 18, 0, 0, 0, time.UTC), famifoThumb)
+	f.addMedia(t, "b.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.UTC), famifoThumb)
+	f.addMedia(t, "c.jpg", time.Date(2026, 2, 3, 10, 0, 0, 0, time.UTC), famifoThumb)
 
 	got := embeddedDayGroups(t, doGet(t, f.h, "/").Body.String())
 
@@ -292,7 +293,7 @@ func TestGalleryEmbedsEmptyDayGroupsForEmptyLibrary(t *testing.T) {
 func TestDatesEndpointIsGone(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
-	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.Local), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 10, 0, 0, 0, time.UTC), famifoThumb)
 
 	rec := doGet(t, f.h, "/dates")
 
@@ -300,29 +301,29 @@ func TestDatesEndpointIsGone(t *testing.T) {
 		"the per-day table ships in the first HTML, so there is no endpoint for it")
 }
 
-func TestTilesTagsEachTileWithLocalDate(t *testing.T) {
+// タイルの日は撮影地の日である。パリで夜に撮った写真は、サーバが JST でも
+// その日のタイルになる。
+func TestTilesTagsEachTileWithTheDayWhereItWasShot(t *testing.T) {
 	// time.Local はプロセス全体で1つしかない。書き換えるテストが並列に走ると、
 	// 同時に走っている他のテストの時刻解釈まで巻き添えで変わる。実際 -race が
 	// 競合として検出する。このテストは t.Parallel() を呼ばない。
-	f := newWebFixture(t, 60)
-	// TZ=UTC の環境でも回帰を検出できるよう、テスト中だけ固定オフセットにする。
 	orig := time.Local
 	time.Local = time.FixedZone("JST", 9*60*60)
 	t.Cleanup(func() { time.Local = orig })
-
-	// ローカルで2月8日の未明。UTCに直すと2月7日になる時刻。
-	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 0, 30, 0, 0, time.Local), famifoThumb)
+	f := newWebFixture(t, 60)
+	paris := time.FixedZone("CET", 60*60)
+	f.addMedia(t, "a.jpg", time.Date(2026, 3, 1, 21, 0, 0, 0, paris), famifoThumb)
 
 	body := doGet(t, f.h, "/tiles?chunk=0").Body.String()
 
-	require.Contains(t, body, `data-date="2026-02-08"`,
-		"cutting in UTC would give 2026-02-07; group by local time")
+	require.Contains(t, body, `data-date="2026-03-01"`,
+		"cutting the instant in JST would give 2026-03-02")
 }
 
 func TestGalleryTagsFirstChunkWithDates(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 60)
-	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local), famifoThumb)
+	f.addMedia(t, "a.jpg", time.Date(2026, 2, 8, 12, 0, 0, 0, time.UTC), famifoThumb)
 
 	body := doGet(t, f.h, "/").Body.String()
 
@@ -534,11 +535,14 @@ func TestServeOriginalNotFoundForUnknownID(t *testing.T) {
 func TestUnindexedPathsAreNotReachable(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
+	// インデックスに載っていない1件。IDは組み立てられても配信されない
+	unindexed, err := media.New(filepath.Join(f.mediaDir, "never.jpg"), time.Time{}, time.Time{})
+	require.NoError(t, err)
 	// パスではなくIDでしか引けないため、traversalは構造的に成立しない
 	for _, target := range []string{
 		"/full/../../etc/passwd",
 		"/thumb/..%2f..%2fetc%2fpasswd",
-		"/full/" + media.IDFor("/etc/passwd"),
+		"/full/" + unindexed.ID(),
 	} {
 		t.Run(target, func(t *testing.T) {
 			rec := doGet(t, f.h, target)

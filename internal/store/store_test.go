@@ -24,10 +24,15 @@ func openTestStore(t *testing.T) *store.Store {
 	return s
 }
 
-// mtimeは撮影日時とずらす。どちらもINTEGERでGo側もint64なので、SELECTの列順と
-// Scanの並びが入れ替わっても同じ値なら気づけない。別の値なら往復で落ちる。
-func mediaAt(path string, takenAt time.Time) media.Media {
-	return media.Restore(path, takenAt, takenAt.Add(time.Hour))
+// mtimeは撮影日時とずらす。SELECTの列順とScanの並びが入れ替わったとき、
+// 同じ値だと往復で気づけない。
+//
+// New を通すのは、撮影地の時刻の整形を store のテストで書き直さないため。
+func mediaAt(t *testing.T, path string, takenAt time.Time) media.Media {
+	t.Helper()
+	m, err := media.New(path, takenAt, takenAt.Add(time.Hour))
+	require.NoError(t, err)
+	return m
 }
 
 // store.Open がディレクトリを用意するので、呼び出し側は順序を気にしなくてよい。
@@ -79,14 +84,15 @@ func TestUpsertThenGetByID(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	want := mediaAt("/items/a.jpg", time.Unix(1600000000, 0))
+	want := mediaAt(t, "/items/a.jpg", time.Unix(1600000000, 0))
 
 	require.NoError(t, s.Upsert(ctx, want))
 	got, err := s.GetByID(ctx, want.ID())
 
 	require.NoError(t, err)
 	require.Equal(t, want.Path(), got.Path())
-	require.Equal(t, want.TakenAt().Unix(), got.TakenAt().Unix())
+	require.Equal(t, want.TakenAtLocal(), got.TakenAtLocal())
+	require.Equal(t, want.Day(), got.Day())
 	require.Equal(t, want.ModTime().Unix(), got.ModTime().Unix())
 }
 
@@ -94,15 +100,15 @@ func TestUpsertReplacesExistingRow(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	m := mediaAt("/items/a.jpg", time.Unix(1600000000, 0))
+	m := mediaAt(t, "/items/a.jpg", time.Unix(1600000000, 0))
 	require.NoError(t, s.Upsert(ctx, m))
 
-	m = mediaAt(m.Path(), time.Unix(1700000000, 0))
+	m = mediaAt(t, m.Path(), time.Unix(1700000000, 0))
 	require.NoError(t, s.Upsert(ctx, m))
 
 	got, err := s.GetByID(ctx, m.ID())
 	require.NoError(t, err)
-	require.Equal(t, int64(1700000000), got.TakenAt().Unix())
+	require.Equal(t, m.TakenAtLocal(), got.TakenAtLocal())
 
 	n, err := s.Count(ctx)
 	require.NoError(t, err)
@@ -122,7 +128,7 @@ func TestDeleteByPath(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	m := mediaAt("/items/a.jpg", time.Unix(1600000000, 0))
+	m := mediaAt(t, "/items/a.jpg", time.Unix(1600000000, 0))
 	require.NoError(t, s.Upsert(ctx, m))
 
 	got, ok, err := s.DeleteByPath(ctx, m.Path())
@@ -139,8 +145,8 @@ func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	a := mediaAt("/p/album/a.jpg", time.Unix(1600000000, 0))
-	b := mediaAt("/p/album2/b.jpg", time.Unix(1600000001, 0))
+	a := mediaAt(t, "/p/album/a.jpg", time.Unix(1600000000, 0))
+	b := mediaAt(t, "/p/album2/b.jpg", time.Unix(1600000001, 0))
 	require.NoError(t, s.Upsert(ctx, a))
 	require.NoError(t, s.Upsert(ctx, b))
 
@@ -161,8 +167,8 @@ func TestDeleteByPathPrefixAcceptsATrailingSeparator(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	a := mediaAt("/p/album/a.jpg", time.Unix(1600000000, 0))
-	b := mediaAt("/p/album2/b.jpg", time.Unix(1600000001, 0))
+	a := mediaAt(t, "/p/album/a.jpg", time.Unix(1600000000, 0))
+	b := mediaAt(t, "/p/album2/b.jpg", time.Unix(1600000001, 0))
 	require.NoError(t, s.Upsert(ctx, a))
 	require.NoError(t, s.Upsert(ctx, b))
 
@@ -179,7 +185,7 @@ func TestDeleteByPathPrefixRejectsAnEmptyPrefix(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	require.NoError(t, s.Upsert(ctx, mediaAt("/p/album/a.jpg", time.Unix(1600000000, 0))))
+	require.NoError(t, s.Upsert(ctx, mediaAt(t, "/p/album/a.jpg", time.Unix(1600000000, 0))))
 
 	_, err := s.DeleteByPathPrefix(ctx, "")
 
@@ -206,8 +212,8 @@ func TestDeleteByPathPrefixTreatsWildcardsAsLiterals(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := openTestStore(t)
 			ctx := context.Background()
-			a := mediaAt(tt.prefix+"/a.jpg", time.Unix(1600000000, 0))
-			b := mediaAt(tt.other+"/b.jpg", time.Unix(1600000001, 0))
+			a := mediaAt(t, tt.prefix+"/a.jpg", time.Unix(1600000000, 0))
+			b := mediaAt(t, tt.other+"/b.jpg", time.Unix(1600000001, 0))
 			require.NoError(t, s.Upsert(ctx, a))
 			require.NoError(t, s.Upsert(ctx, b))
 
@@ -224,8 +230,7 @@ func TestAllPaths(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	m := media.Restore("/items/a.jpg",
-		time.Unix(1600000000, 0), time.Unix(1650000000, 0))
+	m := media.Restore("/items/a.jpg", "2020-09-13T12:26:40", time.Unix(1650000000, 0))
 	require.NoError(t, s.Upsert(ctx, m))
 
 	got, err := s.AllPaths(ctx)
@@ -240,7 +245,7 @@ func TestListRangeReturnsRequestedWindow(t *testing.T) {
 	ctx := context.Background()
 	// 新しい順に e, d, c, b, a になるよう投入する
 	for i, name := range []string{"a", "b", "c", "d", "e"} {
-		require.NoError(t, s.Upsert(ctx, mediaAt("/items/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
+		require.NoError(t, s.Upsert(ctx, mediaAt(t, "/items/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
 	}
 
 	got, err := s.ListRange(ctx, 1, 2)
@@ -256,8 +261,11 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 	same := time.Unix(1600000000, 0)
+	var items []media.Media
 	for _, name := range []string{"a", "b", "c"} {
-		require.NoError(t, s.Upsert(ctx, mediaAt("/items/"+name+".jpg", same)))
+		m := mediaAt(t, "/items/"+name+".jpg", same)
+		require.NoError(t, s.Upsert(ctx, m))
+		items = append(items, m)
 	}
 
 	// 撮影日時が同じ場合は id の降順で安定すること。
@@ -267,9 +275,11 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 	// ORDER BY 句から id DESC を外しただけではこのテストは落ちない。
 	// 不変条件は「ORDER BY 句 + インデックス」の組で担保されており、
 	// テストで句の削除だけを検出することは原理的にできない。
-	paths := []string{"/items/a.jpg", "/items/b.jpg", "/items/c.jpg"}
-	want := append([]string(nil), paths...)
-	sort.Slice(want, func(i, j int) bool { return media.IDFor(want[i]) > media.IDFor(want[j]) })
+	sort.Slice(items, func(i, j int) bool { return items[i].ID() > items[j].ID() })
+	var want []string
+	for _, m := range items {
+		want = append(want, m.Path())
+	}
 
 	var seen []string
 	for i := range 3 {
@@ -287,7 +297,7 @@ func TestListRangeHandlesBoundaries(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 	for i, name := range []string{"a", "b", "c"} {
-		require.NoError(t, s.Upsert(ctx, mediaAt("/items/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
+		require.NoError(t, s.Upsert(ctx, mediaAt(t, "/items/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
 	}
 
 	tail, err := s.ListRange(ctx, 2, 10) // limitが残数を超える
@@ -323,10 +333,10 @@ func TestRankOfLocatesTheItemInListRange(t *testing.T) {
 	ctx := context.Background()
 	same := time.Unix(1600000100, 0)
 	items := []media.Media{
-		mediaAt("/items/new.jpg", time.Unix(1600000200, 0)),
-		mediaAt("/items/tie-a.jpg", same),
-		mediaAt("/items/tie-b.jpg", same),
-		mediaAt("/items/old.jpg", time.Unix(1600000000, 0)),
+		mediaAt(t, "/items/new.jpg", time.Unix(1600000200, 0)),
+		mediaAt(t, "/items/tie-a.jpg", same),
+		mediaAt(t, "/items/tie-b.jpg", same),
+		mediaAt(t, "/items/old.jpg", time.Unix(1600000000, 0)),
 	}
 	for _, m := range items {
 		require.NoError(t, s.Upsert(ctx, m))
@@ -347,7 +357,7 @@ func TestRankOfMissingReturnsErrNotFound(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 
-	_, err := s.RankOf(context.Background(), media.IDFor("/items/gone.jpg"))
+	_, err := s.RankOf(context.Background(), "deadbeef")
 
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
@@ -358,14 +368,14 @@ func TestDayGroupsCountsEachDay(t *testing.T) {
 	ctx := context.Background()
 	// 新しい順に: 2022-12-05 が2枚、2022-12-01 が1枚、2021-05-20 が2枚
 	times := []time.Time{
-		time.Date(2022, 12, 5, 18, 0, 0, 0, time.Local),
-		time.Date(2022, 12, 5, 10, 0, 0, 0, time.Local),
-		time.Date(2022, 12, 1, 10, 0, 0, 0, time.Local),
-		time.Date(2021, 5, 20, 20, 0, 0, 0, time.Local),
-		time.Date(2021, 5, 20, 9, 0, 0, 0, time.Local),
+		time.Date(2022, 12, 5, 18, 0, 0, 0, time.UTC),
+		time.Date(2022, 12, 5, 10, 0, 0, 0, time.UTC),
+		time.Date(2022, 12, 1, 10, 0, 0, 0, time.UTC),
+		time.Date(2021, 5, 20, 20, 0, 0, 0, time.UTC),
+		time.Date(2021, 5, 20, 9, 0, 0, 0, time.UTC),
 	}
 	for i, at := range times {
-		require.NoError(t, s.Upsert(ctx, mediaAt(fmt.Sprintf("/items/%d.jpg", i), at)))
+		require.NoError(t, s.Upsert(ctx, mediaAt(t, fmt.Sprintf("/items/%d.jpg", i), at)))
 	}
 
 	got, err := s.DayGroups(ctx)
@@ -378,28 +388,25 @@ func TestDayGroupsCountsEachDay(t *testing.T) {
 	}, got)
 }
 
-func TestDayGroupsUsesLocalTime(t *testing.T) {
+// 日は撮影地の時刻で決まる。パリで夜に撮った写真は、サーバが JST でも
+// その日に入る。瞬間をサーバの日で切ると翌日に回る。
+func TestDayGroupsUsesTheDayWhereItWasShot(t *testing.T) {
 	// time.Local はプロセス全体で1つしかない。書き換えるテストが並列に走ると、
 	// 同時に走っている他のテストの時刻解釈まで巻き添えで変わる。実際 -race が
 	// 競合として検出する。このテストは t.Parallel() を呼ばない。
-	s := openTestStore(t)
-	ctx := context.Background()
-	// TZ=UTC の環境ではローカル集計とUTC集計が同じ結果になり、
-	// このテストが回帰を検出できなくなる。テスト中だけ固定オフセットに差し替える。
 	orig := time.Local
 	time.Local = time.FixedZone("JST", 9*60*60)
 	t.Cleanup(func() { time.Local = orig })
-
-	// ローカルで11月1日の未明。UTCに直すと10月31日になる時刻を選ぶ。
-	at := time.Date(2022, 11, 1, 0, 30, 0, 0, time.Local)
-	require.NoError(t, s.Upsert(ctx, mediaAt("/items/a.jpg", at)))
+	s := openTestStore(t)
+	ctx := context.Background()
+	paris := time.FixedZone("CET", 60*60)
+	require.NoError(t, s.Upsert(ctx, mediaAt(t, "/items/a.jpg", time.Date(2026, 3, 1, 21, 0, 0, 0, paris))))
 
 	got, err := s.DayGroups(ctx)
 
 	require.NoError(t, err)
-	require.Len(t, got, 1)
-	require.Equal(t, "2022-11-01", got[0].Date,
-		"cutting in UTC would give 2022-10-31; group by local time")
+	require.Equal(t, []store.DayGroup{{Date: "2026-03-01", Count: 1}}, got,
+		"cutting the instant in JST would give 2026-03-02")
 }
 
 func TestDayGroupsEmptyStore(t *testing.T) {
@@ -417,14 +424,14 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	base := time.Date(2026, 2, 8, 12, 0, 0, 0, time.Local)
+	base := time.Date(2026, 2, 8, 12, 0, 0, 0, time.UTC)
 	// 1枚の日・3枚の日・5枚の日を混ぜる
 	perDay := []int{5, 1, 3}
 	n := 0
 	for d, count := range perDay {
 		for k := 0; k < count; k++ {
 			at := base.AddDate(0, 0, -d).Add(time.Duration(-k) * time.Hour)
-			require.NoError(t, s.Upsert(ctx, mediaAt(fmt.Sprintf("/items/%d.jpg", n), at)))
+			require.NoError(t, s.Upsert(ctx, mediaAt(t, fmt.Sprintf("/items/%d.jpg", n), at)))
 			n++
 		}
 	}
@@ -446,7 +453,7 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 	offset := 0
 	for _, g := range groups {
 		for k := 0; k < g.Count; k++ {
-			require.Equal(t, g.Date, all[offset].TakenAt().Format("2006-01-02"),
+			require.Equal(t, g.Date, all[offset].Day(),
 				"the item at offset=%d should be from %s", offset, g.Date)
 			offset++
 		}
@@ -463,14 +470,15 @@ func TestOpenRejectsADatabaseWhoseColumnsHaveChanged(t *testing.T) {
 
 	db, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	// taken_at を別名にした古い世代のDB。索引の名前は今と同じなので、
-	// CREATE INDEX IF NOT EXISTS も作り直さない。
+	// taken_at_local を別名にした古い世代のDB。索引の名前と day は今と同じなので、
+	// CREATE INDEX IF NOT EXISTS は作り直さず、スキーマ作成は素通りする。
 	_, err = db.Exec(`
 CREATE TABLE media (
     id       TEXT PRIMARY KEY,
     path     TEXT NOT NULL UNIQUE,
-    shot_at  INTEGER NOT NULL,
-    mod_time INTEGER NOT NULL
+    shot_at  TEXT NOT NULL,
+    mod_time INTEGER NOT NULL,
+    day      TEXT NOT NULL
 );
 CREATE INDEX idx_media_order ON media(shot_at DESC, id DESC);`)
 	require.NoError(t, err)
@@ -480,4 +488,28 @@ CREATE INDEX idx_media_order ON media(shot_at DESC, id DESC);`)
 
 	require.Error(t, err, "an unreadable database must not start up")
 	require.Contains(t, err.Error(), "cannot read the database")
+}
+
+// 撮影日時を Unix 秒で持っていた世代のDB。taken_at が INTEGER のまま残っていても
+// 読み進めず、作り直しを求める。
+func TestOpenRejectsADatabaseThatStoresTheCaptureTimeAsAnInstant(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "epoch.db")
+
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+CREATE TABLE media (
+    id        TEXT PRIMARY KEY,
+    path      TEXT NOT NULL UNIQUE,
+    taken_at  INTEGER NOT NULL,
+    mod_time  INTEGER NOT NULL
+);
+CREATE INDEX idx_media_order ON media(taken_at DESC, id DESC);`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	_, err = store.Open(path)
+
+	require.Error(t, err, "the database has to be rebuilt")
 }
