@@ -178,20 +178,49 @@ func writeJPEGWithOrientation(t *testing.T, dir, name string, orientation uint16
 func TestReadReturnsTheEXIFDate(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	when := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
-	path := writeJPEGWithEXIF(t, dir, "a.jpg", when)
+	path := writeJPEGWithEXIF(t, dir, "a.jpg", time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC))
 
 	got := exif.Read(path)
 
-	require.True(t, got.TakenAt.Equal(when), "got=%v", got.TakenAt)
-	// 時差を持たないDateTimeOriginalを imagemeta がUTCとして返すことを固定する。
-	// media.New はこの Location が time.UTC そのものかどうかで、
-	// 撮影地の時刻として読み直すかを判別している。
-	require.Equal(t, time.UTC, got.TakenAt.Location())
+	// 日付と時刻の見た目で比べる。瞬間で比べると実行環境のタイムゾーンに
+	// 依存し、「EXIFをUTCとして読む」という誤った挙動を固定してしまう。
+	// 時差の解釈そのものは TestReadAssumesLocalWhenTheEXIFDateHasNoOffset が押さえる。
+	require.Equal(t, "2021-03-04 05:06:07", got.TakenAt.Format("2006-01-02 15:04:05"))
 }
 
+// useJST はテスト中だけ time.Local を固定オフセットに差し替える。
+// TZ=UTC の環境ではローカル解釈とUTC解釈が同じになり、時差の扱いの回帰を
+// 検出できなくなるため。
+//
+// time.Local はプロセス全体で1つしかない。書き換えるテストが並列に走ると、
+// 同時に走っている他のテストの時刻解釈まで巻き添えで変わる。実際 -race が
+// 競合として検出する。これを使うテストは t.Parallel() を呼ばない。
+func useJST(t *testing.T) {
+	t.Helper()
+	orig := time.Local
+	time.Local = time.FixedZone("JST", 9*60*60)
+	t.Cleanup(func() { time.Local = orig })
+}
+
+// EXIFのDateTimeOriginalは時差を持たない。撮影地の時刻とみなして読まないと、
+// 表示される日付が時差のぶんずれる。JSTなら9時間後ろにずれ、15時以降に
+// 撮った写真が翌日に回る。
+func TestReadAssumesLocalWhenTheEXIFDateHasNoOffset(t *testing.T) {
+	useJST(t)
+	path := writeJPEGWithEXIF(t, t.TempDir(), "a.jpg", time.Date(2025, 5, 24, 9, 8, 31, 0, time.UTC))
+
+	got := exif.Read(path)
+
+	want := time.Date(2025, 5, 24, 9, 8, 31, 0, time.Local)
+	require.True(t, got.TakenAt.Equal(want),
+		"the EXIF time is read as the local time where it was shot: got=%v want=%v", got.TakenAt, want)
+}
+
+// OffsetTimeOriginal がある写真は本当の瞬間が分かっている。これをローカル
+// 時刻として読み直すと、旅行先で撮った写真の時刻を自宅の時差で上書きして
+// しまう。ローカルとみなして組み直してよいのは、時差が分からない写真だけ。
 func TestReadKeepsTheEXIFOffset(t *testing.T) {
-	t.Parallel()
+	useJST(t)
 	dir := t.TempDir()
 	// ベルリン(+02:00)で正午に撮った写真
 	path := writeJPEGWithEXIFOffset(t, dir, "a.jpg",
@@ -200,7 +229,8 @@ func TestReadKeepsTheEXIFOffset(t *testing.T) {
 	got := exif.Read(path)
 
 	_, off := got.TakenAt.Zone()
-	require.Equal(t, 2*60*60, off, "keeps the offset when one is written: got=%v", got.TakenAt)
+	require.Equal(t, 2*60*60, off,
+		"the offset written in the EXIF is kept, not overwritten with JST: got=%v", got.TakenAt)
 	require.Equal(t, 12, got.TakenAt.Hour(), "still noon local time: got=%v", got.TakenAt)
 }
 

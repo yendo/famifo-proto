@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/yendo/famifo-proto/internal/imagefmt"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/synology"
 )
 
@@ -178,12 +178,12 @@ func (w *Watcher) handleEvent(ctx context.Context, ev fsnotify.Event) {
 			w.addPendingTree(ev.Name)
 			return
 		}
-		if imagefmt.IsSupported(ev.Name) {
+		if media.IsCandidate(ev.Name) {
 			w.pendingPaths[ev.Name] = time.Now()
 		}
 
 	case ev.Has(fsnotify.Write):
-		if imagefmt.IsSupported(ev.Name) {
+		if media.IsCandidate(ev.Name) {
 			w.pendingPaths[ev.Name] = time.Now()
 		}
 	}
@@ -311,7 +311,7 @@ func (w *Watcher) addPendingTree(root string) {
 			}
 			return nil
 		}
-		if !imagefmt.IsSupported(path) {
+		if !media.IsCandidate(path) {
 			return nil
 		}
 		w.pendingPaths[path] = now

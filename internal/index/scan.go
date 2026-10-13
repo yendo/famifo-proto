@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yendo/famifo-proto/internal/imagefmt"
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/synology"
 )
 
@@ -174,18 +174,19 @@ func (s *scanOnce) scanRoot(ctx context.Context, root string) error {
 			return nil
 		}
 		if d.IsDir() {
+			// 除外は下の IsCandidate が担う。ここで飛ばすのは走査を速くするためだけ。
 			if synology.IsManagedDir(d.Name()) {
 				return fs.SkipDir
 			}
 			return nil
 		}
-		if !imagefmt.IsSupported(path) {
+		if !media.IsCandidate(path) {
 			return nil
 		}
 		// シンボリックリンクは写真として数えない。取り込みは indexFile が
-		// 断るので、ここで落とさなくても行は入らないが、数えると「見つけた
-		// のに入らなかった」ぶんが Indexed に混ざり、空のルートを判定する
-		// foundByRoot も嵩上げされる。
+		// 断るので、ここで落とさなくても行は入らないが、走査のたびに送られては
+		// 断られ、警告と Skipped が積み上がる。空のルートを判定する foundByRoot
+		// も嵩上げされる。
 		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
