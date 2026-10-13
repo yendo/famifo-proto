@@ -6,10 +6,9 @@ import (
 	"github.com/yendo/famifo-proto/internal/imagefmt"
 )
 
-// indexView は index.html の入力。tilesViewを埋め込むので
-// {{template "tiles" .}} にそのまま渡せる。
+// indexView は index.html の入力。タイルは持たない。一覧の中身はクライアントが
+// /tiles から取り、カードに組んでから貼る。
 type indexView struct {
-	tilesView
 	Total     int
 	ChunkSize int
 	// DayGroups は日ごとの件数。html/template が <script> の中でJSONにして埋め込む。
@@ -20,19 +19,15 @@ type indexView struct {
 	AuthEnabled bool
 }
 
-// tilesView は tiles.html の入力。
-type tilesView struct {
-	Media []mediaView
-}
-
-// mediaView は1件分のテンプレート入力。
+// mediaView は /tiles の応答の1要素。クライアント（chunk.js の Tile）との取り決め。
+// URL はここで組み立てて送る。ID だけを送ると、URL の規則が Go と JS の2箇所に分かれる。
 type mediaView struct {
-	ID       string
-	PageURL  string // その1件だけを開くURL。タイルのリンク先
-	ThumbURL string
-	FullURL  string
-	Date     string // "2006-01-02"。ローカル時刻。クライアントが日の区切りに使う
-	IsVideo  bool   // タイルに再生の印を出すか、フルビューを <video> にするか
+	ID       string `json:"id"`
+	PageURL  string `json:"pageUrl"` // その1件だけを開くURL。タイルのリンク先
+	FullURL  string `json:"fullUrl"`
+	ThumbURL string `json:"thumbUrl"`
+	Date     string `json:"date"`    // "2006-01-02"。撮影地の日。クライアントが日の区切りに使う
+	IsVideo  bool   `json:"isVideo"` // タイルに再生の印を出すか、フルビューを <video> にするか
 }
 
 // dayGroup は埋め込む DayGroups の1要素。
@@ -43,12 +38,7 @@ type dayGroup struct {
 }
 
 // buildIndexView はトップページの入力を組み立てる。
-// 先頭のチャンクを埋めておくので、開いた直後に灰色の画面が出ない。
 func (h *Handler) buildIndexView(r *http.Request, openIndex int) (indexView, error) {
-	tiles, err := h.buildTilesView(r, 0, h.chunkSize)
-	if err != nil {
-		return indexView{}, err
-	}
 	total, err := h.store.Count(r.Context())
 	if err != nil {
 		return indexView{}, err
@@ -63,24 +53,25 @@ func (h *Handler) buildIndexView(r *http.Request, openIndex int) (indexView, err
 	}
 
 	return indexView{
-		tilesView: tiles, Total: total, ChunkSize: h.chunkSize,
+		Total: total, ChunkSize: h.chunkSize,
 		DayGroups: dayGroups, OpenIndex: openIndex,
 		AuthEnabled: h.auth != nil,
 	}, nil
 }
 
-// buildTilesView はオフセット指定で1窓枠分を組み立てる。
-func (h *Handler) buildTilesView(r *http.Request, offset, limit int) (tilesView, error) {
+// listMedia はオフセット指定で1チャンク分を組み立てる。0件でも nil ではなく
+// 空のスライスを返すので、JSONは null ではなく [] になる。
+func (h *Handler) listMedia(r *http.Request, offset, limit int) ([]mediaView, error) {
 	items, err := h.store.ListRange(r.Context(), offset, limit)
 	if err != nil {
-		return tilesView{}, err
+		return nil, err
 	}
 
 	// タイルのURLは出どころによらず /thumb/ である。どのファイルを出すかは
 	// ハンドラが調べるので、一覧の組み立てではファイルシステムを叩かない。
-	v := tilesView{Media: make([]mediaView, 0, len(items))}
+	out := make([]mediaView, 0, len(items))
 	for _, m := range items {
-		v.Media = append(v.Media, mediaView{
+		out = append(out, mediaView{
 			ID:       m.ID(),
 			PageURL:  "/item/" + m.ID(),
 			FullURL:  "/full/" + m.ID(),
@@ -89,5 +80,5 @@ func (h *Handler) buildTilesView(r *http.Request, offset, limit int) (tilesView,
 			IsVideo:  imagefmt.IsVideo(m.Path()),
 		})
 	}
-	return v, nil
+	return out, nil
 }

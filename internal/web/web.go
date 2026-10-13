@@ -4,6 +4,7 @@ package web
 
 import (
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -29,10 +30,10 @@ var noPreview []byte
 
 // defaultChunkSize は仮想スクロールが1回に取るチャンクの枚数。
 //
-// 先頭の1チャンクは初回HTMLに埋め込む。クライアントは範囲を覆うチャンクが揃うまで
+// 先頭のチャンクも /tiles で取る。クライアントは範囲を覆うチャンクが揃うまで
 // 描かないので、この値が「開いた画面 + overscan 4行」に届かないと、開いた
-// 直後に取得を1往復待つことになる。1920x950・列幅200pxで先頭に要るのは
-// 76枚（実データ4497枚で計測）で、60では足りていなかった。
+// 直後に2つ目のチャンクの取得も待つことになる。1920x950・列幅200pxで先頭に
+// 要るのは76枚（実データ4497枚で計測）で、60では足りていなかった。
 //
 // 利用者が変えられる設定ではない。表示の寸法を変えたときは測り直すこと。
 const defaultChunkSize = 120
@@ -50,9 +51,10 @@ const defaultChunkSize = 120
 // なので、この制限に引っかからない。
 //
 // style-src だけ 'unsafe-inline' を許す。gallery.js が組み立てる日カードが
-// style 属性で grid-column と grid-template-columns を持っており（cardHTML を
-// 見よ）、マークアップ中の style 属性は style-src-attr の対象になるため、
-// 許さないと属性ごと無視されてレイアウトが崩れる。span の数だけクラスを
+// style 属性で grid-column と grid-template-columns を持っており（cardEl を
+// 見よ）、貼り替えのとき Idiomorph が既存の要素へ setAttribute("style", …) で
+// 写す。これは style-src-attr の対象になるため、許さないと属性ごと無視されて
+// レイアウトが崩れる。span の数だけクラスを
 // 用意すれば外せるが、XSSを止めるのは script-src のほうなので、レイアウトの
 // 中心を書き換えてまで得るものは少ない。
 // JSからの spacer.style.height のようなCSSOM経由の代入はCSPの対象外なので、
@@ -159,8 +161,8 @@ func (h *Handler) handleItem(w http.ResponseWriter, r *http.Request) {
 	h.renderIndex(w, r, rank)
 }
 
-// handleTiles は仮想スクロール用のHTML断片を返す。
-// 初回ページと同じテンプレートを使い、マークアップを1箇所に保つ。
+// handleTiles は仮想スクロール用に、1チャンク分の写真をJSONで返す。
+// マークアップはクライアントが組み立てる。
 //
 // 受け取るのはチャンクの番号だけで、1チャンクの枚数はサーバーが決める。クライアントが
 // 件数を指定できると、大きな値1つで全件を引いて描かせられる。
@@ -170,17 +172,16 @@ func (h *Handler) handleTiles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad chunk", http.StatusBadRequest)
 		return
 	}
-	tiles, err := h.buildTilesView(r, chunk*h.chunkSize, h.chunkSize)
+	tiles, err := h.listMedia(r, chunk*h.chunkSize, h.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "tiles", tiles); err != nil {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(tiles); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
-		h.log.Error("failed to render the tiles template", "err", err)
-		return
+		h.log.Error("failed to encode the tiles", "err", err)
 	}
 }
 

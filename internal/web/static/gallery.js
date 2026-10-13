@@ -9,6 +9,7 @@ import { layout, windowAt, yForIndex } from "./layout.js";
 
 /** @typedef {import("./layout.js").Layout} Layout */
 /** @typedef {import("./layout.js").CardRowRange} CardRowRange */
+/** @typedef {import("./chunk.js").Tile} Tile */
 
 /**
  * 仮想スクロールが他のモジュールに見せるもの。
@@ -125,22 +126,22 @@ export const gallery = (() => {
 			if (!chunks.hasChunk(ci)) return;
 		}
 
-		// 貼る内容が前回と同じなら、HTMLの組み立ても差分の計算も省く。
+		// 貼る内容が前回と同じなら、要素の組み立ても差分の計算も省く。
 		const key = `${from}:${to}:${L.cols}`;
 		if (key === renderedKey) return;
 
 		// 先に組み立て、1枚でも欠けていたら renderedKey を据え置いたまま抜ける。
 		// 確定を先にすると、欠けたまま貼った状態がキャッシュされて直らない。
-		const parts = [];
+		const cards = [];
 		for (const range of w.ranges) {
 			const rangeFrom = range.from;
 			const rangeTo = Math.min(to, range.to);
 			if (rangeFrom >= rangeTo) continue;
-			const html = cardHTML(range, rangeFrom, rangeTo);
-			if (!html) return;
-			parts.push(html);
+			const card = cardEl(range, rangeFrom, rangeTo);
+			if (!card) return;
+			cards.push(card);
 		}
-		if (parts.length === 0) return;
+		if (cards.length === 0) return;
 
 		renderedKey = key;
 		// 全置換ではなく差分で当てる。作り直すと、中身も寸法も同時に変わった
@@ -150,7 +151,7 @@ export const gallery = (() => {
 		// ラスタが揃うまで古い内容を描き続けるので、そちらでは表面化しない。
 		// 残る写真の要素をそのまま使い回せば、その状況自体を作らない。
 		// タイルとカードの id 属性が対応付けの手がかりになる。
-		Idiomorph.morph(win, parts.join(""), { morphStyle: "innerHTML" });
+		Idiomorph.morph(win, cards, { morphStyle: "innerHTML" });
 		win.style.transform = `translateY(${w.pasteY}px)`;
 
 		// 各タイルに通し番号を書く。切り出す範囲は連続しているのでDOM順と一致する。
@@ -204,31 +205,61 @@ export const gallery = (() => {
 	}
 
 	// 1枚のカード。占める列数はレイアウトが決め、ラベルの文言はタイル自身の
-	// data-date から作る。DayGroups が古くても、ラベルはそのカードに実際に
+	// 日付から作る。DayGroups が古くても、ラベルはそのカードに実際に
 	// 写っている日を指す。
+	//
+	// HTMLの文字列は作らず、要素として組み立てる。値がHTMLとして解釈されない
+	// ので、エスケープが要らない。
 	/**
 	 * @param {CardRowRange} range
 	 * @param {number} from
 	 * @param {number} to
-	 * @returns {string} 1枚でも未取得なら空文字列
+	 * @returns {HTMLElement | null} 1枚でも未取得なら null
 	 */
-	function cardHTML(range, from, to) {
+	function cardEl(range, from, to) {
 		const tiles = [];
 		for (let i = from; i < to; i++) {
 			const t = chunks.tileAt(i);
-			if (!t) return "";
-			tiles.push(t.html);
+			if (!t) return null;
+			tiles.push(tileEl(t));
 		}
+		const card = document.createElement("div");
+		card.className = "daycard";
+		card.id = `d-${range.card.d}`;
+		card.style.gridColumn = `span ${range.card.span}`;
+		card.style.gridTemplateColumns = `repeat(${range.card.span},1fr)`;
 		// 段の途中から貼るとき（大きい日をスクロールしている最中）はラベルを落とす
-		const head = chunks.tileAt(from);
-		const label =
-			range.firstRow > 0
-				? ""
-				: `<div class="daylabel">${formatDay(head.date)}</div>`;
-		return (
-			`<div class="daycard" id="d-${range.card.d}" style="grid-column:span ${range.card.span};` +
-			`grid-template-columns:repeat(${range.card.span},1fr)">${label}${tiles.join("")}</div>`
-		);
+		if (range.firstRow === 0) {
+			const label = document.createElement("div");
+			label.className = "daylabel";
+			label.textContent = formatDay(chunks.tileAt(from).date);
+			card.append(label);
+		}
+		card.append(...tiles);
+		return card;
+	}
+
+	// タイル1枚。id は貼り替えを差分で当てるときの対応付けに使う。これが無いと
+	// 位置で照合され、1行スクロールしただけで全タイルの src が書き換わる。
+	// data-video はCSSが再生の印を重ねるのに使う。
+	/**
+	 * @param {Tile} t
+	 * @returns {HTMLAnchorElement}
+	 */
+	function tileEl(t) {
+		const a = document.createElement("a");
+		a.className = "tile";
+		a.id = `t-${t.id}`;
+		a.href = t.pageUrl;
+		if (t.isVideo) a.dataset.video = "1";
+		const img = document.createElement("img");
+		img.alt = "";
+		img.loading = "lazy";
+		img.decoding = "async";
+		// src は最後に代入する。Firefox と WebKit は src を設定した時点で lazy かどうかを決めるため、先に入れると即時取得になる。
+		img.src = t.thumbUrl;
+		a.append(img);
+		return a;
 	}
 
 	// "2026-02-08" → "2026年2月8日"。今年なら年を省く。
