@@ -12,7 +12,8 @@ import (
 	"time"
 )
 
-// Config はアプリの実行時設定。すべてコマンドライン引数から与えられる。
+// Config はアプリの実行時設定。OIDCClientSecret だけは環境変数から、
+// 残りはコマンドライン引数から与えられる。
 type Config struct {
 	MediaDirs   []string // 写真と動画を収集するルートディレクトリ（複数可）
 	DataDir     string   // DBとサムネイルの置き場
@@ -71,8 +72,8 @@ func (c Config) Validate() error {
 	if c.Addr == "" {
 		return errors.New("-addr is required")
 	}
-	// 0を「自動」と読み替えない。既定値はフラグの側が runtime.NumCPU() で
-	// 与えており、0が届くのは利用者が明示的に0を渡したときだけである。
+	// 0を「自動」と読み替えない。既定値はフラグの側がCPU数から与えており、
+	// 0が届くのは利用者が明示的に0を渡したときだけである。
 	// 黙って読み替えると、走査が始まらない設定を無言で書き換えることになる。
 	if c.ScanWorkers < 1 {
 		return fmt.Errorf("-scan-workers must be 1 or greater: %d", c.ScanWorkers)

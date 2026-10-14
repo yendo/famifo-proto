@@ -8,8 +8,7 @@
 // 増やすときに片方だけ増えることがないよう、1つの表にまとめてある。
 //
 // 「ブラウザが表示・再生できるか」は表に入れていない。HEVCを再生できるかは端末に
-// ハードウェアデコーダがあるかで決まり、サーバには答えられないためである。その問いは
-// thumb が「借りられる変換版があればそれを配る」に置き換えている。
+// ハードウェアデコーダがあるかで決まり、サーバには答えられないためである。
 package imagefmt
 
 import (
@@ -52,8 +51,7 @@ func IsSupported(name string) bool {
 }
 
 // IsDecodable は famifo が自分でサムネイルを作れるファイルかを報告する。
-// 偽のときサムネイルは @eaDir から借りるしかなく、借りられなければ一覧には
-// 原本が出る（HEIC/HEIFが該当する）。対象外のファイルも偽になる。
+// 対象外のファイルも偽になる。
 func IsDecodable(name string) bool { return supportedExts[ext(name)].decodable }
 
 // IsVideo は動画かを報告する。表示が <img> か <video> かを決め、タイルに再生の印を

@@ -37,10 +37,10 @@ const (
 // 行ごと消える。ログイン状態そのものの長さ（30日）は internal/session が持つ。
 const flowTTL = 10 * time.Minute
 
-// セッションに載せるキー。userはログイン済みの利用者名、id_tokenはサインアウト
-// するときにIdPへ渡すhintで、どちらもセッションが続くあいだ残る。残りは認可の
-// 往復のあいだだけ持ち越す値である。往復の値はcallbackでPopStringして取り出すので、
-// 済んだ往復の残骸がセッションに残らない。
+// セッションに載せるキー。userはログイン済みの利用者の識別子（IDトークンの
+// sub）、id_tokenはサインアウトするときにIdPへ渡すhintで、どちらもセッションが
+// 続くあいだ残る。残りは認可の往復のあいだだけ持ち越す値である。往復の値は
+// callbackでPopStringして取り出すので、済んだ往復の残骸がセッションに残らない。
 const (
 	keyUser     = "user"
 	keyIDToken  = "id_token"
@@ -256,7 +256,7 @@ func (a *Auth) currentUser(r *http.Request) string {
 
 // isDataPath はページではなくデータを取りに来た経路を見分ける。
 //
-// /tiles は gallery.js が fetch し、/thumb/ と /full/ は <img> と <video> が読む。
+// /tiles は chunk.js が fetch し、/thumb/ と /full/ は <img> と <video> が読む。
 // ここに挙げる経路は Handler のルート表と一対一である。データを返す経路を
 // 足したらここにも足すこと。忘れると、その経路だけ未認証時に白い画面になる。
 func isDataPath(p string) bool {

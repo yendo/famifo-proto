@@ -1,9 +1,7 @@
 //go:build browser
 
-// app.jsは今まで一度もブラウザで実行されたことが無い。既存のGoテストは
-// 配信されるファイルに特定の文字列が含まれるかしか見ておらず、仮想スクロール・
-// ライトボックス・日付スクラバーの実際の挙動は検証されていなかった。
-// このファイルはDockerコンテナ上のヘッドレスChromeを chromedp で操作し、
+// 仮想スクロール・ライトボックス・日付スクラバーの挙動を確かめる。
+// Dockerコンテナ上のヘッドレスChromeを chromedp で操作し、
 // 実際にJavaScriptを走らせて確認する。
 //
 // 前提:
@@ -272,9 +270,6 @@ func waitForDebugger(timeout time.Duration) bool {
 
 // startTestApp は生成した写真一式でストアを満たし、main.goと同じ部品
 // （store・thumb・web）をプロセス内で直接組み立ててアプリを起動する。
-// ビルド済みバイナリを別プロセスで動かす方式ではなく直接呼ぶ方式を選んだのは、
-// EXIF抽出やfsnotify監視（index パッケージ）を経由する必要が無く、
-// テストデータを直接ストアへ流し込めるほうが速く決定的だから。
 func startTestApp() (tempDir string, srv *httptest.Server, closeStore func(), err error) {
 	tempDir, err = os.MkdirTemp("", "famifo-browser-*")
 	if err != nil {
@@ -1072,7 +1067,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 // 要素が使い回されているか」だけを見る。
 //
 // 同一性の目印にはDOM要素のエキスパンドプロパティを使う。属性ではないので
-// HTMLの文字列には現れず、要素が作り直されれば必ず消える。写真の照合には
+// 貼り替えで上書きされず、要素が作り直されれば必ず消える。写真の照合には
 // href（写真ごとに一意なURL）を使う。id属性の付け方にテストが依存しない
 // ようにするため。
 func TestTilesSurviveAPlainScroll(t *testing.T) {
@@ -1230,7 +1225,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	err = chromedp.Run(rctx, chromedp.Poll(lbDecodedJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
 	require.NoError(t, err, "the full-size image in the lightbox was never decoded, so nothing is displayed")
 
-	// getAttribute('src') は絶対URLに解決されないので、テンプレートが書いた
+	// getAttribute('src') は絶対URLに解決されないので、/tiles が返した
 	// 相対パスとそのまま突き合わせられる。
 	const srcAttrJS = `document.querySelector('#lightbox img').getAttribute('src')`
 
@@ -2005,7 +2000,7 @@ const (
 	manyPerDay     = 20
 	stallChunkSize = 20
 
-	// stallItemDelay は /items 1本あたりの応答時間。スキャンでCPUが
+	// stallItemDelay は /tiles 1本あたりの応答時間。スキャンでCPUが
 	// 埋まったNASを模す。直列化と併せて「1本ずつ、250msかけて捌く」になる。
 	// 全60チャンクで15秒ぶん。下まで降りるスクロール自体は5秒ほどなので、
 	// 通り過ぎたチャンクを取り続ける限り、着いた先のチャンクはその後ろで待たされる。
@@ -2032,9 +2027,9 @@ func prepareManyTestMedia(st *store.Store, mediaDir string, thumbs *thumb.Provid
 }
 
 // startStallGallery はスキャン中のNASを模したギャラリーを起動する。
-// CPUが埋まって同時に1本しか捌けない状態を、/items を直列化したうえで
+// CPUが埋まって同時に1本しか捌けない状態を、/tiles を直列化したうえで
 // 1本あたり stallItemDelay かけることで作る。サムネイルは遅くしない
-// （滞留の実測では29秒のうち /items が273本、/thumb が10本だった）。
+// （滞留の実測では29秒のうちチャンクの取得が273本、/thumb が10本だった）。
 func startStallGallery(t *testing.T) (url string, itemsSeen, itemsDropped *int64) {
 	t.Helper()
 
@@ -2211,7 +2206,7 @@ func TestItemURLOpensTheLightbox(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	const target = testChunkSize + 40 // 初回HTMLに埋まっていない位置
+	const target = testChunkSize + 40 // 先頭のチャンクの外
 	want := expectedMediaURLs(t, target+1)[target]
 	id := strings.TrimPrefix(want, "/full/")
 

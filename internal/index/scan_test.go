@@ -463,7 +463,7 @@ func TestGhostRowFromAScanIsReclaimedByTheNextScan(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	// 起動時のスキャン。main.go と同じく同期で1回走らせる。
+	// 起動時のスキャンを模して1回走らせる。
 	scanDone := make(chan struct{})
 	go func() {
 		defer close(scanDone)

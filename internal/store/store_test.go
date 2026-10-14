@@ -271,7 +271,7 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 	// 撮影日時が同じ場合は id の降順で安定すること。
 	// 順序が崩れるとページ境界で重複や欠落が起きる。
 	//
-	// 注意: 複合インデックス idx_photos_order が物理行順を安定させるため、
+	// 注意: 複合インデックス idx_media_order が物理行順を安定させるため、
 	// ORDER BY 句から id DESC を外しただけではこのテストは落ちない。
 	// 不変条件は「ORDER BY 句 + インデックス」の組で担保されており、
 	// テストで句の削除だけを検出することは原理的にできない。
