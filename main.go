@@ -67,6 +67,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		"timezone", startupTimezone(time.Now()),
 		"dirs", cfg.MediaDirs, "data", cfg.DataDir, "addr", cfg.Addr,
 		"scan-workers", cfg.ScanWorkers, "scan-interval", cfg.ScanInterval)
+	// 撮影者の名前は /etc/passwd から引く。scratch のイメージには無いので、
+	// ホストのものをマウントし忘れると、名前が黙って出なくなる。ここで知らせる。
+	if f, err := os.Open("/etc/passwd"); err != nil {
+		log.Info("owner names unavailable, mount /etc/passwd to show who took each photo", "err", err)
+	} else {
+		f.Close()
+	}
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {
 		return err

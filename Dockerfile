@@ -62,7 +62,11 @@ EXPOSE 8080
 #   docker run -d --restart unless-stopped -p 8080:8080 \
 #     -v /volume1/photo:/photos:ro \
 #     -v /volume1/famifo/data:/data \
+#     -v /etc/passwd:/etc/passwd:ro \
 #     ghcr.io/yendo/famifo-proto
+#
+# /etc/passwd は撮影者の名前を引くために読む。ファイルの所有者の uid を名前に
+# 変える。省いても動くが、名前は出ない。
 #
 # bind mount ではホスト側の所有者がそのまま適用される。コンテナのuidで書ける
 # ようにしておかないと起動時に落ちる。named volume と違い所有者は継承されない。
