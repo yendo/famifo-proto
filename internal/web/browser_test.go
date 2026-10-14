@@ -1067,7 +1067,7 @@ func TestNoRepaintOnPlainScroll(t *testing.T) {
 // 要素が使い回されているか」だけを見る。
 //
 // 同一性の目印にはDOM要素のエキスパンドプロパティを使う。属性ではないので
-// HTMLの文字列には現れず、要素が作り直されれば必ず消える。写真の照合には
+// 貼り替えで上書きされず、要素が作り直されれば必ず消える。写真の照合には
 // href（写真ごとに一意なURL）を使う。id属性の付け方にテストが依存しない
 // ようにするため。
 func TestTilesSurviveAPlainScroll(t *testing.T) {
@@ -2206,7 +2206,7 @@ func TestItemURLOpensTheLightbox(t *testing.T) {
 	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	const target = testChunkSize + 40 // 初回HTMLに埋まっていない位置
+	const target = testChunkSize + 40 // 先頭のチャンクの外
 	want := expectedMediaURLs(t, target+1)[target]
 	id := strings.TrimPrefix(want, "/full/")
 
