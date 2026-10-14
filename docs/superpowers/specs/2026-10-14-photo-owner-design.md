@@ -43,9 +43,9 @@ DB を作り直さずに済む。
 `upsertSQL` と `selectCols` を対応させる。`probeReadable` は `selectCols` を
 読むので、古い DB は起動時に落ちる。移行は書かず、DB を作り直す。
 
-`index.indexFile` は既にある `os.Lstat` の結果から uid を取る
-（`fi.Sys().(*syscall.Stat_t).Uid`）。追加の I/O は無い。`syscall.Stat_t` は
-Linux 前提だが、ビルド対象は goreleaser も CI も Linux だけである。
+`index.indexFile` は既にある `os.Lstat` の結果を `owner.UID(fi)` に渡して uid を取る。
+追加の I/O は無い。中では `fi.Sys().(*syscall.Stat_t).Uid` を読む。`syscall.Stat_t`
+は Linux 前提だが、ビルド対象は goreleaser も CI も Linux だけである。
 
 所有者の変更には追従しない。`chown` は mtime を変えないので、走査は
 mod_time が同じ行を飛ばし（`scan.go` の `wasRegistered && modTime == ...`）、
@@ -64,7 +64,8 @@ watcher は Chmod を見ていない。所有者を直したら DB を作り直�
 - 名前を引く処理は `owner` パッケージの `Name(uid uint32) string` に置く。HTTP とは
   関係の無い、名前の決まり（nobody、GECOS、アカウント名）を web から切り離す。
   名前は実装（Unix、passwd）ではなく famifo での意味に付けた。`account` は OIDC の
-  アカウントと紛らわしいので採らない。uid の読み取りは index に残す。
+  アカウントと紛らわしいので採らない。持ち主をファイルの所有者で決める規則も
+  持ち主の一部なので、uid の読み取り（`owner.UID`）もここに置く。
 
 `GET /info/{id}` は他のルートと同じく認証の内側に置く。
 

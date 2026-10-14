@@ -4,12 +4,25 @@ import (
 	"errors"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/owner"
 )
+
+// 持ち主はファイルの所有者である。テストが書いたファイルの所有者は、テストを
+// 走らせている自分になる。別の uid へ chown するには root が要るので扱わない。
+func TestUIDIsTheFileOwner(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "a.jpg")
+	require.NoError(t, os.WriteFile(path, nil, 0o644))
+	fi, err := os.Lstat(path)
+	require.NoError(t, err)
+
+	require.Equal(t, uint32(os.Getuid()), owner.UID(fi))
+}
 
 // 名前はアカウントのフルネーム（GECOS）で、空ならアカウント名にする。
 func TestNameUsesTheFullNameFirst(t *testing.T) {
