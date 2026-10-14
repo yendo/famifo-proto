@@ -147,7 +147,7 @@ func writeOIDCJSON(w http.ResponseWriter, v any) {
 }
 
 // newOIDCTestApp は偽のIdPに対して本物のoidc.Clientとweb.NewHandlerを組み立て、
-// famifoのURLを返す。web.NewHandlerがredirect_uriとしてfamifo自身のURLを必要と
+// famifoのURLを返す。oidc.Newがredirect_uriとしてfamifo自身のURLを必要と
 // するため、httptest.NewServerでハンドラを渡す前にポートを確保しておく
 // （net.Listenで先にポートを取り、httptest.NewUnstartedServerへ差し込む）。
 func newOIDCTestApp(t *testing.T) (famifoURL string) {

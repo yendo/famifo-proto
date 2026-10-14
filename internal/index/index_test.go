@@ -358,7 +358,7 @@ func TestScanBorrowsTheSynologyThumbnailForHEIC(t *testing.T) {
 }
 
 // DSM 7.3 がHEICのデコードに失敗すると .fail だけが残る。famifoも作れないので
-// サムネイル無しのまま原本を配信する。.fail を置き換えるのはfamifoの仕事ではない。
+// 一覧に出せる絵は無い。.fail を置き換えるのはfamifoの仕事ではない。
 func TestScanLeavesHEICWithoutThumbWhenOnlyAFailMarkerIsThere(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

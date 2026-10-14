@@ -4,8 +4,7 @@
 // IDの導出規則とパスの条件はここにしかない。組み立ては New と Restore を通す。
 // 呼び出し側が同じ式を書き直すと規則が二重化するため。
 //
-// 対応する形式の表は internal/imagefmt が、表示用に派生した画像の置き場所と
-// 選択は internal/thumb が持つ。I/Oは一切行わない。
+// I/Oは一切行わない。
 package media
 
 import (
