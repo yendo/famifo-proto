@@ -11,11 +11,11 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os/user"
 	"strconv"
 
 	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/media"
+	"github.com/yendo/famifo-proto/internal/owner"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -77,11 +77,6 @@ const contentSecurityPolicy = "default-src 'none'; " +
 
 // noOpenItem は「開いた写真は無い」ことを表す通し番号。
 const noOpenItem = -1
-
-// nobodyUID は nobody の uid。所有者がこれなら名前を出さない。userns-remap や
-// rootless Docker では、範囲外の uid がこれに潰れて見える。誰の写真か分からない
-// のに、/etc/passwd に nobody の行があると「nobody」と出てしまう。
-const nobodyUID = 65534
 
 // Handler はギャラリーのHTTPハンドラ。ルーティング済みで、http.Server にそのまま渡せる。
 //
@@ -233,7 +228,7 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(infoView{Owner: ownerName(m.OwnerUID())}); err != nil {
+	if err := json.NewEncoder(w).Encode(infoView{Owner: owner.Name(m.OwnerUID())}); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
 		h.log.Error("failed to encode the info", "err", err)
 	}
@@ -345,26 +340,4 @@ func fullViewPath(m media.Media) (path, contentType string) {
 		path = synology.ThumbXLPath(path)
 	}
 	return path, imagefmt.ContentType(path)
-}
-
-// ownerName は所有者の uid から表示する名前を引く。出せる名前が無ければ空を返す。
-//
-// 要求のたびに引き、覚えておかない。引くのは開いた1件分だけで、アカウント側で
-// 名前を変えれば次に開いたときから反映される。cgo を使わないビルドでは os/user が
-// /etc/passwd を自分で読む。scratch のイメージには /etc/passwd が無いので、ホストの
-// ものをマウントしない限り名前は出ない。
-//
-// フルネーム（GECOS）を先に使い、空ならアカウント名にする。
-func ownerName(uid uint32) string {
-	if uid == nobodyUID {
-		return ""
-	}
-	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
-	if err != nil {
-		return ""
-	}
-	if u.Name != "" {
-		return u.Name
-	}
-	return u.Username
 }

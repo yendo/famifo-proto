@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -14,9 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +22,7 @@ import (
 	"github.com/yendo/famifo-proto/internal/web"
 
 	"github.com/yendo/famifo-proto/internal/media"
+	"github.com/yendo/famifo-proto/internal/owner"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -462,35 +460,17 @@ func (f *webFixture) addOwnedBy(t *testing.T, name string, uid uint32) media.Med
 	return m
 }
 
-// unknownUID はアカウントの無い uid を返す。どの uid が空いているかは環境で
-// 変わるので、決め打ちせずに探す。
-func unknownUID(t *testing.T) uint32 {
-	t.Helper()
-	for uid := uint32(2_000_000_000); uid < 2_000_000_100; uid++ {
-		_, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
-		var unknown user.UnknownUserIdError
-		if errors.As(err, &unknown) {
-			return uid
-		}
-	}
-	t.Fatal("no uid without an account was found")
-	return 0
-}
-
-// 撮影者の名前はアカウントのフルネーム（GECOS）で、空ならアカウント名にする。
+// 撮影者の名前は owner が引いたものをそのまま載せる。名前の決まりは owner_test が
+// 確かめるので、ここでは owner.Name の結果と一致するかだけを見る。
 func TestInfoNamesTheOwner(t *testing.T) {
 	t.Parallel()
-	uid := os.Getuid()
-	u, err := user.LookupId(strconv.Itoa(uid))
-	if err != nil {
-		t.Skipf("the test user has no account entry: %v", err)
-	}
-	want := u.Name
+	uid := uint32(os.Getuid())
+	want := owner.Name(uid)
 	if want == "" {
-		want = u.Username
+		t.Skip("the test user has no account entry, so there is no name to serve")
 	}
 	f := newWebFixture(t, 10)
-	m := f.addOwnedBy(t, "a.jpg", uint32(uid))
+	m := f.addOwnedBy(t, "a.jpg", uid)
 
 	rec := doGet(t, f.h, "/info/"+m.ID())
 
@@ -506,29 +486,16 @@ func TestInfoNamesTheOwner(t *testing.T) {
 }
 
 // 名前を出せないときはキーごと省く。クライアントは owner が無ければ欄を隠す。
-//
-// nobody は /etc/passwd に行があっても出さない。userns-remap や rootless Docker では
-// 範囲外の uid がこれに潰れて見え、誰の写真か分からないのに「nobody」と出てしまう。
+// 名前が出ないことが環境によらず決まっている nobody で確かめる。
 func TestInfoOmitsTheOwnerWithoutAName(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name string
-		uid  uint32
-	}{
-		{"nobody", 65534},
-		{"no account", unknownUID(t)},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			f := newWebFixture(t, 10)
-			m := f.addOwnedBy(t, "a.jpg", tc.uid)
+	f := newWebFixture(t, 10)
+	m := f.addOwnedBy(t, "a.jpg", 65534)
 
-			rec := doGet(t, f.h, "/info/"+m.ID())
+	rec := doGet(t, f.h, "/info/"+m.ID())
 
-			require.Equal(t, http.StatusOK, rec.Code)
-			require.JSONEq(t, `{}`, rec.Body.String())
-		})
-	}
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.JSONEq(t, `{}`, rec.Body.String())
 }
 
 // JSから取るので、/item/{id} と違ってギャラリーへは送らない。

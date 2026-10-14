@@ -31,7 +31,7 @@ routes (methods of Handler)                               web.go
   GET /thumb/{id}  handleThumb ----> lookupMedia -> thumb.Provider
                                                     or serveNoPreview
   GET /full/{id}   handleFull  ----> lookupMedia -> fullViewPath
-  GET /info/{id}   handleInfo  ----> lookupMedia -> ownerName -> JSON
+  GET /info/{id}   handleInfo  ----> lookupMedia -> owner.Name -> JSON
 ```
 
 ## View models and templates
@@ -69,6 +69,6 @@ lightbox.js --> fetch /info/{id}
 ## Dependencies on other packages
 
 ```
-web --> store, thumb, media, session, imagefmt
+web --> store, thumb, media, owner, session, imagefmt
 web --> Provider (interface; the OIDC implementation is injected)
 ```

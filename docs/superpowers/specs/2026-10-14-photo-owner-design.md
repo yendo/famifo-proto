@@ -61,7 +61,10 @@ watcher は Chmod を見ていない。所有者を直したら DB を作り直�
 - 引けない場合と uid 65534（nobody）は名前を出さない。userns-remap や
   rootless Docker では範囲外の uid が 65534 に潰れ、`/etc/passwd` に nobody の
   行があると「nobody」と出てしまうため。
-- 名前を引く処理は web パッケージの非公開関数にする。
+- 名前を引く処理は `owner` パッケージの `Name(uid uint32) string` に置く。HTTP とは
+  関係の無い、名前の決まり（nobody、GECOS、アカウント名）を web から切り離す。
+  名前は実装（Unix、passwd）ではなく famifo での意味に付けた。`account` は OIDC の
+  アカウントと紛らわしいので採らない。uid の読み取りは index に残す。
 
 `GET /info/{id}` は他のルートと同じく認証の内側に置く。
 
@@ -76,8 +79,10 @@ watcher は Chmod を見ていない。所有者を直したら DB を作り直�
 `pageUrl`・`fullUrl`・`thumbUrl` と同じくサーバーから受け取る。撮影者の名前
 そのものは `/tiles` に載せない。一覧では使わない情報を全件分運ばないため。
 
-起動時に `/etc/passwd` を読めなければ、`main` で Info を 1 行出す
-（`owner names unavailable`）。マウントし忘れに気づけるようにする。
+起動時に `owner.Check() error` で `/etc/passwd` を開けるかを確かめ、開けなければ
+`main` で Info を 1 行出す（`owner names unavailable`）。マウントし忘れに気づける
+ようにする。error を返すのは、マウントしたのに読めない場合（SELinux の
+ラベルなど）の理由もログに出すため。
 
 README と Dockerfile のコメントに `-v /etc/passwd:/etc/passwd:ro` を足す。
 `/etc/passwd` にパスワードのハッシュは無い（`/etc/shadow` 側）。
