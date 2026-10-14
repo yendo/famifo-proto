@@ -212,6 +212,19 @@ func (h *Handler) handleThumb(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
+// handleFull はフルビュー用の写真と動画を配信する。
+func (h *Handler) handleFull(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.lookupMedia(w, r)
+	if !ok {
+		return
+	}
+	path, contentType := fullViewPath(m)
+	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
+	// 先に設定しておけばServeContentは上書きしない。
+	w.Header().Set("Content-Type", contentType)
+	http.ServeFile(w, r, path)
+}
+
 // handleInfo は全画面表示に重ねる1件分の情報をJSONで返す。一覧では使わない
 // 情報をここに分け、/tiles のチャンクを軽く保つ。
 func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -224,19 +237,6 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
 		h.log.Error("failed to encode the info", "err", err)
 	}
-}
-
-// handleFull はフルビュー用の写真と動画を配信する。
-func (h *Handler) handleFull(w http.ResponseWriter, r *http.Request) {
-	m, ok := h.lookupMedia(w, r)
-	if !ok {
-		return
-	}
-	path, contentType := fullViewPath(m)
-	// ServeFileは拡張子からMIMEを引くがHEIC/HEIFを知らない。
-	// 先に設定しておけばServeContentは上書きしない。
-	w.Header().Set("Content-Type", contentType)
-	http.ServeFile(w, r, path)
 }
 
 // securityHeaders はすべての応答に同じ守りを載せる。
