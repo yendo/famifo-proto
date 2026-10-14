@@ -26,6 +26,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS media (
     id             TEXT PRIMARY KEY,
     path           TEXT NOT NULL UNIQUE,
+    owner_uid      INTEGER NOT NULL,
     taken_at_local TEXT NOT NULL,
     mod_time       INTEGER NOT NULL,
     day            TEXT NOT NULL
@@ -82,10 +83,11 @@ func probeReadable(db *sql.DB) error {
 func (s *Store) Close() error { return s.db.Close() }
 
 const upsertSQL = `
-INSERT INTO media (id, path, taken_at_local, mod_time, day)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO media (id, path, owner_uid, taken_at_local, mod_time, day)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     path           = excluded.path,
+    owner_uid      = excluded.owner_uid,
     taken_at_local = excluded.taken_at_local,
     mod_time       = excluded.mod_time,
     day            = excluded.day`
@@ -93,7 +95,7 @@ ON CONFLICT(id) DO UPDATE SET
 // Upsert は1件を登録または更新する。
 func (s *Store) Upsert(ctx context.Context, m media.Media) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
-		m.ID(), m.Path(), m.TakenAtLocal(), m.ModTime().Unix(), m.Day())
+		m.ID(), m.Path(), int64(m.OwnerUID()), m.TakenAtLocal(), m.ModTime().Unix(), m.Day())
 	if err != nil {
 		return fmt.Errorf("cannot save the media (%s): %w", m.Path(), err)
 	}
@@ -304,14 +306,15 @@ func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 // selectCols は scanMedia の Scan と列順を合わせるための並び。idは含めない。
 // パスから導ける値なので、復元は media.Restore に任せる。day も同じく
 // taken_at_local から導けるので含めない。
-const selectCols = `path, taken_at_local, mod_time`
+const selectCols = `path, owner_uid, taken_at_local, mod_time`
 
 // scanMedia は1行を復元する。引数の並びは selectCols と一致していなければならない。
 func scanMedia(row interface{ Scan(...any) error }) (media.Media, error) {
 	var path, takenAtLocal string
+	var ownerUID uint32
 	var modTime int64
-	if err := row.Scan(&path, &takenAtLocal, &modTime); err != nil {
+	if err := row.Scan(&path, &ownerUID, &takenAtLocal, &modTime); err != nil {
 		return media.Media{}, err
 	}
-	return media.Restore(path, takenAtLocal, time.Unix(modTime, 0)), nil
+	return media.Restore(path, ownerUID, takenAtLocal, time.Unix(modTime, 0)), nil
 }

@@ -26,6 +26,7 @@ type mediaView struct {
 	PageURL  string `json:"pageUrl"` // その1件だけを開くURL。タイルのリンク先
 	FullURL  string `json:"fullUrl"`
 	ThumbURL string `json:"thumbUrl"`
+	InfoURL  string `json:"infoUrl"` // 全画面表示に重ねる情報（/info/<id>）
 	Date     string `json:"date"`    // "2006-01-02"。撮影地の日。クライアントが日の区切りに使う
 	IsVideo  bool   `json:"isVideo"` // タイルに再生の印を出すか、フルビューを <video> にするか
 }
@@ -35,6 +36,12 @@ type mediaView struct {
 type dayGroup struct {
 	Date  string `json:"d"` // "2006-01-02"
 	Count int    `json:"n"` // その日の件数
+}
+
+// infoView は /info/{id} の応答。全画面表示に重ねる1件分の情報で、一覧では
+// 使わないので /tiles には載せない。出せない項目はキーごと省く。
+type infoView struct {
+	Owner string `json:"owner,omitempty"` // 撮影者の名前
 }
 
 // buildIndexView はトップページの入力を組み立てる。
@@ -76,6 +83,7 @@ func (h *Handler) listMedia(r *http.Request, offset, limit int) ([]mediaView, er
 			PageURL:  "/item/" + m.ID(),
 			FullURL:  "/full/" + m.ID(),
 			ThumbURL: "/thumb/" + m.ID(),
+			InfoURL:  "/info/" + m.ID(),
 			Date:     m.Day(),
 			IsVideo:  imagefmt.IsVideo(m.Path()),
 		})

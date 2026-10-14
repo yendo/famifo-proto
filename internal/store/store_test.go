@@ -24,13 +24,16 @@ func openTestStore(t *testing.T) *store.Store {
 	return s
 }
 
+// testOwnerUID はテストの行に入れる所有者。撮影日時とmtimeのどちらとも違う値にする。
+const testOwnerUID uint32 = 1000
+
 // mtimeは撮影日時とずらす。SELECTの列順とScanの並びが入れ替わったとき、
 // 同じ値だと往復で気づけない。
 //
 // New を通すのは、撮影地の時刻の整形を store のテストで書き直さないため。
 func mediaAt(t *testing.T, path string, takenAt time.Time) media.Media {
 	t.Helper()
-	m, err := media.New(path, takenAt, takenAt.Add(time.Hour))
+	m, err := media.New(path, testOwnerUID, takenAt, takenAt.Add(time.Hour))
 	require.NoError(t, err)
 	return m
 }
@@ -226,11 +229,25 @@ func TestDeleteByPathPrefixTreatsWildcardsAsLiterals(t *testing.T) {
 	}
 }
 
+// 所有者は列として往復する。撮影者の名前は配信のときにここから引く。
+func TestOwnerUIDSurvivesTheRoundTrip(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	ctx := context.Background()
+	m := mediaAt(t, "/items/a.jpg", time.Unix(1600000000, 0))
+	require.NoError(t, s.Upsert(ctx, m))
+
+	got, err := s.GetByID(ctx, m.ID())
+
+	require.NoError(t, err)
+	require.Equal(t, testOwnerUID, got.OwnerUID())
+}
+
 func TestAllPaths(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 	ctx := context.Background()
-	m := media.Restore("/items/a.jpg", "2020-09-13T12:26:40", time.Unix(1650000000, 0))
+	m := media.Restore("/items/a.jpg", testOwnerUID, "2020-09-13T12:26:40", time.Unix(1650000000, 0))
 	require.NoError(t, s.Upsert(ctx, m))
 
 	got, err := s.AllPaths(ctx)

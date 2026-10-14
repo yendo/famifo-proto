@@ -29,6 +29,7 @@ const layoutWithoutTZ = "2006-01-02T15:04:05"
 // IsCandidate を満たすことを、このパッケージの外で崩せないようにするため。
 type Media struct {
 	path         string    // ディスク上の絶対パス
+	ownerUID     uint32    // ファイルの所有者のuid。撮影者の判別に使う
 	takenAtLocal string    // 撮影地の時刻（layoutWithoutTZ）。読み取れなければmtime
 	modTime      time.Time // ファイルのmtime。再スキャン時の変更検知に使う
 }
@@ -46,9 +47,13 @@ type Media struct {
 // 壊れた動画）は普通に存在し、それらを一覧から落とさないため。mtimeは瞬間なので、
 // サーバの time.Local の時刻になる。
 //
+// ownerUID はファイルの所有者。famifo は所有者を撮影者とみなす。名前ではなく
+// uid を持つのは、名前を配信のときに引くためである。アカウント側で名前を
+// 変えても、インデックスを作り直さずに済む。
+//
 // サムネイルの調達より先に組み立てる。ModTime が原本の版であり、
 // サムネイルの置き場所はその版から決まるため。
-func New(path string, takenAt, modTime time.Time) (Media, error) {
+func New(path string, ownerUID uint32, takenAt, modTime time.Time) (Media, error) {
 	if !IsCandidate(path) {
 		return Media{}, fmt.Errorf("%s cannot be indexed", path)
 	}
@@ -57,6 +62,7 @@ func New(path string, takenAt, modTime time.Time) (Media, error) {
 	}
 	return Media{
 		path:         path,
+		ownerUID:     ownerUID,
 		takenAtLocal: takenAt.Format(layoutWithoutTZ),
 		modTime:      modTime,
 	}, nil
@@ -65,9 +71,10 @@ func New(path string, takenAt, modTime time.Time) (Media, error) {
 // Restore はインデックスに保存済みの1件を組み立て直す。store が読み出しに使う。
 //
 // 条件は確かめない。インデックスの行は New を通ったものだけである。
-func Restore(path, takenAtLocal string, modTime time.Time) Media {
+func Restore(path string, ownerUID uint32, takenAtLocal string, modTime time.Time) Media {
 	return Media{
 		path:         path,
+		ownerUID:     ownerUID,
 		takenAtLocal: takenAtLocal,
 		modTime:      modTime,
 	}
@@ -83,6 +90,11 @@ func (m Media) ID() string {
 
 // Path はディスク上の絶対パスを返す。
 func (m Media) Path() string { return m.path }
+
+// OwnerUID はファイルの所有者のuidを返す。撮影者の判別に使う。
+// 取り込んだ時点の値で、後から chown しても追従しない。chown は mtime を
+// 変えないので、再スキャンが変更として拾わないためである。
+func (m Media) OwnerUID() uint32 { return m.ownerUID }
 
 // TakenAtLocal は撮影地の時刻を "2006-01-02T15:04:05" で返す。時差は持たない。
 // ファイルから読み取れなければmtimeをサーバの時刻で見た値。

@@ -31,6 +31,7 @@
  * @property {string} pageUrl その1件のページのURL（/item/<id>）
  * @property {string} fullUrl フルビューのURL（/full/<id>）
  * @property {string} thumbUrl サムネイルのURL（/thumb/<id>）
+ * @property {string} infoUrl 全画面表示に重ねる情報のURL（/info/<id>）
  * @property {string} date 撮影日（"2026-02-08"）
  * @property {boolean} isVideo 動画か
  */

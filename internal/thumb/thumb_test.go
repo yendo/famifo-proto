@@ -24,7 +24,7 @@ func mediaOf(t *testing.T, src string) media.Media {
 	t.Helper()
 	fi, err := os.Stat(src)
 	require.NoError(t, err)
-	m, err := media.New(src, fi.ModTime(), fi.ModTime())
+	m, err := media.New(src, 0, fi.ModTime(), fi.ModTime())
 	require.NoError(t, err)
 	return m
 }
@@ -240,7 +240,7 @@ func TestGenerateFailsOnMissingFile(t *testing.T) {
 	pv := newTestProvider(t)
 	// 消えた直後にイベントを拾った状況。行だけあって原本が無い1枚を組み立てる。
 	missing := filepath.Join(t.TempDir(), "nope.jpg")
-	m, err := media.New(missing, time.Unix(1600000000, 0), time.Unix(1600000000, 0))
+	m, err := media.New(missing, 0, time.Unix(1600000000, 0), time.Unix(1600000000, 0))
 	require.NoError(t, err)
 
 	require.Error(t, pv.Prepare(m, 1))

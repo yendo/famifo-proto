@@ -22,6 +22,7 @@ import (
 	"github.com/yendo/famifo-proto/internal/web"
 
 	"github.com/yendo/famifo-proto/internal/media"
+	"github.com/yendo/famifo-proto/internal/owner"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -77,7 +78,8 @@ func (f *webFixture) addMedia(t *testing.T, name string, takenAt time.Time, kind
 	}
 	require.NoError(t, os.WriteFile(path, body, 0o644))
 
-	m, err := media.New(path, takenAt, takenAt)
+	// 原本はテストが書いたので、所有者はテストを走らせている自分である。
+	m, err := media.New(path, uint32(os.Getuid()), takenAt, takenAt)
 	require.NoError(t, err)
 	require.NoError(t, f.st.Upsert(context.Background(), m))
 
@@ -188,6 +190,7 @@ func TestTilesDescribeEachItem(t *testing.T) {
 		PageURL:  "/item/" + m.ID(),
 		FullURL:  "/full/" + m.ID(),
 		ThumbURL: "/thumb/" + m.ID(),
+		InfoURL:  "/info/" + m.ID(),
 		Date:     "2026-02-08",
 		IsVideo:  false,
 	}}, got)
@@ -311,6 +314,7 @@ type tile struct {
 	PageURL  string `json:"pageUrl"`
 	FullURL  string `json:"fullUrl"`
 	ThumbURL string `json:"thumbUrl"`
+	InfoURL  string `json:"infoUrl"`
 	Date     string `json:"date"`
 	IsVideo  bool   `json:"isVideo"`
 }
@@ -445,6 +449,65 @@ func doGet(t *testing.T, h http.Handler, target string) *httptest.ResponseRecord
 	return rec
 }
 
+// addOwnedBy は所有者を指定してDBの行だけを用意する。/info/{id} はDBの行しか
+// 見ないので原本は置かない。他人の uid のファイルは root でないと作れない。
+func (f *webFixture) addOwnedBy(t *testing.T, name string, uid uint32) media.Media {
+	t.Helper()
+	takenAt := time.Unix(1600000000, 0)
+	m, err := media.New(filepath.Join(f.mediaDir, name), uid, takenAt, takenAt)
+	require.NoError(t, err)
+	require.NoError(t, f.st.Upsert(context.Background(), m))
+	return m
+}
+
+// 撮影者の名前は owner が引いたものをそのまま載せる。名前の決まりは owner_test が
+// 確かめるので、ここでは owner.Name の結果と一致するかだけを見る。
+func TestInfoNamesTheOwner(t *testing.T) {
+	t.Parallel()
+	uid := uint32(os.Getuid())
+	want := owner.Name(uid)
+	if want == "" {
+		t.Skip("the test user has no account entry, so there is no name to serve")
+	}
+	f := newWebFixture(t, 10)
+	m := f.addOwnedBy(t, "a.jpg", uid)
+
+	rec := doGet(t, f.h, "/info/"+m.ID())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	var got struct {
+		Owner string `json:"owner"`
+	}
+	dec := json.NewDecoder(rec.Body)
+	dec.DisallowUnknownFields()
+	require.NoError(t, dec.Decode(&got))
+	require.Equal(t, want, got.Owner)
+}
+
+// 名前を出せないときはキーごと省く。クライアントは owner が無ければ欄を隠す。
+// 名前が出ないことが環境によらず決まっている nobody で確かめる。
+func TestInfoOmitsTheOwnerWithoutAName(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addOwnedBy(t, "a.jpg", 65534)
+
+	rec := doGet(t, f.h, "/info/"+m.ID())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.JSONEq(t, `{}`, rec.Body.String())
+}
+
+// JSから取るので、/item/{id} と違ってギャラリーへは送らない。
+func TestInfoNotFoundForUnknownID(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+
+	rec := doGet(t, f.h, "/info/deadbeef")
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
 func TestServeThumb(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
@@ -562,7 +625,7 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
 	// インデックスに載っていない1件。IDは組み立てられても配信されない
-	unindexed, err := media.New(filepath.Join(f.mediaDir, "never.jpg"), time.Time{}, time.Time{})
+	unindexed, err := media.New(filepath.Join(f.mediaDir, "never.jpg"), 0, time.Time{}, time.Time{})
 	require.NoError(t, err)
 	// パスではなくIDでしか引けないため、traversalは構造的に成立しない
 	for _, target := range []string{

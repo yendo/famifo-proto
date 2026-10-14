@@ -23,6 +23,8 @@ import { gallery } from "./gallery.js";
 	const vid = box.querySelector("video");
 	/** @type {HTMLElement} */
 	const errBox = box.querySelector(".lb-error");
+	/** @type {HTMLElement} */
+	const owner = box.querySelector(".lb-owner");
 	const SWIPE_X = 50; // 左右送りとみなす最小移動量(px)
 	const SWIPE_Y = 80; // 下スワイプで閉じる最小移動量(px)
 
@@ -140,6 +142,10 @@ import { gallery } from "./gallery.js";
 		if (!tile || mySeq !== requestSeq) return; // 待っている間に追い越されたら破棄
 		idx = i;
 		errBox.hidden = true;
+		// 名前は写真より遅れて届く。前の写真の名前を次の写真に残さない。
+		owner.hidden = true;
+		owner.textContent = "";
+		showOwner(tile.infoUrl, mySeq);
 		if (tile.isVideo) {
 			img.hidden = true;
 			img.removeAttribute("src");
@@ -176,6 +182,27 @@ import { gallery } from "./gallery.js";
 		vid.load();
 	}
 
+	// showOwner は撮影者の名前を取って出す。写真の表示は待たせない。
+	// 待っている間に別の写真へ送られたか閉じられたら、届いた名前は捨てる。
+	// 取れなかったときは隠したままにする。名前が無くても写真は見られる。
+	/**
+	 * @param {string} url
+	 * @param {number} seq
+	 */
+	async function showOwner(url, seq) {
+		try {
+			const res = await fetch(url);
+			if (!res.ok) return;
+			/** @type {{ owner?: string }} */
+			const info = await res.json();
+			if (seq !== requestSeq || !info.owner) return;
+			owner.textContent = info.owner;
+			owner.hidden = false;
+		} catch {
+			// 通信の失敗。隠したままにする
+		}
+	}
+
 	// close は閉じるだけで履歴には触らない。呼ぶのは popstate と、戻る先を
 	// 持たない requestClose だけである。
 	function close() {
@@ -184,6 +211,8 @@ import { gallery } from "./gallery.js";
 		stopVideo();
 		vid.hidden = true;
 		errBox.hidden = true;
+		owner.hidden = true;
+		owner.textContent = "";
 		box.classList.remove("playing");
 		document.body.classList.remove("locked");
 		idx = -1;

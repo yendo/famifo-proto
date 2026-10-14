@@ -31,6 +31,7 @@ routes (methods of Handler)                               web.go
   GET /thumb/{id}  handleThumb ----> lookupMedia -> thumb.Provider
                                                     or serveNoPreview
   GET /full/{id}   handleFull  ----> lookupMedia -> fullViewPath
+  GET /info/{id}   handleInfo  ----> lookupMedia -> owner.Name -> JSON
 ```
 
 ## View models and templates
@@ -42,7 +43,10 @@ indexView                          view.go
   +-- OpenIndex, AuthEnabled
 
 []mediaView (JSON from /tiles)     view.go
-  {id, pageUrl, fullUrl, thumbUrl, date, isVideo}
+  {id, pageUrl, fullUrl, thumbUrl, infoUrl, date, isVideo}
+
+infoView (JSON from /info/{id})    view.go
+  {owner?}
 
 templates/index.html  {{define "index"}}
 ```
@@ -57,6 +61,7 @@ index.html
         +-- scrubber.js --> gallery.js, chunk.js, layout.js
 
 chunk.js --> fetch /tiles?chunk
+lightbox.js --> fetch /info/{id}
 
 <img>, <video> --> /thumb/{id}, /full/{id}
 ```
@@ -64,6 +69,6 @@ chunk.js --> fetch /tiles?chunk
 ## Dependencies on other packages
 
 ```
-web --> store, thumb, media, session, imagefmt
+web --> store, thumb, media, owner, session, imagefmt
 web --> Provider (interface; the OIDC implementation is injected)
 ```

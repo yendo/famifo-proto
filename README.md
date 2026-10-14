@@ -243,6 +243,7 @@ make build-image
 docker run -d --restart unless-stopped -p 8080:8080 \
   -v /volume1/photo:/photos:ro \
   -v /volume1/famifo/data:/data \
+  -v /etc/passwd:/etc/passwd:ro \
   famifo
 ```
 
@@ -264,6 +265,21 @@ Limitations only helps when a root is its own root: with the default single `-di
 /photos`, one mount going missing does not make `/photos` look empty, so nothing stops
 its files being dropped from the index. Splitting a single mount into several roots
 buys nothing, since they come and go together.
+
+### Showing who took each photo
+
+famifo treats the owner of each file as the person who took it, and shows that
+account's name at the top of the full view. The name comes from `/etc/passwd`: the
+full name (the GECOS field) if it is set, otherwise the account name. A `scratch`
+image has no `/etc/passwd`, so mount the host's read-only as above. That shows the
+container the host's account list — names, uids, home directories and shells — but
+no password hashes, which live in `/etc/shadow`. Without it no names are shown, and
+the startup log says so.
+
+The owner is recorded when a file is indexed. `chown` does not change the
+modification time, so famifo does not notice a later change of owner; delete the
+database to pick it up. Files owned by uid 65534 (`nobody`) show no name — that is
+also what userns-remap and rootless Docker turn owners outside their range into.
 
 ### The `/data` mount is not optional
 
@@ -318,6 +334,7 @@ docker logs <container> | head -1
 - The scrollbar spans the whole date range, so any position is one drag away
 - Dragging the scrubber at the right edge moves through the library with the year and month shown
 - Tap a tile to enlarge it. Swipe left/right to move between tiles, swipe down to close
+- The full view shows who took the photo at the top — see "Showing who took each photo" above
 
 ## Browser tests
 

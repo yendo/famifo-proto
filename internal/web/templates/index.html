@@ -49,6 +49,8 @@
   {{/* HEVCを出せない端末では要素は作られたまま再生に失敗し、画面が真っ黒になる。
        何が起きたのか分からないのが一番困るので、短く伝える。 */}}
   <p class="lb-error" hidden>この端末では再生できません</p>
+  {{/* 撮影者の名前。写真を送るたびに /info から取り直す。出せる名前が無ければ隠したまま。 */}}
+  <p class="lb-owner" hidden></p>
   <button class="lb-nav lb-prev" type="button" aria-label="前へ">‹</button>
   <button class="lb-nav lb-next" type="button" aria-label="次へ">›</button>
 </div>

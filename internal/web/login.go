@@ -256,11 +256,13 @@ func (a *Auth) currentUser(r *http.Request) string {
 
 // isDataPath はページではなくデータを取りに来た経路を見分ける。
 //
-// /tiles は chunk.js が fetch し、/thumb/ と /full/ は <img> と <video> が読む。
+// /tiles は chunk.js が、/info/ は lightbox.js が fetch し、/thumb/ と /full/ は
+// <img> と <video> が読む。
 // ここに挙げる経路は Handler のルート表と一対一である。データを返す経路を
 // 足したらここにも足すこと。忘れると、その経路だけ未認証時に白い画面になる。
 func isDataPath(p string) bool {
-	return p == "/tiles" || strings.HasPrefix(p, "/thumb/") || strings.HasPrefix(p, "/full/")
+	return p == "/tiles" || strings.HasPrefix(p, "/thumb/") || strings.HasPrefix(p, "/full/") ||
+		strings.HasPrefix(p, "/info/")
 }
 
 // safeNext は戻り先を自サイト内に限る。

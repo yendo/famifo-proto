@@ -27,6 +27,7 @@ import (
 	"github.com/yendo/famifo-proto/internal/config"
 	"github.com/yendo/famifo-proto/internal/index"
 	"github.com/yendo/famifo-proto/internal/oidc"
+	"github.com/yendo/famifo-proto/internal/owner"
 	"github.com/yendo/famifo-proto/internal/session"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -67,6 +68,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		"timezone", startupTimezone(time.Now()),
 		"dirs", cfg.MediaDirs, "data", cfg.DataDir, "addr", cfg.Addr,
 		"scan-workers", cfg.ScanWorkers, "scan-interval", cfg.ScanInterval)
+	// 撮影者の名前は /etc/passwd から引く。scratch のイメージには無いので、
+	// ホストのものをマウントし忘れると、名前が黙って出なくなる。ここで知らせる。
+	if err := owner.Check(); err != nil {
+		log.Info("owner names unavailable, mount /etc/passwd to show who took each photo", "err", err)
+	}
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {
 		return err

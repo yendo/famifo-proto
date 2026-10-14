@@ -15,6 +15,7 @@ import (
 
 	"github.com/yendo/famifo-proto/internal/imagefmt"
 	"github.com/yendo/famifo-proto/internal/media"
+	"github.com/yendo/famifo-proto/internal/owner"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/synology"
 	"github.com/yendo/famifo-proto/internal/thumb"
@@ -41,9 +42,10 @@ const defaultChunkSize = 120
 // contentSecurityPolicy はすべての応答に載せる方針。
 //
 // default-src を 'none' にして、必要なものだけを足す。ギャラリーが読むのは
-// /static/ のCSSとJS、/thumb/ と /full/ の画像と動画、それに /tiles の fetch
-// だけで、外部から取るものは1つも無い（idiomorph も同梱してある）。
-// connect-src が要るのは、仮想スクロールが /tiles を fetch するためである。
+// /static/ のCSSとJS、/thumb/ と /full/ の画像と動画、それに /tiles と /info/ の
+// fetch だけで、外部から取るものは1つも無い（idiomorph も同梱してある）。
+// connect-src が要るのは、仮想スクロールが /tiles を、ライトボックスが /info/ を
+// fetch するためである。
 //
 // script-src に 'unsafe-inline' は入れない。ここが厳しくあることが、この方針を
 // 入れる理由そのものである。index.html にインラインスクリプトは無く、
@@ -120,6 +122,7 @@ func NewHandler(st *store.Store, thumbs *thumb.Provider, auth *Auth, log *slog.L
 	routes.HandleFunc("GET /tiles", h.handleTiles)
 	routes.HandleFunc("GET /thumb/{id}", h.handleThumb)
 	routes.HandleFunc("GET /full/{id}", h.handleFull)
+	routes.HandleFunc("GET /info/{id}", h.handleInfo)
 
 	if auth == nil {
 		mux.Handle("/", routes)
@@ -215,6 +218,20 @@ func (h *Handler) handleFull(w http.ResponseWriter, r *http.Request) {
 	// 先に設定しておけばServeContentは上書きしない。
 	w.Header().Set("Content-Type", contentType)
 	http.ServeFile(w, r, path)
+}
+
+// handleInfo は全画面表示に重ねる1件分の情報をJSONで返す。一覧では使わない
+// 情報をここに分け、/tiles のチャンクを軽く保つ。
+func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.lookupMedia(w, r)
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(infoView{Owner: owner.Name(m.OwnerUID())}); err != nil {
+		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
+		h.log.Error("failed to encode the info", "err", err)
+	}
 }
 
 // securityHeaders はすべての応答に同じ守りを載せる。

@@ -21,6 +21,7 @@ import (
 	"github.com/yendo/famifo-proto/internal/index/exif"
 	"github.com/yendo/famifo-proto/internal/index/videometa"
 	"github.com/yendo/famifo-proto/internal/media"
+	"github.com/yendo/famifo-proto/internal/owner"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
@@ -139,10 +140,13 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) (err error) {
 		takenAt, orientation = meta.TakenAt, meta.Orientation
 	}
 
+	// 持ち主は撮影者の判別に使う。Lstat の結果に入っているので読み足しは無い。
+	ownerUID := owner.UID(fi)
+
 	// Mediaを先に組み立てる。ModTime が原本の版であり、thumb はそれを見て出力の
 	// 名前を決める。ここで確定させておけば、インデックスに載る版とサムネイルの
 	// 名前に入る版が食い違いようがない。
-	m, err := media.New(path, takenAt, fi.ModTime())
+	m, err := media.New(path, ownerUID, takenAt, fi.ModTime())
 	if err != nil {
 		return err
 	}
