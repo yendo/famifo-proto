@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os/user"
 	"strconv"
 
 	"github.com/yendo/famifo-proto/internal/imagefmt"
@@ -41,9 +42,10 @@ const defaultChunkSize = 120
 // contentSecurityPolicy はすべての応答に載せる方針。
 //
 // default-src を 'none' にして、必要なものだけを足す。ギャラリーが読むのは
-// /static/ のCSSとJS、/thumb/ と /full/ の画像と動画、それに /tiles の fetch
-// だけで、外部から取るものは1つも無い（idiomorph も同梱してある）。
-// connect-src が要るのは、仮想スクロールが /tiles を fetch するためである。
+// /static/ のCSSとJS、/thumb/ と /full/ の画像と動画、それに /tiles と /info/ の
+// fetch だけで、外部から取るものは1つも無い（idiomorph も同梱してある）。
+// connect-src が要るのは、仮想スクロールが /tiles を、ライトボックスが /info/ を
+// fetch するためである。
 //
 // script-src に 'unsafe-inline' は入れない。ここが厳しくあることが、この方針を
 // 入れる理由そのものである。index.html にインラインスクリプトは無く、
@@ -75,6 +77,11 @@ const contentSecurityPolicy = "default-src 'none'; " +
 
 // noOpenItem は「開いた写真は無い」ことを表す通し番号。
 const noOpenItem = -1
+
+// nobodyUID は nobody の uid。所有者がこれなら名前を出さない。userns-remap や
+// rootless Docker では、範囲外の uid がこれに潰れて見える。誰の写真か分からない
+// のに、/etc/passwd に nobody の行があると「nobody」と出てしまう。
+const nobodyUID = 65534
 
 // Handler はギャラリーのHTTPハンドラ。ルーティング済みで、http.Server にそのまま渡せる。
 //
@@ -120,6 +127,7 @@ func NewHandler(st *store.Store, thumbs *thumb.Provider, auth *Auth, log *slog.L
 	routes.HandleFunc("GET /tiles", h.handleTiles)
 	routes.HandleFunc("GET /thumb/{id}", h.handleThumb)
 	routes.HandleFunc("GET /full/{id}", h.handleFull)
+	routes.HandleFunc("GET /info/{id}", h.handleInfo)
 
 	if auth == nil {
 		mux.Handle("/", routes)
@@ -202,6 +210,20 @@ func (h *Handler) handleThumb(w http.ResponseWriter, r *http.Request) {
 	// 先に設定しておけばServeContentは上書きしない。
 	w.Header().Set("Content-Type", contentType)
 	http.ServeFile(w, r, path)
+}
+
+// handleInfo は全画面表示に重ねる1件分の情報をJSONで返す。一覧では使わない
+// 情報をここに分け、/tiles のチャンクを軽く保つ。
+func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.lookupMedia(w, r)
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(infoView{Owner: ownerName(m.OwnerUID())}); err != nil {
+		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
+		h.log.Error("failed to encode the info", "err", err)
+	}
 }
 
 // handleFull はフルビュー用の写真と動画を配信する。
@@ -323,4 +345,26 @@ func fullViewPath(m media.Media) (path, contentType string) {
 		path = synology.ThumbXLPath(path)
 	}
 	return path, imagefmt.ContentType(path)
+}
+
+// ownerName は所有者の uid から表示する名前を引く。出せる名前が無ければ空を返す。
+//
+// 要求のたびに引き、覚えておかない。引くのは開いた1件分だけで、アカウント側で
+// 名前を変えれば次に開いたときから反映される。cgo を使わないビルドでは os/user が
+// /etc/passwd を自分で読む。scratch のイメージには /etc/passwd が無いので、ホストの
+// ものをマウントしない限り名前は出ない。
+//
+// フルネーム（GECOS）を先に使い、空ならアカウント名にする。
+func ownerName(uid uint32) string {
+	if uid == nobodyUID {
+		return ""
+	}
+	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
+	if err != nil {
+		return ""
+	}
+	if u.Name != "" {
+		return u.Name
+	}
+	return u.Username
 }

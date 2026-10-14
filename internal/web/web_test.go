@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -13,7 +14,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -189,6 +192,7 @@ func TestTilesDescribeEachItem(t *testing.T) {
 		PageURL:  "/item/" + m.ID(),
 		FullURL:  "/full/" + m.ID(),
 		ThumbURL: "/thumb/" + m.ID(),
+		InfoURL:  "/info/" + m.ID(),
 		Date:     "2026-02-08",
 		IsVideo:  false,
 	}}, got)
@@ -312,6 +316,7 @@ type tile struct {
 	PageURL  string `json:"pageUrl"`
 	FullURL  string `json:"fullUrl"`
 	ThumbURL string `json:"thumbUrl"`
+	InfoURL  string `json:"infoUrl"`
 	Date     string `json:"date"`
 	IsVideo  bool   `json:"isVideo"`
 }
@@ -444,6 +449,96 @@ func doGet(t *testing.T, h http.Handler, target string) *httptest.ResponseRecord
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
 	return rec
+}
+
+// addOwnedBy は所有者を指定してDBの行だけを用意する。/info/{id} はDBの行しか
+// 見ないので原本は置かない。他人の uid のファイルは root でないと作れない。
+func (f *webFixture) addOwnedBy(t *testing.T, name string, uid uint32) media.Media {
+	t.Helper()
+	takenAt := time.Unix(1600000000, 0)
+	m, err := media.New(filepath.Join(f.mediaDir, name), uid, takenAt, takenAt)
+	require.NoError(t, err)
+	require.NoError(t, f.st.Upsert(context.Background(), m))
+	return m
+}
+
+// unknownUID はアカウントの無い uid を返す。どの uid が空いているかは環境で
+// 変わるので、決め打ちせずに探す。
+func unknownUID(t *testing.T) uint32 {
+	t.Helper()
+	for uid := uint32(2_000_000_000); uid < 2_000_000_100; uid++ {
+		_, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
+		var unknown user.UnknownUserIdError
+		if errors.As(err, &unknown) {
+			return uid
+		}
+	}
+	t.Fatal("no uid without an account was found")
+	return 0
+}
+
+// 撮影者の名前はアカウントのフルネーム（GECOS）で、空ならアカウント名にする。
+func TestInfoNamesTheOwner(t *testing.T) {
+	t.Parallel()
+	uid := os.Getuid()
+	u, err := user.LookupId(strconv.Itoa(uid))
+	if err != nil {
+		t.Skipf("the test user has no account entry: %v", err)
+	}
+	want := u.Name
+	if want == "" {
+		want = u.Username
+	}
+	f := newWebFixture(t, 10)
+	m := f.addOwnedBy(t, "a.jpg", uint32(uid))
+
+	rec := doGet(t, f.h, "/info/"+m.ID())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	var got struct {
+		Owner string `json:"owner"`
+	}
+	dec := json.NewDecoder(rec.Body)
+	dec.DisallowUnknownFields()
+	require.NoError(t, dec.Decode(&got))
+	require.Equal(t, want, got.Owner)
+}
+
+// 名前を出せないときはキーごと省く。クライアントは owner が無ければ欄を隠す。
+//
+// nobody は /etc/passwd に行があっても出さない。userns-remap や rootless Docker では
+// 範囲外の uid がこれに潰れて見え、誰の写真か分からないのに「nobody」と出てしまう。
+func TestInfoOmitsTheOwnerWithoutAName(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		uid  uint32
+	}{
+		{"nobody", 65534},
+		{"no account", unknownUID(t)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newWebFixture(t, 10)
+			m := f.addOwnedBy(t, "a.jpg", tc.uid)
+
+			rec := doGet(t, f.h, "/info/"+m.ID())
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.JSONEq(t, `{}`, rec.Body.String())
+		})
+	}
+}
+
+// JSから取るので、/item/{id} と違ってギャラリーへは送らない。
+func TestInfoNotFoundForUnknownID(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+
+	rec := doGet(t, f.h, "/info/deadbeef")
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestServeThumb(t *testing.T) {
