@@ -271,9 +271,10 @@ buys nothing, since they come and go together.
 famifo treats the owner of each file as the person who took it, and shows that
 account's name at the top of the full view. The name comes from `/etc/passwd`: the
 full name (the GECOS field) if it is set, otherwise the account name. A `scratch`
-image has no `/etc/passwd`, so mount the host's read-only as above. `/etc/passwd` holds no
-password hashes (those live in `/etc/shadow`), so mounting it read-only exposes only
-account names. Without it no names are shown, and the startup log says so.
+image has no `/etc/passwd`, so mount the host's read-only as above. That shows the
+container the host's account list — names, uids, home directories and shells — but
+no password hashes, which live in `/etc/shadow`. Without it no names are shown, and
+the startup log says so.
 
 The owner is recorded when a file is indexed. `chown` does not change the
 modification time, so famifo does not notice a later change of owner; delete the
