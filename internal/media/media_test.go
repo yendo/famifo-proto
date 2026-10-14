@@ -11,11 +11,11 @@ import (
 // IDはパスだけから決まる。撮影日時やmtimeが変わっても同じ1件として追跡される。
 func TestIDIsStableAndDistinct(t *testing.T) {
 	t.Parallel()
-	a, err := media.New("/items/a.jpg", time.Time{}, testModTime)
+	a, err := media.New("/items/a.jpg", 0, time.Time{}, testModTime)
 	require.NoError(t, err)
-	again, err := media.New("/items/a.jpg", time.Time{}, testModTime.Add(time.Hour))
+	again, err := media.New("/items/a.jpg", 0, time.Time{}, testModTime.Add(time.Hour))
 	require.NoError(t, err)
-	b, err := media.New("/items/b.jpg", time.Time{}, testModTime)
+	b, err := media.New("/items/b.jpg", 0, time.Time{}, testModTime)
 	require.NoError(t, err)
 
 	require.Len(t, a.ID(), 32)
@@ -50,7 +50,7 @@ func TestNewFillsTheFields(t *testing.T) {
 	t.Parallel()
 	const path = "/items/A.JPG"
 
-	m, err := media.New(path, time.Time{}, testModTime)
+	m, err := media.New(path, 0, time.Time{}, testModTime)
 
 	require.NoError(t, err)
 	require.Equal(t, path, m.Path())
@@ -64,7 +64,7 @@ func TestNewKeepsTheLocalTimeWhereItWasShot(t *testing.T) {
 	paris := time.FixedZone("CET", 60*60)
 	takenAt := time.Date(2026, 3, 1, 21, 0, 0, 0, paris)
 
-	m, err := media.New("/items/a.jpg", takenAt, testModTime)
+	m, err := media.New("/items/a.jpg", 0, takenAt, testModTime)
 
 	require.NoError(t, err)
 	require.Equal(t, "2026-03-01T21:00:00", m.TakenAtLocal())
@@ -76,7 +76,7 @@ func TestNewKeepsTheLocalTimeOfAnUnknownOffset(t *testing.T) {
 	t.Parallel()
 	takenAt := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
 
-	m, err := media.New("/items/a.jpg", takenAt, testModTime)
+	m, err := media.New("/items/a.jpg", 0, takenAt, testModTime)
 
 	require.NoError(t, err)
 	require.Equal(t, "2021-03-04T05:06:07", m.TakenAtLocal())
@@ -84,7 +84,7 @@ func TestNewKeepsTheLocalTimeOfAnUnknownOffset(t *testing.T) {
 
 func TestNewFallsBackToModTimeWithoutACaptureTime(t *testing.T) {
 	t.Parallel()
-	m, err := media.New("/items/a.jpg", time.Time{}, testModTime)
+	m, err := media.New("/items/a.jpg", 0, time.Time{}, testModTime)
 
 	require.NoError(t, err)
 	// mtimeは瞬間なので、サーバの time.Local の時刻になる
@@ -100,20 +100,31 @@ func TestNewRejectsAPathThatIsNotACandidate(t *testing.T) {
 	} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
-			_, err := media.New(path, time.Time{}, testModTime)
+			_, err := media.New(path, 0, time.Time{}, testModTime)
 
 			require.Error(t, err)
 		})
 	}
 }
 
+// 所有者はそのまま持つ。撮影者の判別に使う。
+func TestNewKeepsTheOwner(t *testing.T) {
+	t.Parallel()
+
+	m, err := media.New("/items/a.jpg", 1000, time.Time{}, testModTime)
+
+	require.NoError(t, err)
+	require.Equal(t, uint32(1000), m.OwnerUID())
+}
+
 func TestRestoreKeepsTheStoredValues(t *testing.T) {
 	t.Parallel()
 	const path = "/items/a.jpg"
 
-	m := media.Restore(path, "2021-03-04T05:06:07", testModTime)
+	m := media.Restore(path, 1000, "2021-03-04T05:06:07", testModTime)
 
 	require.Equal(t, path, m.Path())
+	require.Equal(t, uint32(1000), m.OwnerUID())
 	require.Equal(t, "2021-03-04T05:06:07", m.TakenAtLocal())
 	require.Equal(t, "2021-03-04", m.Day())
 	require.True(t, m.ModTime().Equal(testModTime))

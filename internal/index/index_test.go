@@ -225,6 +225,20 @@ func TestScanStoresRasterPhotoWithThumb(t *testing.T) {
 	require.Len(t, f.generatedThumbs(t), 1, "nothing to borrow, so it makes its own")
 }
 
+// 所有者はファイルの uid から取る。テストが書いたファイルの所有者はテストを
+// 走らせている自分である。別の uid へ chown するには root が要るので扱わない。
+func TestScanRecordsTheFileOwner(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	path := writeTestJPEG(t, f.root, "a.jpg", 400, 200)
+
+	require.NoError(t, f.sc.ScanOnce(context.Background()))
+
+	got, err := f.st.GetByID(context.Background(), idOf(t, path))
+	require.NoError(t, err)
+	require.Equal(t, uint32(os.Getuid()), got.OwnerUID())
+}
+
 // TestScanAppliesTheEXIFOrientationToTheThumbnail はEXIFから読んだ向きが
 // サムネイル生成まで届いていることを確かめる。読み取り(internal/index/exif)と
 // 適用(internal/thumb)は別パッケージなので、繋ぎ違えても双方のテストは通る。

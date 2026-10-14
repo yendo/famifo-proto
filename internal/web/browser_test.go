@@ -464,7 +464,7 @@ func expectedMediaURLs(t *testing.T, n int) []string {
 	out := make([]string, n)
 	for i := 0; i < n; i++ {
 		path := filepath.Join(testMediaDir, fmt.Sprintf("p%04d.jpg", i))
-		m, err := media.New(path, time.Time{}, time.Time{})
+		m, err := media.New(path, 0, time.Time{}, time.Time{})
 		require.NoError(t, err)
 		out[i] = "/full/" + m.ID()
 	}
@@ -2341,10 +2341,10 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 
 	// 動画のほうを新しくして先頭に並べる。
 	bg := context.Background()
-	video, err := media.New(videoPath, time.Unix(1600000100, 0), time.Unix(1600000100, 0))
+	video, err := media.New(videoPath, uint32(os.Getuid()), time.Unix(1600000100, 0), time.Unix(1600000100, 0))
 	require.NoError(t, err)
 	require.NoError(t, st.Upsert(bg, video))
-	still, err := media.New(mediaPath, time.Unix(1600000000, 0), time.Unix(1600000000, 0))
+	still, err := media.New(mediaPath, uint32(os.Getuid()), time.Unix(1600000000, 0), time.Unix(1600000000, 0))
 	require.NoError(t, err)
 	require.NoError(t, st.Upsert(bg, still))
 

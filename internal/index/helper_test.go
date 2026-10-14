@@ -46,7 +46,7 @@ func testMP4Stub() []byte {
 // idOf は path の1件のIDを返す。取り込まれた行を GetByID で引くのに使う。
 func idOf(t *testing.T, path string) string {
 	t.Helper()
-	m, err := media.New(path, time.Time{}, time.Time{})
+	m, err := media.New(path, 0, time.Time{}, time.Time{})
 	require.NoError(t, err)
 	return m.ID()
 }

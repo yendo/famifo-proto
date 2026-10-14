@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"syscall"
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
@@ -139,10 +140,14 @@ func (ix *Indexer) indexFile(ctx context.Context, path string) (err error) {
 		takenAt, orientation = meta.TakenAt, meta.Orientation
 	}
 
+	// 所有者は撮影者の判別に使う。Lstat の結果に入っているので読み足しは無い。
+	// syscall.Stat_t は Linux のもので、ビルド対象は Linux だけである。
+	ownerUID := fi.Sys().(*syscall.Stat_t).Uid
+
 	// Mediaを先に組み立てる。ModTime が原本の版であり、thumb はそれを見て出力の
 	// 名前を決める。ここで確定させておけば、インデックスに載る版とサムネイルの
 	// 名前に入る版が食い違いようがない。
-	m, err := media.New(path, takenAt, fi.ModTime())
+	m, err := media.New(path, ownerUID, takenAt, fi.ModTime())
 	if err != nil {
 		return err
 	}

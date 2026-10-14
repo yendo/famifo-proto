@@ -77,7 +77,8 @@ func (f *webFixture) addMedia(t *testing.T, name string, takenAt time.Time, kind
 	}
 	require.NoError(t, os.WriteFile(path, body, 0o644))
 
-	m, err := media.New(path, takenAt, takenAt)
+	// 原本はテストが書いたので、所有者はテストを走らせている自分である。
+	m, err := media.New(path, uint32(os.Getuid()), takenAt, takenAt)
 	require.NoError(t, err)
 	require.NoError(t, f.st.Upsert(context.Background(), m))
 
@@ -562,7 +563,7 @@ func TestUnindexedPathsAreNotReachable(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
 	// インデックスに載っていない1件。IDは組み立てられても配信されない
-	unindexed, err := media.New(filepath.Join(f.mediaDir, "never.jpg"), time.Time{}, time.Time{})
+	unindexed, err := media.New(filepath.Join(f.mediaDir, "never.jpg"), 0, time.Time{}, time.Time{})
 	require.NoError(t, err)
 	// パスではなくIDでしか引けないため、traversalは構造的に成立しない
 	for _, target := range []string{
