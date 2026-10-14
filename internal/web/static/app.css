@@ -227,6 +227,23 @@ body.locked {
 	pointer-events: none;
 }
 
+/* 撮影者の名前。下端は動画の再生コントロールと重なるので上端に置く。明るい
+   写真でも読めるよう背景を敷く。押しても下の写真と前後送りに届くようにする。 */
+.lb-owner {
+	position: absolute;
+	top: max(12px, env(safe-area-inset-top));
+	left: 50%;
+	transform: translateX(-50%);
+	margin: 0;
+	padding: 0.2rem 0.6rem;
+	border-radius: 999px;
+	background: rgba(0, 0, 0, 0.5);
+	color: rgba(255, 255, 255, 0.9);
+	font-size: 0.85rem;
+	white-space: nowrap;
+	pointer-events: none;
+}
+
 .lb-nav {
 	position: absolute;
 	top: 0;

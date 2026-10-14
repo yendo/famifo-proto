@@ -18,6 +18,7 @@ package web_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -2406,6 +2407,103 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Empty(t, got.Src)
+}
+
+// 写真を開くと撮影者の名前が上端に出て、名前の無い写真へ送ると消えること。
+// 前の写真の名前が残ると、別の人が撮ったように見える。
+//
+// 共有の200枚のコーパスには足さない。TestLightboxSwitchesBetweenImageAndVideo と
+// 同じく、自前の小さなサーバーを立てて共有のChromeだけを借りる。
+func TestLightboxShowsTheOwner(t *testing.T) {
+	requireBrowser(t)
+
+	dir := t.TempDir()
+	mediaDir := filepath.Join(dir, "media")
+	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
+
+	st, err := store.Open(filepath.Join(dir, "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { st.Close() })
+
+	thumbs, err := thumb.NewProvider(filepath.Join(dir, "thumbs"))
+	require.NoError(t, err)
+
+	// 名前のある写真を新しくして先頭に並べ、その次に名前の無い写真（nobody）を置く。
+	bg := context.Background()
+	var ids []string
+	for _, p := range []struct {
+		name    string
+		uid     uint32
+		takenAt time.Time
+	}{
+		{"named.jpg", uint32(os.Getuid()), time.Unix(1600000100, 0)},
+		{"nameless.jpg", 65534, time.Unix(1600000000, 0)},
+	} {
+		path := filepath.Join(mediaDir, p.name)
+		require.NoError(t, writeTestJPEG(path, len(ids)))
+		m, err := media.New(path, p.uid, p.takenAt, p.takenAt)
+		require.NoError(t, err)
+		require.NoError(t, st.Upsert(bg, m))
+		ids = append(ids, m.ID())
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h, err := web.NewHandler(st, thumbs, nil, log)
+	require.NoError(t, err)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	// 期待する名前は /info から取る。名前の引き方は web_test が確かめており、
+	// ここで見るのは、届いた名前が画面に出るかどうかである。
+	resp, err := http.Get(srv.URL + "/info/" + ids[0])
+	require.NoError(t, err)
+	var info struct {
+		Owner string `json:"owner"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&info))
+	resp.Body.Close()
+	if info.Owner == "" {
+		t.Skip("the test user has no account entry, so there is no name to show")
+	}
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	const ownerJS = `(() => {
+		const o = document.querySelector('#lightbox .lb-owner');
+		return { hidden: o.hidden, text: o.textContent };
+	})()`
+	var got struct {
+		Hidden bool   `json:"hidden"`
+		Text   string `json:"text"`
+	}
+
+	err = chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(srv.URL),
+		waitForGallery(10*time.Second),
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox .lb-owner').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(ownerJS, &got),
+	)
+	require.NoError(t, err, "the owner's name never appeared")
+	require.Equal(t, info.Owner, got.Text)
+
+	// 名前の無い写真へ送る。/info の応答が届いて処理されるまで待ってから見る。
+	// 先に見ると、送った直後に隠しただけの状態で通ってしまう。
+	var settled bool
+	err = chromedp.Run(rctx,
+		chromedp.KeyEvent(kb.ArrowRight),
+		chromedp.Poll(fmt.Sprintf(
+			`performance.getEntriesByType('resource').some(e => e.name.endsWith('/info/%s'))`, ids[1]),
+			nil, chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(`new Promise(r => setTimeout(() => r(true), 200))`, &settled, awaitPromise),
+		chromedp.Evaluate(ownerJS, &got),
+	)
+	require.NoError(t, err)
+	require.True(t, got.Hidden, "the name of the previous photo is left on screen")
+	require.Empty(t, got.Text)
 }
 
 // --- Task: TestFailedChunkFetchIsRetried ---
