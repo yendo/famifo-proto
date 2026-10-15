@@ -4,6 +4,7 @@
 // （可視範囲と上下の余分）だけを #window に展開する。無限スクロールと違い、
 // 任意の位置へ即座に飛べる。
 import { chunks } from "./chunk.js";
+import { formatDay } from "./datefmt.js";
 import { Idiomorph } from "./idiomorph.esm.js";
 import { layout, windowAt, yForIndex } from "./layout.js";
 
@@ -260,19 +261,6 @@ export const gallery = (() => {
 		img.src = t.thumbUrl;
 		a.append(img);
 		return a;
-	}
-
-	// "2026-02-08" → "2026年2月8日"。今年なら年を省く。
-	// 最狭の1列(CSSの最小値110px)に収めるため、これ以上長い表記にはしない。
-	/**
-	 * @param {string} d
-	 * @returns {string}
-	 */
-	function formatDay(d) {
-		if (!d) return "";
-		const [y, m, day] = d.split("-");
-		const head = Number(y) === new Date().getFullYear() ? "" : `${y}年`;
-		return `${head}${Number(m)}月${Number(day)}日`;
 	}
 
 	// いま画面の上端にある写真の通し番号。レイアウトが無ければ0。

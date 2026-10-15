@@ -56,8 +56,8 @@ templates/index.html  {{define "index"}}
 ```
 index.html
   +-- app.js (entry)
-        +-- gallery.js  --> chunk.js, layout.js, idiomorph.esm.js
-        +-- lightbox.js --> gallery.js, chunk.js
+        +-- gallery.js  --> chunk.js, datefmt.js, layout.js, idiomorph.esm.js
+        +-- lightbox.js --> gallery.js, chunk.js, datefmt.js
         +-- scrubber.js --> gallery.js, chunk.js, layout.js
 
 chunk.js --> fetch /tiles?chunk

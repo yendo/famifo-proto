@@ -227,21 +227,19 @@ body.locked {
 	pointer-events: none;
 }
 
-/* 撮影者の名前。下端は動画の再生コントロールと重なるので上端に置く。明るい
-   写真でも読めるよう背景を敷く。押しても下の写真と前後送りに届くようにする。 */
-.lb-owner {
+/* 左下の2行（撮影者と撮影日時）。押しても下の写真と前後送りに届くようにする。 */
+.lb-caption {
 	position: absolute;
-	top: max(12px, env(safe-area-inset-top));
-	left: 50%;
-	transform: translateX(-50%);
-	margin: 0;
-	padding: 0.2rem 0.6rem;
-	border-radius: 999px;
-	background: rgba(0, 0, 0, 0.5);
+	left: max(12px, env(safe-area-inset-left));
+	bottom: max(12px, env(safe-area-inset-bottom));
 	color: rgba(255, 255, 255, 0.9);
 	font-size: 0.85rem;
-	white-space: nowrap;
+	line-height: 1.4;
 	pointer-events: none;
+}
+.lb-caption p {
+	margin: 0;
+	white-space: nowrap;
 }
 
 .lb-nav {

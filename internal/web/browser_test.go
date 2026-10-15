@@ -2307,6 +2307,56 @@ func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
 	require.Equal(t, "/", path, "the arrows stacked history entries")
 }
 
+// lightboxItem は startLightboxServer に並べる1件。
+type lightboxItem struct {
+	name    string // ファイル名。.mp4 なら動画、それ以外は写真
+	uid     uint32
+	takenAt time.Time
+}
+
+// startLightboxServer は items だけを持つ小さなサーバーを立て、そのURLと、
+// items と同じ順のIDを返す。共有の200枚のコーパスには足さず、共有のChromeだけを
+// 借りるテストのためのもの。一覧は新しい順に並ぶ。
+//
+// 写真は小さなJPEG、動画は中身の無いファイルにする。動画の中身を問わないのは、
+// 要素の切り替えや大きさを見るテストだからである。中身の無い動画は読み込みに
+// 失敗し、既定の 300×150 で表示される。
+func startLightboxServer(t *testing.T, items ...lightboxItem) (string, []string) {
+	t.Helper()
+	dir := t.TempDir()
+	mediaDir := filepath.Join(dir, "media")
+	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
+
+	st, err := store.Open(filepath.Join(dir, "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { st.Close() })
+
+	thumbs, err := thumb.NewProvider(filepath.Join(dir, "thumbs"))
+	require.NoError(t, err)
+
+	bg := context.Background()
+	ids := make([]string, 0, len(items))
+	for i, it := range items {
+		path := filepath.Join(mediaDir, it.name)
+		if strings.HasSuffix(it.name, ".mp4") {
+			require.NoError(t, os.WriteFile(path, []byte("not a real container"), 0o644))
+		} else {
+			require.NoError(t, writeTestJPEG(path, i))
+		}
+		m, err := media.New(path, it.uid, it.takenAt, it.takenAt)
+		require.NoError(t, err)
+		require.NoError(t, st.Upsert(bg, m))
+		ids = append(ids, m.ID())
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h, err := web.NewHandler(st, thumbs, nil, log)
+	require.NoError(t, err)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	return srv.URL, ids
+}
+
 // 動画を開くと <img> ではなく <video> に切り替わり、離れると src が外れる。外さないと
 // 裏でダウンロードが続き、次の写真を開いても前の動画の音が鳴り続ける。
 //
@@ -2319,41 +2369,12 @@ func TestArrowKeysReplaceTheURLWithoutStackingHistory(t *testing.T) {
 func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 	requireBrowser(t)
 
-	dir := t.TempDir()
-	mediaDir := filepath.Join(dir, "media")
-	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
-
-	st, err := store.Open(filepath.Join(dir, "test.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { st.Close() })
-
-	thumbs, err := thumb.NewProvider(filepath.Join(dir, "thumbs"))
-	require.NoError(t, err)
-
-	// 中身は問わない。原本が再生できるかではなく、要素が切り替わるかを見る。
-	videoPath := filepath.Join(mediaDir, "clip.mp4")
-	require.NoError(t, os.WriteFile(videoPath, []byte("not a real container"), 0o644))
-
-	mediaPath := filepath.Join(mediaDir, "a.jpg")
-	pf, err := os.Create(mediaPath)
-	require.NoError(t, err)
-	require.NoError(t, jpeg.Encode(pf, image.NewRGBA(image.Rect(0, 0, 40, 20)), nil))
-	require.NoError(t, pf.Close())
-
 	// 動画のほうを新しくして先頭に並べる。
-	bg := context.Background()
-	video, err := media.New(videoPath, uint32(os.Getuid()), time.Unix(1600000100, 0), time.Unix(1600000100, 0))
-	require.NoError(t, err)
-	require.NoError(t, st.Upsert(bg, video))
-	still, err := media.New(mediaPath, uint32(os.Getuid()), time.Unix(1600000000, 0), time.Unix(1600000000, 0))
-	require.NoError(t, err)
-	require.NoError(t, st.Upsert(bg, still))
-
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h, err := web.NewHandler(st, thumbs, nil, log)
-	require.NoError(t, err)
-	srv := httptest.NewServer(h)
-	t.Cleanup(srv.Close)
+	uid := uint32(os.Getuid())
+	url, _ := startLightboxServer(t,
+		lightboxItem{"clip.mp4", uid, time.Unix(1600000100, 0)},
+		lightboxItem{"a.jpg", uid, time.Unix(1600000000, 0)},
+	)
 
 	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
 	defer cancel()
@@ -2370,9 +2391,9 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 		Src     string `json:"src"`
 	}
 
-	err = chromedp.Run(rctx,
+	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1200, 900),
-		chromedp.Navigate(srv.URL),
+		chromedp.Navigate(url),
 		waitForGallery(10*time.Second),
 		chromedp.Click(`#window .tile[data-video]`, chromedp.NodeVisible),
 		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil,
@@ -2409,53 +2430,23 @@ func TestLightboxSwitchesBetweenImageAndVideo(t *testing.T) {
 	require.Empty(t, got.Src)
 }
 
-// 写真を開くと撮影者の名前が上端に出て、名前の無い写真へ送ると消えること。
+// 写真を開くと撮影者の名前が左下に出て、名前の無い写真へ送ると消えること。
 // 前の写真の名前が残ると、別の人が撮ったように見える。
 //
 // 共有の200枚のコーパスには足さない。TestLightboxSwitchesBetweenImageAndVideo と
-// 同じく、自前の小さなサーバーを立てて共有のChromeだけを借りる。
+// 同じく startLightboxServer で小さなサーバーを立てて共有のChromeだけを借りる。
 func TestLightboxShowsTheOwner(t *testing.T) {
 	requireBrowser(t)
 
-	dir := t.TempDir()
-	mediaDir := filepath.Join(dir, "media")
-	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
-
-	st, err := store.Open(filepath.Join(dir, "test.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { st.Close() })
-
-	thumbs, err := thumb.NewProvider(filepath.Join(dir, "thumbs"))
-	require.NoError(t, err)
-
 	// 名前のある写真を新しくして先頭に並べ、その次に名前の無い写真（nobody）を置く。
-	bg := context.Background()
-	var ids []string
-	for _, p := range []struct {
-		name    string
-		uid     uint32
-		takenAt time.Time
-	}{
-		{"named.jpg", uint32(os.Getuid()), time.Unix(1600000100, 0)},
-		{"nameless.jpg", 65534, time.Unix(1600000000, 0)},
-	} {
-		path := filepath.Join(mediaDir, p.name)
-		require.NoError(t, writeTestJPEG(path, len(ids)))
-		m, err := media.New(path, p.uid, p.takenAt, p.takenAt)
-		require.NoError(t, err)
-		require.NoError(t, st.Upsert(bg, m))
-		ids = append(ids, m.ID())
-	}
-
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h, err := web.NewHandler(st, thumbs, nil, log)
-	require.NoError(t, err)
-	srv := httptest.NewServer(h)
-	t.Cleanup(srv.Close)
+	url, ids := startLightboxServer(t,
+		lightboxItem{"named.jpg", uint32(os.Getuid()), time.Unix(1600000100, 0)},
+		lightboxItem{"nameless.jpg", 65534, time.Unix(1600000000, 0)},
+	)
 
 	// 期待する名前は /info から取る。名前の引き方は web_test が確かめており、
 	// ここで見るのは、届いた名前が画面に出るかどうかである。
-	resp, err := http.Get(srv.URL + "/info/" + ids[0])
+	resp, err := http.Get(url + "/info/" + ids[0])
 	require.NoError(t, err)
 	var info struct {
 		Owner string `json:"owner"`
@@ -2480,7 +2471,7 @@ func TestLightboxShowsTheOwner(t *testing.T) {
 
 	err = chromedp.Run(rctx,
 		chromedp.EmulateViewport(1200, 900),
-		chromedp.Navigate(srv.URL),
+		chromedp.Navigate(url),
 		waitForGallery(10*time.Second),
 		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
 		chromedp.Poll(`!document.querySelector('#lightbox .lb-owner').hidden`, nil,
@@ -2504,6 +2495,35 @@ func TestLightboxShowsTheOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, got.Hidden, "the name of the previous photo is left on screen")
 	require.Empty(t, got.Text)
+}
+
+// 全画面の左下の2行目に撮影日時が出ること。撮影地の時刻をそのまま出し、
+// ブラウザの時差で動かさない。
+//
+// 過去の年の写真にする。今年の写真は年を省くので、実行した年で期待値が変わる。
+func TestLightboxShowsWhenItWasTaken(t *testing.T) {
+	requireBrowser(t)
+
+	// UTC のラベルの値も撮影地の時刻として扱われ、"2020-09-13T21:28:05" で記録される。
+	url, _ := startLightboxServer(t,
+		lightboxItem{"a.jpg", 65534, time.Date(2020, 9, 13, 21, 28, 5, 0, time.UTC)},
+	)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var got string
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(url),
+		waitForGallery(10*time.Second),
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox .lb-when').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(`document.querySelector('#lightbox .lb-when').textContent`, &got),
+	)
+	require.NoError(t, err, "the capture time never appeared")
+	require.Equal(t, "2020年9月13日 21:28", got)
 }
 
 // --- Task: TestFailedChunkFetchIsRetried ---
