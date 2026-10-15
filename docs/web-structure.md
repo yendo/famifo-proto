@@ -46,7 +46,7 @@ indexView                          view.go
   {id, pageUrl, fullUrl, thumbUrl, infoUrl, date, isVideo}
 
 infoView (JSON from /info/{id})    view.go
-  {owner?}
+  {owner?, takenAt}
 
 templates/index.html  {{define "index"}}
 ```

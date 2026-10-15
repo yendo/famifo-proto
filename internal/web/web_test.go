@@ -477,7 +477,8 @@ func TestInfoNamesTheOwner(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 	var got struct {
-		Owner string `json:"owner"`
+		Owner   string `json:"owner"`
+		TakenAt string `json:"takenAt"`
 	}
 	dec := json.NewDecoder(rec.Body)
 	dec.DisallowUnknownFields()
@@ -495,7 +496,24 @@ func TestInfoOmitsTheOwnerWithoutAName(t *testing.T) {
 	rec := doGet(t, f.h, "/info/"+m.ID())
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.JSONEq(t, `{}`, rec.Body.String())
+	require.JSONEq(t, `{"takenAt": "`+m.TakenAtLocal()+`"}`, rec.Body.String())
+}
+
+// 撮影日時は撮影地の時刻の文字列をそのまま載せる。クライアントは時差を扱わず、
+// 数字に分解して表示する。
+func TestInfoCarriesTheTakenAt(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addOwnedBy(t, "a.jpg", 65534)
+
+	rec := doGet(t, f.h, "/info/"+m.ID())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got struct {
+		TakenAt string `json:"takenAt"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&got))
+	require.Equal(t, m.TakenAtLocal(), got.TakenAt)
 }
 
 // JSから取るので、/item/{id} と違ってギャラリーへは送らない。

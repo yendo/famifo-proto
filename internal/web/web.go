@@ -228,7 +228,7 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(infoView{Owner: owner.Name(m.OwnerUID())}); err != nil {
+	if err := json.NewEncoder(w).Encode(infoView{Owner: owner.Name(m.OwnerUID()), TakenAt: m.TakenAtLocal()}); err != nil {
 		// ヘッダ送出後なのでステータスは変えられない。ログに残す。
 		h.log.Error("failed to encode the info", "err", err)
 	}

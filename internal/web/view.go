@@ -41,7 +41,8 @@ type dayGroup struct {
 // infoView は /info/{id} の応答。全画面表示に重ねる1件分の情報で、一覧では
 // 使わないので /tiles には載せない。出せない項目はキーごと省く。
 type infoView struct {
-	Owner string `json:"owner,omitempty"` // 撮影者の名前
+	Owner   string `json:"owner,omitempty"` // 撮影者の名前
+	TakenAt string `json:"takenAt"`         // "2006-01-02T15:04:05"。撮影地の時刻で、時差は持たない
 }
 
 // buildIndexView はトップページの入力を組み立てる。
