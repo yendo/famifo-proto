@@ -2526,6 +2526,140 @@ func TestLightboxShowsWhenItWasTaken(t *testing.T) {
 	require.Equal(t, "2020年9月13日 21:28", got)
 }
 
+// chromeJS は帯の状態を読むJS式。checkVisibility は祖先の display: none も見るので、
+// 帯（.lb-top）が隠れていれば中の戻るボタンも見えないと判定される。
+const chromeJS = `(() => {
+	const b = document.querySelector('#lightbox');
+	return {
+		chrome: b.classList.contains('chrome'),
+		back: b.querySelector('.lb-back').checkVisibility(),
+		caption: b.querySelector('.lb-caption').checkVisibility(),
+	};
+})()`
+
+type chromeState struct {
+	Chrome  bool `json:"chrome"`
+	Back    bool `json:"back"`
+	Caption bool `json:"caption"`
+}
+
+// 写真をクリックするたびに帯（戻るボタン、左下の2行）が消えたり出たりすること。
+// 帯を消したまま送れば消えたままで、写真をめくり続けられること。
+func TestLightboxClickTogglesTheChrome(t *testing.T) {
+	requireBrowser(t)
+
+	url, ids := startLightboxServer(t,
+		lightboxItem{"a.jpg", 65534, time.Unix(1600000100, 0)},
+		lightboxItem{"b.jpg", 65534, time.Unix(1600000000, 0)},
+	)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var got chromeState
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(url),
+		waitForGallery(10*time.Second),
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(chromeJS, &got),
+	)
+	require.NoError(t, err)
+	require.Equal(t, chromeState{Chrome: true, Back: true, Caption: true}, got, "the lightbox should open with the chrome shown")
+
+	// 画面の中央（写真）を押す。前後のボタンは左右の端にあるので当たらない。
+	err = chromedp.Run(rctx,
+		chromedp.MouseClickXY(600, 450),
+		chromedp.Evaluate(chromeJS, &got),
+	)
+	require.NoError(t, err)
+	require.Equal(t, chromeState{}, got, "a click on the photo should hide the chrome")
+
+	err = chromedp.Run(rctx,
+		chromedp.KeyEvent(kb.ArrowRight),
+		chromedp.Poll(fmt.Sprintf(`location.pathname === %s`, strconv.Quote("/item/"+ids[1])), nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(chromeJS, &got),
+	)
+	require.NoError(t, err)
+	require.Equal(t, chromeState{}, got, "moving to the next photo should keep the chrome hidden")
+
+	err = chromedp.Run(rctx,
+		chromedp.MouseClickXY(600, 450),
+		chromedp.Evaluate(chromeJS, &got),
+	)
+	require.NoError(t, err)
+	require.Equal(t, chromeState{Chrome: true, Back: true, Caption: true}, got, "a second click should bring the chrome back")
+}
+
+// 戻るボタンで閉じ、URLが一覧に戻ること。写真のクリックは閉じる操作ではなくなったので、
+// マウスで閉じる経路はこのボタンになる。
+func TestLightboxBackButtonCloses(t *testing.T) {
+	requireBrowser(t)
+
+	url, _ := startLightboxServer(t, lightboxItem{"a.jpg", 65534, time.Unix(1600000000, 0)})
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var path string
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(url),
+		waitForGallery(10*time.Second),
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Click(`#lightbox .lb-back`, chromedp.NodeVisible),
+		chromedp.Poll(`document.querySelector('#lightbox').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(`location.pathname`, &path),
+	)
+	require.NoError(t, err, "the back button did not close the lightbox")
+	require.Equal(t, "/", path)
+}
+
+// マウスで操作する端末では前後のボタンが見えていて、押すと送れること。
+// タッチ端末で出さないことは、ヘッドレスChromeが (hover: hover) を名乗るので
+// ここでは確かめられない。
+func TestLightboxNavButtonsOnPointerDevices(t *testing.T) {
+	requireBrowser(t)
+
+	url, ids := startLightboxServer(t,
+		lightboxItem{"a.jpg", 65534, time.Unix(1600000100, 0)},
+		lightboxItem{"b.jpg", 65534, time.Unix(1600000000, 0)},
+	)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var hover, visible bool
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(url),
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(`matchMedia('(hover: hover)').matches`, &hover),
+	)
+	require.NoError(t, err)
+	require.True(t, hover, "the browser does not report (hover: hover), so the premise of this test does not hold")
+
+	err = chromedp.Run(rctx,
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(`document.querySelector('#lightbox .lb-next').checkVisibility()`, &visible),
+	)
+	require.NoError(t, err)
+	require.True(t, visible, "the next button is not shown")
+
+	err = chromedp.Run(rctx,
+		chromedp.Click(`#lightbox .lb-next`, chromedp.NodeVisible),
+		chromedp.Poll(fmt.Sprintf(`location.pathname === %s`, strconv.Quote("/item/"+ids[1])), nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+	)
+	require.NoError(t, err, "the next button did not move to the next photo")
+}
+
 // --- Task: TestFailedChunkFetchIsRetried ---
 
 // 取得に失敗したチャンクを、スクロールを待たずに取り直すこと。

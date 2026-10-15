@@ -73,17 +73,22 @@ import { gallery } from "./gallery.js";
 
 	/** @param {MouseEvent} e */
 	function onBoxClick(e) {
-		// 再生コントロールの操作を、閉じる動作と取り違えない
-		if (/** @type {Element} */ (e.target).closest("video")) return;
-		if (/** @type {Element} */ (e.target).closest(".lb-prev")) {
+		const target = /** @type {Element} */ (e.target);
+		if (target.closest(".lb-back")) {
+			requestClose();
+			return;
+		}
+		if (target.closest(".lb-prev")) {
 			show(idx - 1, "replace");
 			return;
 		}
-		if (/** @type {Element} */ (e.target).closest(".lb-next")) {
+		if (target.closest(".lb-next")) {
 			show(idx + 1, "replace");
 			return;
 		}
-		requestClose();
+		// 再生コントロールの操作を、帯の出し入れと取り違えない
+		if (target.closest("video")) return;
+		setChrome(!box.classList.contains("chrome"));
 	}
 
 	/** @param {KeyboardEvent} e */
@@ -127,6 +132,8 @@ import { gallery } from "./gallery.js";
 	async function open(i, mode) {
 		await show(i, mode);
 		if (idx < 0) return;
+		// 開くときは必ず帯を出す。送りでは前の状態のままにする。
+		setChrome(true);
 		box.hidden = false;
 		document.body.classList.add("locked");
 	}
@@ -154,13 +161,11 @@ import { gallery } from "./gallery.js";
 			vid.pause(); // 動画から動画へ送るとき、前の音が重ならないように
 			vid.src = tile.fullUrl;
 			vid.hidden = false;
-			box.classList.add("playing");
 		} else {
 			stopVideo();
 			vid.hidden = true;
 			img.src = tile.fullUrl;
 			img.hidden = false;
-			box.classList.remove("playing");
 		}
 		// 送りで積むと、めくった枚数だけ戻るボタンを押さないとギャラリーへ
 		// 帰れなくなる。URLは追随させるが履歴には積まない。
@@ -182,6 +187,12 @@ import { gallery } from "./gallery.js";
 		vid.pause();
 		vid.removeAttribute("src");
 		vid.load();
+	}
+
+	// setChrome は帯（上のボタン、左下の2行、前後のボタン）を出すか消すかを決める。
+	/** @param {boolean} on */
+	function setChrome(on) {
+		box.classList.toggle("chrome", on);
 	}
 
 	// showInfo は左下の2行（撮影者と撮影日時）を取って出す。写真の表示は待たせない。
@@ -225,7 +236,6 @@ import { gallery } from "./gallery.js";
 		vid.hidden = true;
 		errBox.hidden = true;
 		clearInfo();
-		box.classList.remove("playing");
 		document.body.classList.remove("locked");
 		idx = -1;
 		requestSeq++; // 閉じた後に届く古い解決を破棄する

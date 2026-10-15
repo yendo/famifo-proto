@@ -41,7 +41,7 @@
   <div class="scrub-label" hidden></div>
 </div>
 
-<div id="lightbox" class="lightbox" hidden>
+<div id="lightbox" class="lightbox chrome" hidden>
   <img alt="">
   {{/* 自動再生はしない。一覧をめくっていて突然音が鳴るのを避ける。
        playsinline は iOS Safari が全画面を乗っ取らないようにするため。 */}}
@@ -49,6 +49,11 @@
   {{/* HEVCを出せない端末では要素は作られたまま再生に失敗し、画面が真っ黒になる。
        何が起きたのか分からないのが一番困るので、短く伝える。 */}}
   <p class="lb-error" hidden>この端末では再生できません</p>
+  {{/* 上の帯。ボタンは左端の戻るだけ。お気に入り・情報・メニューは機能ができたら
+       右端に足す。 */}}
+  <div class="lb-top">
+    <button class="lb-back" type="button" aria-label="戻る">←</button>
+  </div>
   {{/* 左下の2行。1行目が撮影者、2行目が撮影日時。写真を送るたびに /info から
        取り直す。出せない行は隠したまま。 */}}
   <div class="lb-caption">
