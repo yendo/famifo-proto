@@ -28,6 +28,11 @@ import { gallery } from "./gallery.js";
 	const owner = box.querySelector(".lb-owner");
 	/** @type {HTMLElement} */
 	const when = box.querySelector(".lb-when");
+	/** @type {HTMLElement} */
+	const caption = box.querySelector(".lb-caption");
+	// 標準コントロールの高さの目安(px)。app.css の .lb-caption.raised の 4rem と揃える。
+	// 実際の高さはブラウザによって少し違う。
+	const CONTROLS_H = 64;
 	const SWIPE_X = 50; // 左右送りとみなす最小移動量(px)
 	const SWIPE_Y = 80; // 下スワイプで閉じる最小移動量(px)
 
@@ -86,8 +91,12 @@ import { gallery } from "./gallery.js";
 			show(idx + 1, "replace");
 			return;
 		}
-		// 再生コントロールの操作を、帯の出し入れと取り違えない
-		if (target.closest("video")) return;
+		// controls があるときはブラウザに任せる（PCは再生/一時停止）。無いときは
+		// 帯を消しているので、出す。
+		if (target.closest("video")) {
+			if (!vid.controls) setChrome(true);
+			return;
+		}
 		setChrome(!box.classList.contains("chrome"));
 	}
 
@@ -190,9 +199,25 @@ import { gallery } from "./gallery.js";
 	}
 
 	// setChrome は帯（上のボタン、左下の2行、前後のボタン）を出すか消すかを決める。
+	// 動画の標準コントロールも帯の一部として一緒に出し入れする。
 	/** @param {boolean} on */
 	function setChrome(on) {
 		box.classList.toggle("chrome", on);
+		vid.controls = on;
+		placeCaption();
+	}
+
+	// placeCaption は左下の2行が動画の標準コントロールと重なるときだけ上げる。
+	// コントロールは画面の下端ではなく動画の下端に描かれる。横長の動画を縦の画面で
+	// 見ると動画は中ほどで終わり、文字とは重ならない。常に上げると浮いて見える。
+	function placeCaption() {
+		caption.classList.remove("raised");
+		if (vid.hidden || !vid.controls) return;
+		const c = caption.getBoundingClientRect();
+		const v = vid.getBoundingClientRect();
+		const hit = c.bottom > v.bottom - CONTROLS_H && c.top < v.bottom
+			&& c.left < v.right && c.right > v.left;
+		caption.classList.toggle("raised", hit);
 	}
 
 	// showInfo は左下の2行（撮影者と撮影日時）を取って出す。写真の表示は待たせない。
@@ -215,6 +240,7 @@ import { gallery } from "./gallery.js";
 			}
 			when.textContent = formatDateTime(info.takenAt);
 			when.hidden = !when.textContent;
+			placeCaption();
 		} catch {
 			// 通信の失敗。隠したままにする
 		}
@@ -261,6 +287,12 @@ import { gallery } from "./gallery.js";
 	document.addEventListener("keydown", onKeyDown);
 	box.addEventListener("touchstart", onTouchStart, { passive: true });
 	box.addEventListener("touchend", onTouchEnd, { passive: true });
+
+	// 動画の大きさはメタデータが届いてから決まり、画面を回すと lightbox の大きさが
+	// 変わる。どちらでも重なりが変わるので判定し直す。
+	const resize = new ResizeObserver(placeCaption);
+	resize.observe(box);
+	resize.observe(vid);
 
 	// 写真ごとのURLで開かれた場合。サーバーが通し番号を埋めているので、背後の
 	// 一覧をその位置に合わせてから開く。閉じたときにその写真の場所が見える。

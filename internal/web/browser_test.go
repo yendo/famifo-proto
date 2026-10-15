@@ -2660,6 +2660,86 @@ func TestLightboxNavButtonsOnPointerDevices(t *testing.T) {
 	require.NoError(t, err, "the next button did not move to the next photo")
 }
 
+// 動画の標準コントロールが帯と一緒に出入りすること。帯を消すと controls が外れ、
+// 動画を押すと帯が戻って controls も付く。controls が付いている間の動画のクリックは
+// ブラウザに任せるので、ここでは押さない。
+func TestVideoControlsFollowTheChrome(t *testing.T) {
+	requireBrowser(t)
+
+	url, _ := startLightboxServer(t, lightboxItem{"clip.mp4", 65534, time.Unix(1600000000, 0)})
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	const controlsJS = `document.querySelector('#lightbox video').controls`
+	var controls bool
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(url),
+		waitForGallery(10*time.Second),
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox video').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(controlsJS, &controls),
+	)
+	require.NoError(t, err)
+	require.True(t, controls, "the video should open with its controls")
+
+	// 中身の無い動画は 300×150 で中央に出る。上寄りの黒い余白を押す。戻るボタンは左上の隅にある。
+	err = chromedp.Run(rctx,
+		chromedp.MouseClickXY(600, 100),
+		chromedp.Evaluate(controlsJS, &controls),
+	)
+	require.NoError(t, err)
+	require.False(t, controls, "hiding the chrome should hide the controls")
+
+	var chrome bool
+	err = chromedp.Run(rctx,
+		chromedp.MouseClickXY(600, 450),
+		chromedp.Evaluate(controlsJS, &controls),
+		chromedp.Evaluate(`document.querySelector('#lightbox').classList.contains('chrome')`, &chrome),
+	)
+	require.NoError(t, err)
+	require.True(t, chrome, "a click on the video without controls should bring the chrome back")
+	require.True(t, controls, "the controls should come back with the chrome")
+}
+
+// 左下の2行は、動画の標準コントロールと重なるときだけ上がること。コントロールは
+// 画面の下端ではなく動画の下端に描かれるので、動画が中ほどで終わる画面では
+// 重ならず、上げると浮いて見える。
+//
+// 中身の無い動画は 300×150 で出る。1200×900 では中央で終わり、300×150 では
+// 画面いっぱいになって下端まで届く。画面の大きさを変えたときに判定し直すことも、
+// あわせて確かめる。
+func TestCaptionRisesOnlyOverVideoControls(t *testing.T) {
+	requireBrowser(t)
+
+	url, _ := startLightboxServer(t, lightboxItem{"clip.mp4", 65534, time.Unix(1600000000, 0)})
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	const raisedJS = `document.querySelector('#lightbox .lb-caption').classList.contains('raised')`
+	var raised bool
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(url),
+		waitForGallery(10*time.Second),
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox .lb-when').hidden`, nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(raisedJS, &raised),
+	)
+	require.NoError(t, err)
+	require.False(t, raised, "the caption rose although the video ends far above it")
+
+	err = chromedp.Run(rctx,
+		chromedp.EmulateViewport(300, 150),
+		chromedp.Poll(raisedJS, nil, chromedp.WithPollingTimeout(5*time.Second)),
+	)
+	require.NoError(t, err, "the caption did not rise when the video reached the bottom edge")
+}
+
 // --- Task: TestFailedChunkFetchIsRetried ---
 
 // 取得に失敗したチャンクを、スクロールを待たずに取り直すこと。

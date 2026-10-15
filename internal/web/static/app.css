@@ -296,6 +296,11 @@ body.locked {
 	margin: 0;
 	white-space: nowrap;
 }
+/* 動画の標準コントロールと重なるときだけ上げる。4rem は lightbox.js の
+   CONTROLS_H と揃える。 */
+.lb-caption.raised {
+	bottom: calc(4rem + env(safe-area-inset-bottom));
+}
 
 /* 日付スクラバー。スクロール中だけ現れる */
 .scrubber {
