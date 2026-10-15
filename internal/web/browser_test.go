@@ -197,8 +197,14 @@ func setupBrowserEnv() (cleanup func(), ok bool) {
 	// 実測の失敗率: 16MB/32MBは8回中8回、既定の64MBは27回中1回、2GBは10回中0回。
 	// タイムアウト値の問題ではない。通常0.5秒で終わるテストが40秒の予算を
 	// 使い切って落ちるので、値を伸ばしても停止している時間が伸びるだけ。
+	//
+	// イメージ名の後ろの引数は headless-shell に渡る。何も渡さないと (hover: none)
+	// を名乗り、ライトボックスの前後ボタンのような PC 専用の UI が出なくなる。
+	// Emulation.setEmulatedMedia で hover を上書きしようとしても変わらない
+	// （実測済み）ので、起動時に指定する。
 	runOut, err := exec.Command("docker", "run", "-d", "--rm", "--network", "host",
-		"--shm-size", "2g", "--name", containerName, dockerImage).CombinedOutput()
+		"--shm-size", "2g", "--name", containerName, dockerImage,
+		"--blink-settings=primaryHoverType=2,availableHoverTypes=2").CombinedOutput()
 	if err != nil {
 		browserSkipReason = fmt.Sprintf("docker run failed: %v: %s", err, runOut)
 		return noop, false
@@ -2620,8 +2626,8 @@ func TestLightboxBackButtonCloses(t *testing.T) {
 }
 
 // マウスで操作する端末では前後のボタンが見えていて、押すと送れること。
-// タッチ端末で出さないことは、ヘッドレスChromeが (hover: hover) を名乗るので
-// ここでは確かめられない。
+// タッチ端末で出さないことは、コンテナを hover できる端末として起動している
+// （setupBrowserEnv を参照）のでここでは確かめられない。
 func TestLightboxNavButtonsOnPointerDevices(t *testing.T) {
 	requireBrowser(t)
 
