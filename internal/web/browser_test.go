@@ -1,6 +1,6 @@
 //go:build browser
 
-// 仮想スクロール・ライトボックス・日付スクラバーの挙動を確かめる。
+// 仮想スクロール・フルビュー・日付スクラバーの挙動を確かめる。
 // Dockerコンテナ上のヘッドレスChromeを chromedp で操作し、
 // 実際にJavaScriptを走らせて確認する。
 //
@@ -199,7 +199,7 @@ func setupBrowserEnv() (cleanup func(), ok bool) {
 	// 使い切って落ちるので、値を伸ばしても停止している時間が伸びるだけ。
 	//
 	// イメージ名の後ろの引数は headless-shell に渡る。何も渡さないと (hover: none)
-	// を名乗り、ライトボックスの前後ボタンのような PC 専用の UI が出なくなる。
+	// を名乗り、フルビューの前後ボタンのような PC 専用の UI が出なくなる。
 	// Emulation.setEmulatedMedia で hover を上書きしようとしても変わらない
 	// （実測済み）ので、起動時に指定する。
 	runOut, err := exec.Command("docker", "run", "-d", "--rm", "--network", "host",
@@ -1180,7 +1180,7 @@ func TestTilesSurviveAPlainScroll(t *testing.T) {
 
 // --- Task: TestLightboxCrossesChunkBoundary ---
 //
-// ライトボックスの送りがチャンク(testChunkSize枚)の境界で止まらないこと、
+// フルビューの送りがチャンク(testChunkSize枚)の境界で止まらないこと、
 // そして境界の継ぎ目で写真がずれないことを見る。
 //
 // 「srcが前回と変わったか」だけでは、2チャンク目以降で常に1枚ずれた写真を
@@ -1198,7 +1198,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForGallery 10s) + ライトボックスが開く待ち(Poll 5s) +
+	//   初回描画待ち(waitForGallery 10s) + フルビューが開く待ち(Poll 5s) +
 	//   原寸画像デコード待ち(Poll 10s) = 25s。
 	// ループ本体(steps=130回、各Poll上限5s)は理論上の最大では650sにも
 	// なるが、実測では130ステップ全体が数秒で終わる（キー送りのたびに
@@ -1226,7 +1226,7 @@ func TestLightboxCrossesChunkBoundary(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// 原寸画像が実際にデコードされたことまで見る。srcが404でもライトボックスは
+	// 原寸画像が実際にデコードされたことまで見る。srcが404でもフルビューは
 	// 開いてしまうため、開いたかどうかだけでは表示を保証できない。
 	const lbDecodedJS = `(() => { const i = document.querySelector('#lightbox img'); return i.complete && i.naturalWidth > 0; })()`
 	err = chromedp.Run(rctx, chromedp.Poll(lbDecodedJS, nil, chromedp.WithPollingTimeout(10*time.Second)))
@@ -1291,7 +1291,7 @@ func TestLightboxSwipeNavigatesAndCloses(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
-	//   初回描画待ち(waitForGallery 10s) + ライトボックスが開く待ち(Poll 5s) +
+	//   初回描画待ち(waitForGallery 10s) + フルビューが開く待ち(Poll 5s) +
 	//   スワイプ後のsrc変化待ち(Poll 5s)×2 + 閉じる待ち(Poll 5s) = 30s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に力尽きて
 	// 「context deadline exceeded」という診断不能な失敗になる。Evaluateなど
@@ -1476,7 +1476,7 @@ func TestTileTapOpensLightbox(t *testing.T) {
 	ctx := newTab(t)
 	// このRun群の中でタイムアウト付きに待つ箇所の合計:
 	//   初回描画待ち(waitForGallery 10s) + スクラバー一時表示の消滅待ち(Poll 5s) +
-	//   タップ後のライトボックスが開く待ち(Poll 3s) = 18s。
+	//   タップ後のフルビューが開く待ち(Poll 3s) = 18s。
 	// これらは同じrctxを共有しているため、外側が短いと合計より先に
 	// 力尽きて「context deadline exceeded」という診断不能な失敗になる
 	// （実測）。Evaluateなど残りの実行時間の余裕を見て、他のテストと
@@ -2204,7 +2204,7 @@ func TestLightboxFetchSurvivesAGridRender(t *testing.T) {
 
 // --- Task: 写真ごとのURL ---
 //
-// 共有されたURLを直接開くと、その写真でライトボックスが開くこと。先頭のチャンクの
+// 共有されたURLを直接開くと、その写真でフルビューが開くこと。先頭のチャンクの
 // 外にある写真を選ぶ。サーバーが埋めた通し番号から仮想スクロールが任意の位置へ
 // 飛べていなければ、ここで別の写真が出るか、そもそも開かない。
 func TestItemURLOpensTheLightbox(t *testing.T) {
@@ -2503,7 +2503,7 @@ func TestLightboxShowsTheOwner(t *testing.T) {
 	require.Empty(t, got.Text)
 }
 
-// 全画面の左下の2行目に撮影日時が出ること。撮影地の時刻をそのまま出し、
+// フルビューの左下の2行目に撮影日時が出ること。撮影地の時刻をそのまま出し、
 // ブラウザの時差で動かさない。
 //
 // 過去の年の写真にする。今年の写真は年を省くので、実行した年で期待値が変わる。

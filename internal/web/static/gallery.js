@@ -45,7 +45,7 @@ export const gallery = (() => {
 	const RETRY_MS = 3000; // 取得に失敗したチャンクを取り直すまでの待ち時間
 
 	// スクロールしているのは #gallery ではなく文書全体。
-	// ライトボックスの body.locked { overflow: hidden } もこれを前提にしている。
+	// フルビューの body.locked { overflow: hidden } もこれを前提にしている。
 	const scroller = document.scrollingElement || document.documentElement;
 	const maxScroll = () =>
 		Math.max(1, scroller.scrollHeight - window.innerHeight);

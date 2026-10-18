@@ -220,7 +220,7 @@ func (h *Handler) handleFull(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-// handleInfo は全画面表示に重ねる1件分の情報をJSONで返す。一覧では使わない
+// handleInfo はフルビューに重ねる1件分の情報をJSONで返す。一覧では使わない
 // 情報をここに分け、/tiles のチャンクを軽く保つ。
 func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.lookupMedia(w, r)

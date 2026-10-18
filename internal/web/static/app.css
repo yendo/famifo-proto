@@ -33,7 +33,7 @@ body {
 	-webkit-text-size-adjust: 100%;
 }
 
-/* ライトボックス表示中に背後の一覧がスクロールしないようにする */
+/* フルビュー表示中に背後の一覧がスクロールしないようにする */
 body.locked {
 	overflow: hidden;
 }
