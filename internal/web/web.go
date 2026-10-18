@@ -207,7 +207,7 @@ func (h *Handler) handleThumb(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-// handleFull はフルビュー用の写真と動画を配信する。
+// handleFull は個別表示用の写真と動画を配信する。
 func (h *Handler) handleFull(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.lookupMedia(w, r)
 	if !ok {
@@ -220,7 +220,7 @@ func (h *Handler) handleFull(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-// handleInfo はフルビューに重ねる1件分の情報をJSONで返す。一覧では使わない
+// handleInfo は個別表示に重ねる1件分の情報をJSONで返す。一覧では使わない
 // 情報をここに分け、/tiles のチャンクを軽く保つ。
 func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.lookupMedia(w, r)
@@ -313,7 +313,7 @@ func serveNoPreview(w http.ResponseWriter) {
 	w.Write(noPreview)
 }
 
-// fullViewPath はフルビューに配信するファイルのパスと、そのMIMEタイプを返す。
+// fullViewPath は個別表示に配信するファイルのパスと、そのMIMEタイプを返す。
 //
 // 借りるものが2種類ある。HEICはSafari以外のブラウザが表示できないので、@eaDir から
 // 借りられるなら原本ではなくSynologyのXL（長辺1707px）を返す。動画はHEVCが端末に

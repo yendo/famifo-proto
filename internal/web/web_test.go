@@ -232,7 +232,7 @@ func TestTilesOrderNewestFirst(t *testing.T) {
 		"ordered by capture time, newest first")
 }
 
-// 動画かどうかはタイルごとに送る。lightbox.js がフルビューの切り替えに使い、
+// 動画かどうかはタイルごとに送る。lightbox.js が個別表示の切り替えに使い、
 // CSSが再生の印を重ねるのに使う。
 func TestTilesMarkVideos(t *testing.T) {
 	t.Parallel()
