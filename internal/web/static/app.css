@@ -239,8 +239,8 @@ body.locked {
 	left: 0;
 	right: 0;
 	display: flex;
-	padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 0
-		max(12px, env(safe-area-inset-left));
+	padding: max(12px, env(safe-area-inset-top))
+		max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
 	pointer-events: none;
 }
 .lb-top button {

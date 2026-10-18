@@ -215,8 +215,11 @@ import { gallery } from "./gallery.js";
 		if (vid.hidden || !vid.controls) return;
 		const c = caption.getBoundingClientRect();
 		const v = vid.getBoundingClientRect();
-		const hit = c.bottom > v.bottom - CONTROLS_H && c.top < v.bottom
-			&& c.left < v.right && c.right > v.left;
+		const hit =
+			c.bottom > v.bottom - CONTROLS_H &&
+			c.top < v.bottom &&
+			c.left < v.right &&
+			c.right > v.left;
 		caption.classList.toggle("raised", hit);
 	}
 
