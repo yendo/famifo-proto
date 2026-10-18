@@ -2532,26 +2532,26 @@ func TestLightboxShowsWhenItWasTaken(t *testing.T) {
 	require.Equal(t, "2020年9月13日 21:28", got)
 }
 
-// chromeJS は帯の状態を読むJS式。checkVisibility は祖先の display: none も見るので、
-// 帯（.lb-top）が隠れていれば中の戻るボタンも見えないと判定される。
-const chromeJS = `(() => {
+// uiJS は UI の状態を読むJS式。checkVisibility は祖先の display: none も見るので、
+// 上の帯（.lb-top）が隠れていれば中の戻るボタンも見えないと判定される。
+const uiJS = `(() => {
 	const b = document.querySelector('#lightbox');
 	return {
-		chrome: b.classList.contains('chrome'),
+		hidden: b.classList.contains('ui-hidden'),
 		back: b.querySelector('.lb-back').checkVisibility(),
 		caption: b.querySelector('.lb-caption').checkVisibility(),
 	};
 })()`
 
-type chromeState struct {
-	Chrome  bool `json:"chrome"`
+type uiState struct {
+	Hidden  bool `json:"hidden"`
 	Back    bool `json:"back"`
 	Caption bool `json:"caption"`
 }
 
-// 写真をクリックするたびに帯（戻るボタン、左下の2行）が消えたり出たりすること。
-// 帯を消したまま送れば消えたままで、写真をめくり続けられること。
-func TestLightboxClickTogglesTheChrome(t *testing.T) {
+// 写真をクリックするたびに UI（戻るボタン、左下の2行）が消えたり出たりすること。
+// UI を消したまま送れば消えたままで、写真をめくり続けられること。
+func TestLightboxClickTogglesTheUI(t *testing.T) {
 	requireBrowser(t)
 
 	url, ids := startLightboxServer(t,
@@ -2562,7 +2562,7 @@ func TestLightboxClickTogglesTheChrome(t *testing.T) {
 	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
 	defer cancel()
 
-	var got chromeState
+	var got uiState
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1200, 900),
 		chromedp.Navigate(url),
@@ -2570,34 +2570,34 @@ func TestLightboxClickTogglesTheChrome(t *testing.T) {
 		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
 		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil,
 			chromedp.WithPollingTimeout(5*time.Second)),
-		chromedp.Evaluate(chromeJS, &got),
+		chromedp.Evaluate(uiJS, &got),
 	)
 	require.NoError(t, err)
-	require.Equal(t, chromeState{Chrome: true, Back: true, Caption: true}, got, "the lightbox should open with the chrome shown")
+	require.Equal(t, uiState{Back: true, Caption: true}, got, "the lightbox should open with the UI shown")
 
 	// 画面の中央（写真）を押す。前後のボタンは左右の端にあるので当たらない。
 	err = chromedp.Run(rctx,
 		chromedp.MouseClickXY(600, 450),
-		chromedp.Evaluate(chromeJS, &got),
+		chromedp.Evaluate(uiJS, &got),
 	)
 	require.NoError(t, err)
-	require.Equal(t, chromeState{}, got, "a click on the photo should hide the chrome")
+	require.Equal(t, uiState{Hidden: true}, got, "a click on the photo should hide the UI")
 
 	err = chromedp.Run(rctx,
 		chromedp.KeyEvent(kb.ArrowRight),
 		chromedp.Poll(fmt.Sprintf(`location.pathname === %s`, strconv.Quote("/item/"+ids[1])), nil,
 			chromedp.WithPollingTimeout(5*time.Second)),
-		chromedp.Evaluate(chromeJS, &got),
+		chromedp.Evaluate(uiJS, &got),
 	)
 	require.NoError(t, err)
-	require.Equal(t, chromeState{}, got, "moving to the next photo should keep the chrome hidden")
+	require.Equal(t, uiState{Hidden: true}, got, "moving to the next photo should keep the UI hidden")
 
 	err = chromedp.Run(rctx,
 		chromedp.MouseClickXY(600, 450),
-		chromedp.Evaluate(chromeJS, &got),
+		chromedp.Evaluate(uiJS, &got),
 	)
 	require.NoError(t, err)
-	require.Equal(t, chromeState{Chrome: true, Back: true, Caption: true}, got, "a second click should bring the chrome back")
+	require.Equal(t, uiState{Back: true, Caption: true}, got, "a second click should bring the UI back")
 }
 
 // 戻るボタンで閉じ、URLが一覧に戻ること。写真のクリックは閉じる操作ではなくなったので、
@@ -2666,10 +2666,10 @@ func TestLightboxNavButtonsOnPointerDevices(t *testing.T) {
 	require.NoError(t, err, "the next button did not move to the next photo")
 }
 
-// 動画の標準コントロールが帯と一緒に出入りすること。帯を消すと controls が外れ、
-// 動画を押すと帯が戻って controls も付く。controls が付いている間の動画のクリックは
+// 動画の標準コントロールが UI と一緒に出入りすること。UI を消すと controls が外れ、
+// 動画を押すと UI が戻って controls も付く。controls が付いている間の動画のクリックは
 // ブラウザに任せるので、ここでは押さない。
-func TestVideoControlsFollowTheChrome(t *testing.T) {
+func TestVideoControlsFollowTheUI(t *testing.T) {
 	requireBrowser(t)
 
 	url, _ := startLightboxServer(t, lightboxItem{"clip.mp4", 65534, time.Unix(1600000000, 0)})
@@ -2697,17 +2697,17 @@ func TestVideoControlsFollowTheChrome(t *testing.T) {
 		chromedp.Evaluate(controlsJS, &controls),
 	)
 	require.NoError(t, err)
-	require.False(t, controls, "hiding the chrome should hide the controls")
+	require.False(t, controls, "hiding the UI should hide the controls")
 
-	var chrome bool
+	var hidden bool
 	err = chromedp.Run(rctx,
 		chromedp.MouseClickXY(600, 450),
 		chromedp.Evaluate(controlsJS, &controls),
-		chromedp.Evaluate(`document.querySelector('#lightbox').classList.contains('chrome')`, &chrome),
+		chromedp.Evaluate(`document.querySelector('#lightbox').classList.contains('ui-hidden')`, &hidden),
 	)
 	require.NoError(t, err)
-	require.True(t, chrome, "a click on the video without controls should bring the chrome back")
-	require.True(t, controls, "the controls should come back with the chrome")
+	require.False(t, hidden, "a click on the video without controls should bring the UI back")
+	require.True(t, controls, "the controls should come back with the UI")
 }
 
 // 左下の2行は、動画の標準コントロールと重なるときだけ上がること。コントロールは

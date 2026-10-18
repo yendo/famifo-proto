@@ -92,12 +92,12 @@ import { gallery } from "./gallery.js";
 			return;
 		}
 		// controls があるときはブラウザに任せる（PCは再生/一時停止）。無いときは
-		// 帯を消しているので、出す。
+		// UI を消しているので、出す。
 		if (target.closest("video")) {
-			if (!vid.controls) setChrome(true);
+			if (!vid.controls) setUIVisible(true);
 			return;
 		}
-		setChrome(!box.classList.contains("chrome"));
+		setUIVisible(box.classList.contains("ui-hidden"));
 	}
 
 	/** @param {KeyboardEvent} e */
@@ -141,8 +141,8 @@ import { gallery } from "./gallery.js";
 	async function open(i, mode) {
 		await show(i, mode);
 		if (idx < 0) return;
-		// 開くときは必ず帯を出す。送りでは前の状態のままにする。
-		setChrome(true);
+		// 開くときは必ず UI を出す。
+		setUIVisible(true);
 		box.hidden = false;
 		document.body.classList.add("locked");
 	}
@@ -198,12 +198,12 @@ import { gallery } from "./gallery.js";
 		vid.load();
 	}
 
-	// setChrome は帯（上のボタン、左下の2行、前後のボタン）を出すか消すかを決める。
-	// 動画の標準コントロールも帯の一部として一緒に出し入れする。
-	/** @param {boolean} on */
-	function setChrome(on) {
-		box.classList.toggle("chrome", on);
-		vid.controls = on;
+	// setUIVisible は UI（上のボタン、左下の2行、前後のボタン）を出すか消すかを決める。
+	// 動画の標準コントロールも UI の一部として一緒に出し入れする。
+	/** @param {boolean} visible */
+	function setUIVisible(visible) {
+		box.classList.toggle("ui-hidden", !visible);
+		vid.controls = visible;
 		placeCaption();
 	}
 

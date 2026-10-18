@@ -227,8 +227,8 @@ body.locked {
 	pointer-events: none;
 }
 
-/* 帯（上のボタン、左下の2行、前後のボタン）。写真のタップで出し入れする。 */
-.lightbox:not(.chrome) :is(.lb-top, .lb-caption, .lb-nav) {
+/* UI（上のボタン、左下の2行、前後のボタン）。写真のタップで出し入れする。 */
+.lightbox.ui-hidden :is(.lb-top, .lb-caption, .lb-nav) {
 	display: none;
 }
 
@@ -247,7 +247,7 @@ body.locked {
 	pointer-events: auto;
 }
 
-/* 帯のボタン。明るい写真の上でも見えるよう、丸い半透明の背景を付ける。 */
+/* UI のボタン。明るい写真の上でも見えるよう、丸い半透明の背景を付ける。 */
 .lb-back,
 .lb-nav {
 	width: 44px;
@@ -263,7 +263,7 @@ body.locked {
 }
 
 /* 前後のボタンは PC だけに出す。タッチ端末は左右スワイプで送り、写真のどこを
-   タップしても帯の出し入れになる。 */
+   タップしても UI の出し入れになる。 */
 .lb-nav {
 	position: absolute;
 	top: 50%;
