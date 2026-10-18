@@ -26,9 +26,9 @@ type mediaView struct {
 	PageURL  string `json:"pageUrl"` // その1件だけを開くURL。タイルのリンク先
 	FullURL  string `json:"fullUrl"`
 	ThumbURL string `json:"thumbUrl"`
-	InfoURL  string `json:"infoUrl"` // 全画面表示に重ねる情報（/info/<id>）
+	InfoURL  string `json:"infoUrl"` // 個別表示に重ねる情報（/info/<id>）
 	Date     string `json:"date"`    // "2006-01-02"。撮影地の日。クライアントが日の区切りに使う
-	IsVideo  bool   `json:"isVideo"` // タイルに再生の印を出すか、フルビューを <video> にするか
+	IsVideo  bool   `json:"isVideo"` // タイルに再生の印を出すか、個別表示を <video> にするか
 }
 
 // dayGroup は埋め込む DayGroups の1要素。
@@ -38,10 +38,11 @@ type dayGroup struct {
 	Count int    `json:"n"` // その日の件数
 }
 
-// infoView は /info/{id} の応答。全画面表示に重ねる1件分の情報で、一覧では
+// infoView は /info/{id} の応答。個別表示に重ねる1件分の情報で、一覧では
 // 使わないので /tiles には載せない。出せない項目はキーごと省く。
 type infoView struct {
-	Owner string `json:"owner,omitempty"` // 撮影者の名前
+	Owner   string `json:"owner,omitempty"` // 撮影者の名前
+	TakenAt string `json:"takenAt"`         // "2006-01-02T15:04:05"。撮影地の時刻で、時差は持たない
 }
 
 // buildIndexView はトップページの入力を組み立てる。

@@ -33,7 +33,7 @@ body {
 	-webkit-text-size-adjust: 100%;
 }
 
-/* ライトボックス表示中に背後の一覧がスクロールしないようにする */
+/* 個別表示中に背後の一覧がスクロールしないようにする */
 body.locked {
 	overflow: hidden;
 }
@@ -87,7 +87,7 @@ body.locked {
 	padding: var(--gap);
 	/* サムネイルを拡大しても粗くなるだけで、拡大したまま送ると仮想スクロールの
 	   位置計算と噛み合わない。縦送りだけ残し、ピンチとダブルタップは殺す。
-	   フルビューでの拡大は .lightbox 側で許したままにする。 */
+	   個別表示での拡大は .lightbox 側で許したままにする。 */
 	touch-action: pan-y;
 }
 
@@ -227,51 +227,79 @@ body.locked {
 	pointer-events: none;
 }
 
-/* 撮影者の名前。下端は動画の再生コントロールと重なるので上端に置く。明るい
-   写真でも読めるよう背景を敷く。押しても下の写真と前後送りに届くようにする。 */
-.lb-owner {
-	position: absolute;
-	top: max(12px, env(safe-area-inset-top));
-	left: 50%;
-	transform: translateX(-50%);
-	margin: 0;
-	padding: 0.2rem 0.6rem;
-	border-radius: 999px;
-	background: rgba(0, 0, 0, 0.5);
-	color: rgba(255, 255, 255, 0.9);
-	font-size: 0.85rem;
-	white-space: nowrap;
-	pointer-events: none;
+/* UI（上のボタン、左下の2行、前後のボタン）。写真のタップで出し入れする。 */
+.lightbox.ui-hidden :is(.lb-top, .lb-caption, .lb-nav) {
+	display: none;
 }
 
-.lb-nav {
+/* 上の帯。帯そのものは押せず、空いた所を押すと下の写真に届く。ボタンだけを押せる。 */
+.lb-top {
 	position: absolute;
 	top: 0;
-	bottom: 0;
-	width: 22%;
-	border: 0;
-	background: transparent;
-	color: transparent;
-	font-size: 2rem;
-	cursor: pointer;
-}
-.lb-prev {
 	left: 0;
-}
-.lb-next {
 	right: 0;
+	display: flex;
+	padding: max(12px, env(safe-area-inset-top))
+		max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+	pointer-events: none;
 }
-/* 動画のときは再生コントロールの帯を前後送りで覆わない。lb-nav は左右22%を
-   上下いっぱいに占めるので、そのままだとシークバーの両端が押せない。 */
-.lightbox.playing .lb-nav {
-	bottom: 4rem;
+.lb-top button {
+	pointer-events: auto;
 }
 
-/* タッチ端末では矢印を出さない（スワイプで操作するため） */
+/* UI のボタン。明るい写真の上でも見えるよう、丸い半透明の背景を付ける。 */
+.lb-back,
+.lb-nav {
+	width: 44px;
+	height: 44px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: rgba(0, 0, 0, 0.5);
+	color: rgba(255, 255, 255, 0.9);
+	font-size: 1.5rem;
+	line-height: 44px;
+	cursor: pointer;
+}
+
+/* 前後のボタンは PC だけに出す。タッチ端末は左右スワイプで送り、写真のどこを
+   タップしても UI の出し入れになる。 */
+.lb-nav {
+	position: absolute;
+	top: 50%;
+	transform: translateY(-50%);
+	display: none;
+}
 @media (hover: hover) {
-	.lb-nav:hover {
-		color: rgba(255, 255, 255, 0.7);
+	.lb-nav {
+		display: block;
 	}
+}
+.lb-prev {
+	left: max(12px, env(safe-area-inset-left));
+}
+.lb-next {
+	right: max(12px, env(safe-area-inset-right));
+}
+
+/* 左下の2行（撮影者と撮影日時）。押しても下の写真と前後送りに届くようにする。 */
+.lb-caption {
+	position: absolute;
+	left: max(12px, env(safe-area-inset-left));
+	bottom: max(12px, env(safe-area-inset-bottom));
+	color: rgba(255, 255, 255, 0.9);
+	font-size: 0.85rem;
+	line-height: 1.4;
+	pointer-events: none;
+}
+.lb-caption p {
+	margin: 0;
+	white-space: nowrap;
+}
+/* 動画の標準コントロールと重なるときだけ上げる。4rem は lightbox.js の
+   CONTROLS_H と揃える。 */
+.lb-caption.raised {
+	bottom: calc(4rem + env(safe-area-inset-bottom));
 }
 
 /* 日付スクラバー。スクロール中だけ現れる */

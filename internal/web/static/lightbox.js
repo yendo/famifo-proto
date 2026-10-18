@@ -12,6 +12,7 @@
 // 戻るのはブラウザのその働きによるもので、manualにすると失われる。
 
 import { chunks } from "./chunk.js";
+import { formatDateTime } from "./datefmt.js";
 import { gallery } from "./gallery.js";
 
 (() => {
@@ -25,6 +26,13 @@ import { gallery } from "./gallery.js";
 	const errBox = box.querySelector(".lb-error");
 	/** @type {HTMLElement} */
 	const owner = box.querySelector(".lb-owner");
+	/** @type {HTMLElement} */
+	const when = box.querySelector(".lb-when");
+	/** @type {HTMLElement} */
+	const caption = box.querySelector(".lb-caption");
+	// 標準コントロールの高さの目安(px)。app.css の .lb-caption.raised の 4rem と揃える。
+	// 実際の高さはブラウザによって少し違う。
+	const CONTROLS_H = 64;
 	const SWIPE_X = 50; // 左右送りとみなす最小移動量(px)
 	const SWIPE_Y = 80; // 下スワイプで閉じる最小移動量(px)
 
@@ -70,17 +78,26 @@ import { gallery } from "./gallery.js";
 
 	/** @param {MouseEvent} e */
 	function onBoxClick(e) {
-		// 再生コントロールの操作を、閉じる動作と取り違えない
-		if (/** @type {Element} */ (e.target).closest("video")) return;
-		if (/** @type {Element} */ (e.target).closest(".lb-prev")) {
+		const target = /** @type {Element} */ (e.target);
+		if (target.closest(".lb-back")) {
+			requestClose();
+			return;
+		}
+		if (target.closest(".lb-prev")) {
 			show(idx - 1, "replace");
 			return;
 		}
-		if (/** @type {Element} */ (e.target).closest(".lb-next")) {
+		if (target.closest(".lb-next")) {
 			show(idx + 1, "replace");
 			return;
 		}
-		requestClose();
+		// controls があるときはブラウザに任せる（PCは再生/一時停止）。無いときは
+		// UI を消しているので、出す。
+		if (target.closest("video")) {
+			if (!vid.controls) setUIVisible(true);
+			return;
+		}
+		setUIVisible(box.classList.contains("ui-hidden"));
 	}
 
 	/** @param {KeyboardEvent} e */
@@ -124,6 +141,8 @@ import { gallery } from "./gallery.js";
 	async function open(i, mode) {
 		await show(i, mode);
 		if (idx < 0) return;
+		// 開くときは必ず UI を出す。
+		setUIVisible(true);
 		box.hidden = false;
 		document.body.classList.add("locked");
 	}
@@ -142,23 +161,20 @@ import { gallery } from "./gallery.js";
 		if (!tile || mySeq !== requestSeq) return; // 待っている間に追い越されたら破棄
 		idx = i;
 		errBox.hidden = true;
-		// 名前は写真より遅れて届く。前の写真の名前を次の写真に残さない。
-		owner.hidden = true;
-		owner.textContent = "";
-		showOwner(tile.infoUrl, mySeq);
+		// 情報は写真より遅れて届く。前の写真の情報を次の写真に残さない。
+		clearInfo();
+		showInfo(tile.infoUrl, mySeq);
 		if (tile.isVideo) {
 			img.hidden = true;
 			img.removeAttribute("src");
 			vid.pause(); // 動画から動画へ送るとき、前の音が重ならないように
 			vid.src = tile.fullUrl;
 			vid.hidden = false;
-			box.classList.add("playing");
 		} else {
 			stopVideo();
 			vid.hidden = true;
 			img.src = tile.fullUrl;
 			img.hidden = false;
-			box.classList.remove("playing");
 		}
 		// 送りで積むと、めくった枚数だけ戻るボタンを押さないとギャラリーへ
 		// 帰れなくなる。URLは追随させるが履歴には積まない。
@@ -182,25 +198,62 @@ import { gallery } from "./gallery.js";
 		vid.load();
 	}
 
-	// showOwner は撮影者の名前を取って出す。写真の表示は待たせない。
-	// 待っている間に別の写真へ送られたか閉じられたら、届いた名前は捨てる。
-	// 取れなかったときは隠したままにする。名前が無くても写真は見られる。
+	// setUIVisible は UI（上のボタン、左下の2行、前後のボタン）を出すか消すかを決める。
+	// 動画の標準コントロールも UI の一部として一緒に出し入れする。
+	/** @param {boolean} visible */
+	function setUIVisible(visible) {
+		box.classList.toggle("ui-hidden", !visible);
+		vid.controls = visible;
+		placeCaption();
+	}
+
+	// placeCaption は左下の2行が動画の標準コントロールと重なるときだけ上げる。
+	// コントロールは画面の下端ではなく動画の下端に描かれる。横長の動画を縦の画面で
+	// 見ると動画は中ほどで終わり、文字とは重ならない。常に上げると浮いて見える。
+	function placeCaption() {
+		caption.classList.remove("raised");
+		if (vid.hidden || !vid.controls) return;
+		const c = caption.getBoundingClientRect();
+		const v = vid.getBoundingClientRect();
+		const hit =
+			c.bottom > v.bottom - CONTROLS_H &&
+			c.top < v.bottom &&
+			c.left < v.right &&
+			c.right > v.left;
+		caption.classList.toggle("raised", hit);
+	}
+
+	// showInfo は左下の2行（撮影者と撮影日時）を取って出す。写真の表示は待たせない。
+	// 待っている間に別の写真へ送られたか閉じられたら、届いた情報は捨てる。
+	// 取れなかったときは隠したままにする。情報が無くても写真は見られる。
 	/**
 	 * @param {string} url
 	 * @param {number} seq
 	 */
-	async function showOwner(url, seq) {
+	async function showInfo(url, seq) {
 		try {
 			const res = await fetch(url);
 			if (!res.ok) return;
-			/** @type {{ owner?: string }} */
+			/** @type {{ owner?: string, takenAt: string }} */
 			const info = await res.json();
-			if (seq !== requestSeq || !info.owner) return;
-			owner.textContent = info.owner;
-			owner.hidden = false;
+			if (seq !== requestSeq) return;
+			if (info.owner) {
+				owner.textContent = info.owner;
+				owner.hidden = false;
+			}
+			when.textContent = formatDateTime(info.takenAt);
+			when.hidden = !when.textContent;
+			placeCaption();
 		} catch {
 			// 通信の失敗。隠したままにする
 		}
+	}
+
+	function clearInfo() {
+		owner.hidden = true;
+		owner.textContent = "";
+		when.hidden = true;
+		when.textContent = "";
 	}
 
 	// close は閉じるだけで履歴には触らない。呼ぶのは popstate と、戻る先を
@@ -211,9 +264,7 @@ import { gallery } from "./gallery.js";
 		stopVideo();
 		vid.hidden = true;
 		errBox.hidden = true;
-		owner.hidden = true;
-		owner.textContent = "";
-		box.classList.remove("playing");
+		clearInfo();
 		document.body.classList.remove("locked");
 		idx = -1;
 		requestSeq++; // 閉じた後に届く古い解決を破棄する
@@ -239,6 +290,12 @@ import { gallery } from "./gallery.js";
 	document.addEventListener("keydown", onKeyDown);
 	box.addEventListener("touchstart", onTouchStart, { passive: true });
 	box.addEventListener("touchend", onTouchEnd, { passive: true });
+
+	// 動画の大きさはメタデータが届いてから決まり、画面を回すと lightbox の大きさが
+	// 変わる。どちらでも重なりが変わるので判定し直す。
+	const resize = new ResizeObserver(placeCaption);
+	resize.observe(box);
+	resize.observe(vid);
 
 	// 写真ごとのURLで開かれた場合。サーバーが通し番号を埋めているので、背後の
 	// 一覧をその位置に合わせてから開く。閉じたときにその写真の場所が見える。
