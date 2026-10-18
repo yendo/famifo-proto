@@ -1561,8 +1561,133 @@ func TestTileTapOpensLightbox(t *testing.T) {
 
 // --- Task: レイアウト計算 ---
 //
-// 貪欲詰めと二分探索は純粋関数だが、この repo にはJSを単体テストする手段が
-// 無い（Node を足さない方針のため）。実ブラウザ上で関数を直接呼んで検証する。
+// 貪欲詰めと二分探索は純粋関数なので、実ブラウザ上で関数を直接呼んで検証する。
+// 一覧の描画は要らないため、タブを1つ共有し、一覧が並ぶのも待たない。
+
+func TestLayout(t *testing.T) {
+	requireBrowser(t)
+	ctx := openLayoutModule(t)
+
+	t.Run("PacksDaysThatFitOneRow", func(t *testing.T) {
+		// 列数6。1枚 + 4枚 = 5列で同じストライプに載り、次の3枚は入らず次へ。
+		got := evalLayout(t, ctx,
+			`[{d:"2026-02-08",n:1},{d:"2026-02-03",n:4},{d:"2026-01-20",n:3}]`, 6)
+
+		require.Len(t, got.Cards, 3)
+
+		require.Equal(t, 1, got.Cards[0].Span)
+		require.Equal(t, float64(0), got.Cards[0].Y)
+		require.Equal(t, 0, got.Cards[0].Start)
+
+		require.Equal(t, 4, got.Cards[1].Span)
+		require.Equal(t, float64(0), got.Cards[1].Y, "the same stripe, so the y matches")
+		require.Equal(t, 1, got.Cards[1].Start)
+
+		// 3枚目は残り1列に4列は載らないので次のストライプ。
+		// ストライプ高 = labelH(20) + gap(4) + tileH(100) = 124。次のy = 124 + gap(4) = 128
+		require.Equal(t, float64(128), got.Cards[2].Y, "does not fit, so it starts the next stripe")
+		require.Equal(t, 5, got.Cards[2].Start)
+
+		require.Equal(t, float64(128+124), got.Height)
+	})
+
+	t.Run("GivesWholeRowsToBigDays", func(t *testing.T) {
+		// 列数6。13枚は6列を占め、3段(6+6+1)になる。
+		got := evalLayout(t, ctx, `[{d:"2026-02-08",n:13},{d:"2026-02-03",n:2}]`, 6)
+
+		require.Len(t, got.Cards, 2)
+		require.Equal(t, 6, got.Cards[0].Span, "a day with more items than columns takes the whole row")
+		require.Equal(t, 3, got.Cards[0].Rows)
+		// h = 20 + 4 + 3*100 + 2*4 = 332
+		require.Equal(t, float64(332), got.Cards[0].H)
+
+		require.Equal(t, float64(332+4), got.Cards[1].Y, "whatever follows a full-row day always starts the next stripe")
+		require.Equal(t, 13, got.Cards[1].Start)
+	})
+
+	t.Run("HandlesEmptyLibrary", func(t *testing.T) {
+		got := evalLayout(t, ctx, `[]`, 6)
+
+		require.Empty(t, got.Cards)
+		require.Equal(t, float64(0), got.Height, "empty gives a height of 0, never NaN")
+	})
+
+	t.Run("LookupsAgreeWithCards", func(t *testing.T) {
+		// yForIndex と dayAtY が cards と食い違わないこと。
+		// 実装が二分探索なので、境界（各グループの先頭・末尾）を総当たりで確かめる。
+		var mismatches []string
+		err := chromedp.Run(ctx, chromedp.Evaluate(`(() => {
+			const groups = [{d:"2026-02-08",n:1},{d:"2026-02-03",n:4},
+			                {d:"2026-01-20",n:13},{d:"2026-01-05",n:2}];
+			const L = layout.layout(groups, 6, 100, 20, 4);
+			const bad = [];
+			for (const c of L.cards) {
+				for (const i of [c.start, c.start + c.n - 1]) {
+					const row = Math.floor((i - c.start) / c.span);
+					const want = c.y + L.labelH + L.gap + row * (L.tileH + L.gap);
+					const got = layout.yForIndex(L, i);
+					if (got !== want) bad.push('yForIndex(' + i + ')=' + got + ' want=' + want);
+					// 詰めた行では複数の日が同じ y を共有するので、dayAtY は
+					// その行のどれか1つしか返せない。「同じ行の日を返すこと」
+					// までが約束できる範囲。
+					const d = layout.dayAtY(L, want);
+					const hit = L.cards.find((x) => x.d === d);
+					if (!hit || hit.y !== c.y) {
+						bad.push('dayAtY(' + want + ')=' + d + ' は y=' + c.y + ' の行に無い');
+					}
+				}
+			}
+			return bad;
+		})()`, &mismatches))
+		require.NoError(t, err)
+		require.Empty(t, mismatches, "the binary search disagrees with cards")
+	})
+
+	t.Run("WindowAtClipsBigDaysToRows", func(t *testing.T) {
+		// 100枚の日（6列で17段）の途中だけを切り出せること。
+		// 段が始まるのはラベル(20)+gap(4)の下なので、r段目の上端は 24+r*104。
+		// 4段目(r=3)の上端は 24+312=336。
+		//
+		// 探索の起点を段の境界ちょうど(336)にしないのは、そこだと
+		// (336-24)/104 が割り切れてしまい、floor を ceil に変えても
+		// firstRow が動かず、切り捨ての誤りを検出できなくなるため。
+		// 436 なら 412/104=3.96 で、ceil にすると firstRow が 4 になって落ちる。
+		var got struct {
+			From   int     `json:"from"`
+			To     int     `json:"to"`
+			PasteY float64 `json:"pasteY"`
+			Ranges int     `json:"ranges"`
+		}
+		err := chromedp.Run(ctx, chromedp.Evaluate(`(() => {
+			const L = layout.layout([{d:"2026-02-08",n:100}], 6, 100, 20, 4);
+			const w = layout.windowAt(L, 436, 436 + 200);
+			return {from: w.from, to: w.to, pasteY: w.pasteY, ranges: w.ranges.length};
+		})()`, &got))
+		require.NoError(t, err)
+
+		require.Equal(t, 1, got.Ranges)
+		require.Equal(t, 18, got.From, "the start of the fourth row = 3*6")
+		require.Equal(t, float64(336), got.PasteY, "the paste lands on the top edge of the row it cut out")
+		require.Greater(t, got.To, got.From)
+		require.Less(t, got.To, 100, "cuts out only what is visible, not all 100")
+	})
+}
+
+// openLayoutModule は新しいタブで layout.js を import し、window.layout に置く。
+//
+// 開くのは layout.js そのもので、import をサーバと同じオリジンから行うためだけに
+// 使う。一覧のページを開くと本体のJSが動き出してチャンクを取りに行くが、
+// 純粋関数の検証には要らない。
+func openLayoutModule(t *testing.T) context.Context {
+	t.Helper()
+	ctx := newTab(t)
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(baseURL+"/static/layout.js"),
+		chromedp.Evaluate(`import("/static/layout.js").then((l) => { window.layout = l; })`, nil, awaitPromise),
+	)
+	require.NoError(t, err)
+	return ctx
+}
 
 // layoutCard は layout.layout が返す cards の1要素。
 type layoutCard struct {
@@ -1589,135 +1714,6 @@ func evalLayout(t *testing.T, ctx context.Context, groupsJSON string, cols int) 
 		fmt.Sprintf(`layout.layout(%s, %d, 100, 20, 4)`, groupsJSON, cols), &got))
 	require.NoError(t, err)
 	return got
-}
-
-func TestLayoutPacksDaysThatFitOneRow(t *testing.T) {
-	requireBrowser(t)
-	ctx := newTab(t)
-	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForGallery(10*time.Second))
-	require.NoError(t, err)
-
-	// 列数6。1枚 + 4枚 = 5列で同じストライプに載り、次の3枚は入らず次へ。
-	got := evalLayout(t, ctx,
-		`[{d:"2026-02-08",n:1},{d:"2026-02-03",n:4},{d:"2026-01-20",n:3}]`, 6)
-
-	require.Len(t, got.Cards, 3)
-
-	require.Equal(t, 1, got.Cards[0].Span)
-	require.Equal(t, float64(0), got.Cards[0].Y)
-	require.Equal(t, 0, got.Cards[0].Start)
-
-	require.Equal(t, 4, got.Cards[1].Span)
-	require.Equal(t, float64(0), got.Cards[1].Y, "the same stripe, so the y matches")
-	require.Equal(t, 1, got.Cards[1].Start)
-
-	// 3枚目は残り1列に4列は載らないので次のストライプ。
-	// ストライプ高 = labelH(20) + gap(4) + tileH(100) = 124。次のy = 124 + gap(4) = 128
-	require.Equal(t, float64(128), got.Cards[2].Y, "does not fit, so it starts the next stripe")
-	require.Equal(t, 5, got.Cards[2].Start)
-
-	require.Equal(t, float64(128+124), got.Height)
-}
-
-func TestLayoutGivesWholeRowsToBigDays(t *testing.T) {
-	requireBrowser(t)
-	ctx := newTab(t)
-	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForGallery(10*time.Second))
-	require.NoError(t, err)
-
-	// 列数6。13枚は6列を占め、3段(6+6+1)になる。
-	got := evalLayout(t, ctx, `[{d:"2026-02-08",n:13},{d:"2026-02-03",n:2}]`, 6)
-
-	require.Len(t, got.Cards, 2)
-	require.Equal(t, 6, got.Cards[0].Span, "a day with more items than columns takes the whole row")
-	require.Equal(t, 3, got.Cards[0].Rows)
-	// h = 20 + 4 + 3*100 + 2*4 = 332
-	require.Equal(t, float64(332), got.Cards[0].H)
-
-	require.Equal(t, float64(332+4), got.Cards[1].Y, "whatever follows a full-row day always starts the next stripe")
-	require.Equal(t, 13, got.Cards[1].Start)
-}
-
-func TestLayoutHandlesEmptyLibrary(t *testing.T) {
-	requireBrowser(t)
-	ctx := newTab(t)
-	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForGallery(10*time.Second))
-	require.NoError(t, err)
-
-	got := evalLayout(t, ctx, `[]`, 6)
-
-	require.Empty(t, got.Cards)
-	require.Equal(t, float64(0), got.Height, "empty gives a height of 0, never NaN")
-}
-
-func TestLayoutLookupsAgreeWithCards(t *testing.T) {
-	requireBrowser(t)
-	ctx := newTab(t)
-	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForGallery(10*time.Second))
-	require.NoError(t, err)
-
-	// yForIndex と dayAtY が cards と食い違わないこと。
-	// 実装が二分探索なので、境界（各グループの先頭・末尾）を総当たりで確かめる。
-	var mismatches []string
-	err = chromedp.Run(ctx, chromedp.Evaluate(`(() => {
-		const groups = [{d:"2026-02-08",n:1},{d:"2026-02-03",n:4},
-		                {d:"2026-01-20",n:13},{d:"2026-01-05",n:2}];
-		const L = layout.layout(groups, 6, 100, 20, 4);
-		const bad = [];
-		for (const c of L.cards) {
-			for (const i of [c.start, c.start + c.n - 1]) {
-				const row = Math.floor((i - c.start) / c.span);
-				const want = c.y + L.labelH + L.gap + row * (L.tileH + L.gap);
-				const got = layout.yForIndex(L, i);
-				if (got !== want) bad.push('yForIndex(' + i + ')=' + got + ' want=' + want);
-				// 詰めた行では複数の日が同じ y を共有するので、dayAtY は
-				// その行のどれか1つしか返せない。「同じ行の日を返すこと」
-				// までが約束できる範囲。
-				const d = layout.dayAtY(L, want);
-				const hit = L.cards.find((x) => x.d === d);
-				if (!hit || hit.y !== c.y) {
-					bad.push('dayAtY(' + want + ')=' + d + ' は y=' + c.y + ' の行に無い');
-				}
-			}
-		}
-		return bad;
-	})()`, &mismatches))
-	require.NoError(t, err)
-	require.Empty(t, mismatches, "the binary search disagrees with cards")
-}
-
-func TestWindowAtClipsBigDaysToRows(t *testing.T) {
-	requireBrowser(t)
-	ctx := newTab(t)
-	err := chromedp.Run(ctx, chromedp.Navigate(baseURL), waitForGallery(10*time.Second))
-	require.NoError(t, err)
-
-	// 100枚の日（6列で17段）の途中だけを切り出せること。
-	// 段が始まるのはラベル(20)+gap(4)の下なので、r段目の上端は 24+r*104。
-	// 4段目(r=3)の上端は 24+312=336。
-	//
-	// 探索の起点を段の境界ちょうど(336)にしないのは、そこだと
-	// (336-24)/104 が割り切れてしまい、floor を ceil に変えても
-	// firstRow が動かず、切り捨ての誤りを検出できなくなるため。
-	// 436 なら 412/104=3.96 で、ceil にすると firstRow が 4 になって落ちる。
-	var got struct {
-		From   int     `json:"from"`
-		To     int     `json:"to"`
-		PasteY float64 `json:"pasteY"`
-		Ranges int     `json:"ranges"`
-	}
-	err = chromedp.Run(ctx, chromedp.Evaluate(`(() => {
-		const L = layout.layout([{d:"2026-02-08",n:100}], 6, 100, 20, 4);
-		const w = layout.windowAt(L, 436, 436 + 200);
-		return {from: w.from, to: w.to, pasteY: w.pasteY, ranges: w.ranges.length};
-	})()`, &got))
-	require.NoError(t, err)
-
-	require.Equal(t, 1, got.Ranges)
-	require.Equal(t, 18, got.From, "the start of the fourth row = 3*6")
-	require.Equal(t, float64(336), got.PasteY, "the paste lands on the top edge of the row it cut out")
-	require.Greater(t, got.To, got.From)
-	require.Less(t, got.To, 100, "cuts out only what is visible, not all 100")
 }
 
 // レイアウトが計算した位置と、ブラウザが実際に置いた位置が一致すること。
