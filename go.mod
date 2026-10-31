@@ -1,6 +1,6 @@
 module github.com/yendo/famifo-proto
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/alexedwards/scs/sqlite3store v0.0.0-20251002162104-209de6e426de
@@ -20,7 +20,7 @@ require (
 require (
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
