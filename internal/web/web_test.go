@@ -615,6 +615,25 @@ func TestPanelToggleShowsTheFilterIsOn(t *testing.T) {
 	require.Contains(t, body, `filter-toggle active`)
 }
 
+// 絞り込みボタンは文字ではなくアイコンで、名前は読み上げ用の aria-label で持つ。
+func TestPanelToggleIsAnIconWithALabel(t *testing.T) {
+	t.Parallel()
+	me, _ := twoNamedOwners(t)
+	f := newWebFixture(t, 10)
+	f.addOwnedBy(t, "mine.jpg", me)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	i := strings.Index(body, `<button class="filter-toggle"`)
+	require.GreaterOrEqual(t, i, 0, "the toggle is not rendered")
+	j := strings.Index(body[i:], `</button>`)
+	require.GreaterOrEqual(t, j, 0, "the toggle is not closed")
+	button := body[i : i+j]
+	require.Contains(t, button, `aria-label="絞り込み"`)
+	require.Contains(t, button, `<svg`)
+	require.NotContains(t, button, `>絞り込み`, "the toggle shows no text")
+}
+
 // 名前の引ける撮影者が1人もいなければ（/etc/passwd をマウントしていないなど）、
 // 節が無いのでパネルもボタンも出さない。
 func TestPanelIsAbsentWithoutNamedOwners(t *testing.T) {

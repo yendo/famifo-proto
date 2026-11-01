@@ -67,8 +67,7 @@ body.locked {
 
 /* 指定しないとブラウザ既定の淡色ボタンが暗い上部バーの上で枚数表示に
    ぶつかって浮く。 */
-.logout button,
-.filter-toggle {
+.logout button {
 	border: 1px solid rgba(255, 255, 255, 0.3);
 	border-radius: 4px;
 	background: transparent;
@@ -82,8 +81,34 @@ body.locked {
 .filter-toggle:hover {
 	background: rgba(255, 255, 255, 0.1);
 }
+
+/* 絞り込みボタン。漏斗のアイコンだけの丸いボタンで、個別表示の丸いボタンに
+   そろえる。上部バーは文字のベースラインで揃えているので、これだけ中央に置く。 */
+.filter-toggle {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	align-self: center;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 1px solid rgba(255, 255, 255, 0.3);
+	border-radius: 50%;
+	background: transparent;
+	color: var(--fg);
+	cursor: pointer;
+}
+.filter-toggle svg {
+	width: 16px;
+	height: 16px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linejoin: round;
+}
 /* 条件が掛かっている間は反転させる。何が掛かっているかはシートを開けば分かる。 */
 .filter-toggle.active {
+	border-color: var(--fg);
 	background: var(--fg);
 	color: var(--bg);
 }
