@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/yendo/famifo-proto/internal/imagefmt"
+	"github.com/yendo/famifo-proto/internal/store"
 )
 
 // indexView は index.html の入力。タイルは持たない。一覧の中身はクライアントが
@@ -47,11 +48,11 @@ type infoView struct {
 
 // buildIndexView はトップページの入力を組み立てる。
 func (h *Handler) buildIndexView(r *http.Request, openIndex int) (indexView, error) {
-	total, err := h.store.Count(r.Context())
+	total, err := h.store.Count(r.Context(), store.Filter{})
 	if err != nil {
 		return indexView{}, err
 	}
-	days, err := h.store.DayGroups(r.Context())
+	days, err := h.store.DayGroups(r.Context(), store.Filter{})
 	if err != nil {
 		return indexView{}, err
 	}
@@ -70,7 +71,7 @@ func (h *Handler) buildIndexView(r *http.Request, openIndex int) (indexView, err
 // listMedia はオフセット指定で1チャンク分を組み立てる。0件でも nil ではなく
 // 空のスライスを返すので、JSONは null ではなく [] になる。
 func (h *Handler) listMedia(r *http.Request, offset, limit int) ([]mediaView, error) {
-	items, err := h.store.ListRange(r.Context(), offset, limit)
+	items, err := h.store.ListRange(r.Context(), store.Filter{}, offset, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/index"
+	"github.com/yendo/famifo-proto/internal/store"
 )
 
 func TestScanIndexesNestedMedia(t *testing.T) {
@@ -21,7 +22,7 @@ func TestScanIndexesNestedMedia(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 3, n)
 }
@@ -35,7 +36,7 @@ func TestScanIgnoresNonMedia(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 }
@@ -68,7 +69,7 @@ func TestScanIgnoresSymlinks(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 }
@@ -87,7 +88,7 @@ func TestScanIgnoresASymlinkedDirectory(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
 }
@@ -107,7 +108,7 @@ func TestScanIgnoresTheTranscodedVideoInEaDir(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 }
@@ -121,7 +122,7 @@ func TestScanSkipsBrokenFilesAndContinues(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()), "one broken file does not stop the whole scan")
 
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 }
@@ -141,7 +142,7 @@ func TestScanRemovesTheRowWhenARegisteredFileCanNoLongerBeIndexed(t *testing.T) 
 	require.NoError(t, os.Chtimes(path, later, later))
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
 }
@@ -212,7 +213,7 @@ func TestScanRemovesDeletedMedia(t *testing.T) {
 	require.NoError(t, f.sc.ScanOnce(ctx))
 
 	require.Len(t, f.generatedThumbs(t), 1, "the thumbnail is hard-deleted too")
-	n, err := f.st.Count(ctx)
+	n, err := f.st.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 }
@@ -234,7 +235,7 @@ func TestScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 	pathA := writeTestJPEG(t, f.root, "a.jpg", 40, 20)
 	pathB := writeTestJPEG(t, f.root, "b.jpg", 40, 20)
 	require.NoError(t, f.sc.ScanOnce(ctx))
-	n, err := f.st.Count(ctx)
+	n, err := f.st.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 	require.Len(t, f.generatedThumbs(t), 2)
@@ -245,7 +246,7 @@ func TestScanDoesNotPurgeWhenRootAppearsEmpty(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(ctx))
 
-	n2, err := f.st.Count(ctx)
+	n2, err := f.st.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 2, n2, "existing entries stay, since the root may be unmounted")
 	require.Len(t, f.generatedThumbs(t), 2, "the thumbnails stay too")
@@ -260,7 +261,7 @@ func TestScanIndexesEveryRoot(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(ctx))
 
-	n, err := f.st.Count(ctx)
+	n, err := f.st.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 }
@@ -284,7 +285,7 @@ func TestScanDoesNotPurgeTheRootThatAppearsEmpty(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(ctx))
 
-	n, err := f.st.Count(ctx)
+	n, err := f.st.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 	require.Len(t, f.generatedThumbs(t), 2, "the thumbnails stay too")
@@ -305,7 +306,7 @@ func TestScanRemovesMediaOutsideEveryRoot(t *testing.T) {
 
 	require.NoError(t, index.NewScanner(ix2, f.slots, time.Hour, nil, f.log).ScanOnce(ctx))
 
-	n, err := f.st.Count(ctx)
+	n, err := f.st.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 	require.Len(t, f.generatedThumbs(t), 1, "the thumbnail goes too")
@@ -330,7 +331,7 @@ func TestScanSkipsAnUnreadableRootAndContinues(t *testing.T) {
 	require.NoError(t, f.sc.ScanOnce(ctx), "an unreadable root does not fail the whole scan")
 
 	require.Len(t, f.generatedThumbs(t), 3)
-	n, err := f.st.Count(ctx)
+	n, err := f.st.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 3, n)
 }
@@ -370,7 +371,7 @@ func TestScanIndexesEveryFileWithConcurrentWorkers(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	count, err := f.st.Count(context.Background())
+	count, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, n, count)
 }
@@ -385,7 +386,7 @@ func TestScanWorksWithASingleWorker(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 }

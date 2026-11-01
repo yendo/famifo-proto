@@ -152,7 +152,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 // 消えた写真のURLを共有されることは普通に起きる。404にすると行き止まりになるので、
 // ギャラリーへ送る。
 func (h *Handler) handleItem(w http.ResponseWriter, r *http.Request) {
-	rank, err := h.store.RankOf(r.Context(), r.PathValue("id"))
+	rank, err := h.store.RankOf(r.Context(), store.Filter{}, r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return

@@ -113,7 +113,7 @@ func TestUpsertReplacesExistingRow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, m.TakenAtLocal(), got.TakenAtLocal())
 
-	n, err := s.Count(ctx)
+	n, err := s.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 }
@@ -159,7 +159,7 @@ func TestDeleteByPathPrefixIsSeparatorTerminated(t *testing.T) {
 	require.Len(t, deleted, 1, "album2 must not be caught up in it")
 	require.Equal(t, a.Path(), deleted[0].Path())
 
-	n, err := s.Count(ctx)
+	n, err := s.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "the album2 row stays")
 }
@@ -193,7 +193,7 @@ func TestDeleteByPathPrefixRejectsAnEmptyPrefix(t *testing.T) {
 	_, err := s.DeleteByPathPrefix(ctx, "")
 
 	require.Error(t, err)
-	n, err := s.Count(ctx)
+	n, err := s.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "nothing is deleted")
 }
@@ -265,7 +265,7 @@ func TestListRangeReturnsRequestedWindow(t *testing.T) {
 		require.NoError(t, s.Upsert(ctx, mediaAt(t, "/items/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
 	}
 
-	got, err := s.ListRange(ctx, 1, 2)
+	got, err := s.ListRange(ctx, store.Filter{}, 1, 2)
 
 	require.NoError(t, err)
 	require.Len(t, got, 2)
@@ -300,7 +300,7 @@ func TestListRangeOrdersNewestFirstWithIDTiebreak(t *testing.T) {
 
 	var seen []string
 	for i := range 3 {
-		page, err := s.ListRange(ctx, i, 1)
+		page, err := s.ListRange(ctx, store.Filter{}, i, 1)
 		require.NoError(t, err)
 		require.Len(t, page, 1)
 		seen = append(seen, page[0].Path())
@@ -317,15 +317,15 @@ func TestListRangeHandlesBoundaries(t *testing.T) {
 		require.NoError(t, s.Upsert(ctx, mediaAt(t, "/items/"+name+".jpg", time.Unix(int64(1600000000+i), 0))))
 	}
 
-	tail, err := s.ListRange(ctx, 2, 10) // limitが残数を超える
+	tail, err := s.ListRange(ctx, store.Filter{}, 2, 10) // limitが残数を超える
 	require.NoError(t, err)
 	require.Len(t, tail, 1)
 
-	past, err := s.ListRange(ctx, 99, 10) // 範囲外
+	past, err := s.ListRange(ctx, store.Filter{}, 99, 10) // 範囲外
 	require.NoError(t, err)
 	require.Empty(t, past)
 
-	zero, err := s.ListRange(ctx, 0, 0) // limit=0
+	zero, err := s.ListRange(ctx, store.Filter{}, 0, 0) // limit=0
 	require.NoError(t, err)
 	require.Empty(t, zero)
 }
@@ -334,10 +334,10 @@ func TestListRangeRejectsNegativeArguments(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 
-	_, err := s.ListRange(context.Background(), -1, 10)
+	_, err := s.ListRange(context.Background(), store.Filter{}, -1, 10)
 	require.Error(t, err)
 
-	_, err = s.ListRange(context.Background(), 0, -1)
+	_, err = s.ListRange(context.Background(), store.Filter{}, 0, -1)
 	require.Error(t, err)
 }
 
@@ -360,10 +360,10 @@ func TestRankOfLocatesTheItemInListRange(t *testing.T) {
 	}
 
 	for _, m := range items {
-		rank, err := s.RankOf(ctx, m.ID())
+		rank, err := s.RankOf(ctx, store.Filter{}, m.ID())
 		require.NoError(t, err)
 
-		at, err := s.ListRange(ctx, rank, 1)
+		at, err := s.ListRange(ctx, store.Filter{}, rank, 1)
 		require.NoError(t, err)
 		require.Len(t, at, 1)
 		require.Equal(t, m.Path(), at[0].Path(), "the item at rank %d", rank)
@@ -374,7 +374,7 @@ func TestRankOfMissingReturnsErrNotFound(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 
-	_, err := s.RankOf(context.Background(), "deadbeef")
+	_, err := s.RankOf(context.Background(), store.Filter{}, "deadbeef")
 
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
@@ -395,7 +395,7 @@ func TestDayGroupsCountsEachDay(t *testing.T) {
 		require.NoError(t, s.Upsert(ctx, mediaAt(t, fmt.Sprintf("/items/%d.jpg", i), at)))
 	}
 
-	got, err := s.DayGroups(ctx)
+	got, err := s.DayGroups(ctx, store.Filter{})
 
 	require.NoError(t, err)
 	require.Equal(t, []store.DayGroup{
@@ -419,7 +419,7 @@ func TestDayGroupsUsesTheDayWhereItWasShot(t *testing.T) {
 	paris := time.FixedZone("CET", 60*60)
 	require.NoError(t, s.Upsert(ctx, mediaAt(t, "/items/a.jpg", time.Date(2026, 3, 1, 21, 0, 0, 0, paris))))
 
-	got, err := s.DayGroups(ctx)
+	got, err := s.DayGroups(ctx, store.Filter{})
 
 	require.NoError(t, err)
 	require.Equal(t, []store.DayGroup{{Date: "2026-03-01", Count: 1}}, got,
@@ -430,7 +430,7 @@ func TestDayGroupsEmptyStore(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
 
-	got, err := s.DayGroups(context.Background())
+	got, err := s.DayGroups(context.Background(), store.Filter{})
 
 	require.NoError(t, err)
 	require.Empty(t, got)
@@ -453,10 +453,10 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 		}
 	}
 
-	groups, err := s.DayGroups(ctx)
+	groups, err := s.DayGroups(ctx, store.Filter{})
 	require.NoError(t, err)
 
-	total, err := s.Count(ctx)
+	total, err := s.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	sum := 0
 	for _, g := range groups {
@@ -465,7 +465,7 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 	require.Equal(t, total, sum, "the per-day counts add up to Count")
 
 	// 区切り位置が ListRange の並びと合うこと
-	all, err := s.ListRange(ctx, 0, total)
+	all, err := s.ListRange(ctx, store.Filter{}, 0, total)
 	require.NoError(t, err)
 	offset := 0
 	for _, g := range groups {
@@ -475,6 +475,158 @@ func TestDayGroupsTotalMatchesCountAndListRange(t *testing.T) {
 			offset++
 		}
 	}
+}
+
+// ownedAt は持ち主と撮影日時を指定して1件を作る。mediaAt と同じく mtime は撮影日時と
+// ずらす。
+func ownedAt(t *testing.T, path string, uid uint32, takenAt time.Time) media.Media {
+	t.Helper()
+	m, err := media.New(path, uid, takenAt, takenAt.Add(time.Hour))
+	require.NoError(t, err)
+	return m
+}
+
+// seedThreeOwners は3人分の写真を2日に分けて入れる。新しい順に
+// a1(1000), b1(1001), r1(0) が 2026-02-08、a2(1000), b2(1001) が 2026-02-03。
+// root の uid 0 を混ぜて、「指定なし」と取り違えないことも一緒に縛る。
+func seedThreeOwners(t *testing.T, s *store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	for _, m := range []media.Media{
+		ownedAt(t, "/items/a1.jpg", 1000, time.Date(2026, 2, 8, 12, 0, 0, 0, time.UTC)),
+		ownedAt(t, "/items/b1.jpg", 1001, time.Date(2026, 2, 8, 11, 0, 0, 0, time.UTC)),
+		ownedAt(t, "/items/r1.jpg", 0, time.Date(2026, 2, 8, 10, 0, 0, 0, time.UTC)),
+		ownedAt(t, "/items/a2.jpg", 1000, time.Date(2026, 2, 3, 12, 0, 0, 0, time.UTC)),
+		ownedAt(t, "/items/b2.jpg", 1001, time.Date(2026, 2, 3, 11, 0, 0, 0, time.UTC)),
+	} {
+		require.NoError(t, s.Upsert(ctx, m))
+	}
+}
+
+// 総枚数・日ごとの並び・チャンクの3つが同じ条件で絞られること。どれか1つでも
+// 条件を落とすと、一覧の高さと中身がずれる。
+func TestFilterByOwners(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		f     store.Filter
+		paths []string
+		days  []store.DayGroup
+	}{
+		{
+			"no filter",
+			store.Filter{},
+			[]string{"/items/a1.jpg", "/items/b1.jpg", "/items/r1.jpg", "/items/a2.jpg", "/items/b2.jpg"},
+			[]store.DayGroup{{Date: "2026-02-08", Count: 3}, {Date: "2026-02-03", Count: 2}},
+		},
+		{
+			"one owner",
+			store.Filter{Owners: []uint32{1000}},
+			[]string{"/items/a1.jpg", "/items/a2.jpg"},
+			[]store.DayGroup{{Date: "2026-02-08", Count: 1}, {Date: "2026-02-03", Count: 1}},
+		},
+		{
+			"two owners",
+			store.Filter{Owners: []uint32{1000, 1001}},
+			[]string{"/items/a1.jpg", "/items/b1.jpg", "/items/a2.jpg", "/items/b2.jpg"},
+			[]store.DayGroup{{Date: "2026-02-08", Count: 2}, {Date: "2026-02-03", Count: 2}},
+		},
+		{
+			"root",
+			store.Filter{Owners: []uint32{0}},
+			[]string{"/items/r1.jpg"},
+			[]store.DayGroup{{Date: "2026-02-08", Count: 1}},
+		},
+		{
+			"an owner without photos",
+			store.Filter{Owners: []uint32{4242}},
+			nil,
+			nil,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openTestStore(t)
+			ctx := context.Background()
+			seedThreeOwners(t, s)
+
+			n, err := s.Count(ctx, tc.f)
+			require.NoError(t, err)
+			require.Equal(t, len(tc.paths), n)
+
+			items, err := s.ListRange(ctx, tc.f, 0, 10)
+			require.NoError(t, err)
+			var paths []string
+			for _, m := range items {
+				paths = append(paths, m.Path())
+			}
+			require.Equal(t, tc.paths, paths)
+
+			days, err := s.DayGroups(ctx, tc.f)
+			require.NoError(t, err)
+			require.Equal(t, tc.days, days)
+		})
+	}
+}
+
+// 絞り込んだ一覧の中でも、RankOf の位置は ListRange の並びと一致しなければならない。
+// /item/{id}?owner= から開いたとき、クライアントはこの番号で飛ぶ。
+func TestRankOfLocatesTheItemInAFilteredListRange(t *testing.T) {
+	t.Parallel()
+	for _, f := range []store.Filter{
+		{Owners: []uint32{1000}},
+		{Owners: []uint32{1000, 1001}},
+	} {
+		t.Run(fmt.Sprint(f.Owners), func(t *testing.T) {
+			t.Parallel()
+			s := openTestStore(t)
+			ctx := context.Background()
+			seedThreeOwners(t, s)
+
+			items, err := s.ListRange(ctx, f, 0, 10)
+			require.NoError(t, err)
+			for want, m := range items {
+				rank, err := s.RankOf(ctx, f, m.ID())
+				require.NoError(t, err)
+				require.Equal(t, want, rank, "the rank of %s", m.Path())
+			}
+		})
+	}
+}
+
+// 選んでいない人の写真は、絞り込んだ一覧には無い。/item/{id} は一覧へ送り直す。
+func TestRankOfOutsideTheFilterReturnsErrNotFound(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	ctx := context.Background()
+	seedThreeOwners(t, s)
+	other := ownedAt(t, "/items/b1.jpg", 1001, time.Date(2026, 2, 8, 11, 0, 0, 0, time.UTC))
+
+	_, err := s.RankOf(ctx, store.Filter{Owners: []uint32{1000}}, other.ID())
+
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+// 撮影者の選択肢の元。写真のある uid だけを、重複なしで小さい順に返す。
+func TestOwnersListsTheUIDsWithPhotos(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	seedThreeOwners(t, s)
+
+	got, err := s.Owners(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, []uint32{0, 1000, 1001}, got)
+}
+
+func TestOwnersEmptyStore(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+
+	got, err := s.Owners(context.Background())
+
+	require.NoError(t, err)
+	require.Empty(t, got)
 }
 
 // 列を変えたらDBを消して作り直す運用なので、古いDBが残ったまま起動する取り違えは

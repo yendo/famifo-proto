@@ -19,6 +19,17 @@ import (
 // ErrNotFound は該当する1件が無いことを表す。
 var ErrNotFound = errors.New("media not found")
 
+// Filter は一覧の絞り込み。各フィールドは1つの条件で、指定したものをすべて満たす
+// 写真に絞る。ゼロ値は普段の一覧である。
+//
+// 呼び出し側は構造体リテラルで一度に組み立てる。条件は URL に書かれた組をまとめて
+// 掛けるもので、1つずつ積んでいくものではない。
+type Filter struct {
+	// Owners は持ち主の uid。どれかが持ち主の写真に絞る。空なら持ち主で絞らない。
+	// 「指定なし」を空で表すので、uid 0（root）と取り違えない。
+	Owners []uint32
+}
+
 // Store はSQLiteインデックスへのアクセスを提供する。
 type Store struct{ db *sql.DB }
 
@@ -188,7 +199,7 @@ func dirRange(prefix string) (lo, hi string) {
 
 // ListRange は撮影日時の新しい順で offset 番目から limit 件を返す。
 // 仮想スクロールは任意の位置へ飛ぶため、カーソルではなくオフセットで引く。
-func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]media.Media, error) {
+func (s *Store) ListRange(ctx context.Context, f Filter, offset, limit int) ([]media.Media, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("offset must be 0 or greater: %d", offset)
 	}
@@ -196,10 +207,12 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]media.Media
 		return nil, fmt.Errorf("limit must be 0 or greater: %d", limit)
 	}
 
+	where, args := f.where()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+selectCols+` FROM media
+		 WHERE `+where+`
 		 ORDER BY taken_at_local DESC, id DESC
-		 LIMIT ? OFFSET ?`, limit, offset)
+		 LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return nil, fmt.Errorf("cannot list the media: %w", err)
 	}
@@ -218,14 +231,17 @@ func (s *Store) ListRange(ctx context.Context, offset, limit int) ([]media.Media
 
 // RankOf は一覧の並びでその1件が何番目かを返す（先頭が0）。1件ごとのURLから
 // 開くとき、クライアントは通し番号で位置を決めるため、IDから番号へ引き直す経路が要る。
-// 該当が無い場合は ErrNotFound を返す。
+// 該当が無い場合は ErrNotFound を返す。f に当てはまらない写真も ErrNotFound である。
 //
 // 並びは ListRange と同じ taken_at_local DESC, id DESC でなければならない。順序式が
 // 二重になるが、片方だけ変えるとURLが別の1件の位置を指すため、
 // TestRankOfLocatesTheItemInListRange が両者の一致を縛っている。
-func (s *Store) RankOf(ctx context.Context, id string) (int, error) {
+func (s *Store) RankOf(ctx context.Context, f Filter, id string) (int, error) {
+	where, args := f.where()
 	var takenAtLocal string
-	err := s.db.QueryRowContext(ctx, `SELECT taken_at_local FROM media WHERE id = ?`, id).Scan(&takenAtLocal)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT taken_at_local FROM media WHERE id = ? AND (`+where+`)`,
+		append([]any{id}, args...)...).Scan(&takenAtLocal)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
 	}
@@ -234,12 +250,13 @@ func (s *Store) RankOf(ctx context.Context, id string) (int, error) {
 	}
 
 	// 自分より前に並ぶ行を数える。OFFSET で数えるのと違い、途中の行を読まずに
-	// 索引だけで答えが出る。
+	// 索引だけで答えが出る。持ち主で絞ると owner_uid を見るために行も読むが、
+	// 写真の数からして問題にならないので、持ち主を含む索引は持たない。
 	var rank int
 	err = s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM media
-		 WHERE taken_at_local > ? OR (taken_at_local = ? AND id > ?)`,
-		takenAtLocal, takenAtLocal, id).Scan(&rank)
+		 WHERE (`+where+`) AND (taken_at_local > ? OR (taken_at_local = ? AND id > ?))`,
+		append(args, takenAtLocal, takenAtLocal, id)...).Scan(&rank)
 	if err != nil {
 		return 0, fmt.Errorf("cannot count the media before it: %w", err)
 	}
@@ -266,10 +283,11 @@ func (s *Store) AllPaths(ctx context.Context) (map[string]int64, error) {
 	return out, rows.Err()
 }
 
-// Count は登録件数を返す。
-func (s *Store) Count(ctx context.Context) (int, error) {
+// Count は f に当てはまる件数を返す。
+func (s *Store) Count(ctx context.Context, f Filter) (int, error) {
+	where, args := f.where()
 	var n int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM media`).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM media WHERE `+where, args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("cannot count the media: %w", err)
 	}
 	return n, nil
@@ -284,9 +302,10 @@ type DayGroup struct {
 // DayGroups は日ごとの件数を新しい順に返す。一覧の区切りとスクラバーの目盛りに使う。
 //
 // day に索引があるので、SQLiteは索引を順に読むだけで束ね、一時B-treeに積み直さない。
-func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
+func (s *Store) DayGroups(ctx context.Context, f Filter) ([]DayGroup, error) {
+	where, args := f.where()
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT day, COUNT(*) FROM media GROUP BY day ORDER BY day DESC`)
+		`SELECT day, COUNT(*) FROM media WHERE `+where+` GROUP BY day ORDER BY day DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cannot get the capture dates: %w", err)
 	}
@@ -299,6 +318,26 @@ func (s *Store) DayGroups(ctx context.Context) ([]DayGroup, error) {
 			return nil, fmt.Errorf("cannot read the capture dates: %w", err)
 		}
 		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// Owners は写真のある持ち主の uid を、重複なしで小さい順に返す。撮影者の選択肢の
+// 元にする。名前を引くのは配信側である。
+func (s *Store) Owners(ctx context.Context) ([]uint32, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT owner_uid FROM media ORDER BY owner_uid`)
+	if err != nil {
+		return nil, fmt.Errorf("cannot list the owners: %w", err)
+	}
+	defer rows.Close()
+
+	var out []uint32
+	for rows.Next() {
+		var uid int64
+		if err := rows.Scan(&uid); err != nil {
+			return nil, fmt.Errorf("cannot read the owners: %w", err)
+		}
+		out = append(out, uint32(uid))
 	}
 	return out, rows.Err()
 }
@@ -317,4 +356,21 @@ func scanMedia(row interface{ Scan(...any) error }) (media.Media, error) {
 		return media.Media{}, err
 	}
 	return media.Restore(path, ownerUID, takenAtLocal, time.Unix(modTime, 0)), nil
+}
+
+// where は f の条件を WHERE 句の中身とその引数にする。条件が無ければ常に真の "1" を
+// 返す。条件はすべてここで組み立て、4つの読み取りがずれないようにする。
+func (f Filter) where() (string, []any) {
+	var conds []string
+	var args []any
+	if len(f.Owners) > 0 {
+		conds = append(conds, "owner_uid IN (?"+strings.Repeat(", ?", len(f.Owners)-1)+")")
+		for _, uid := range f.Owners {
+			args = append(args, int64(uid))
+		}
+	}
+	if len(conds) == 0 {
+		return "1", nil
+	}
+	return strings.Join(conds, " AND "), args
 }

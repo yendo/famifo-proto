@@ -14,6 +14,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/require"
 	"github.com/yendo/famifo-proto/internal/index"
+	"github.com/yendo/famifo-proto/internal/store"
 )
 
 // testDebounce は本番（defaultDebounce）の2秒を待たずに済ませるための値。
@@ -49,7 +50,7 @@ func startWatcher(t *testing.T, f *fixture) *index.Watcher {
 func requireCount(t *testing.T, f *fixture, want int) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		n, err := f.st.Count(context.Background())
+		n, err := f.st.Count(context.Background(), store.Filter{})
 		return err == nil && n == want
 	}, 3*time.Second, 25*time.Millisecond, "the count never reached %d", want)
 }
@@ -225,7 +226,7 @@ func TestWatcherKeepsRowsWhenARootIsRenamed(t *testing.T) {
 
 	// 減らないことの確認なので、イベントが処理されるのを待ってから数える。
 	time.Sleep(3 * testDebounce)
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "the items under a root that disappeared are kept")
 }
@@ -274,7 +275,7 @@ func TestWatcherIgnoresSynologyThumbnailsCreatedLater(t *testing.T) {
 
 	// 増えないことの確認なのでdebounceの経過を待ってから数える。
 	time.Sleep(3 * testDebounce)
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "thumbnails are not taken in")
 }
@@ -294,7 +295,7 @@ func TestWatcherSkipsSynologyDirsInMovedDirectory(t *testing.T) {
 
 	requireCount(t, f, 1)
 	time.Sleep(3 * testDebounce)
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "not taken in late after the move")
 }

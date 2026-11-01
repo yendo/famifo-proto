@@ -327,7 +327,7 @@ func TestScanRejectsBrokenRasterImage(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 0, n, "a broken image is not stored")
 }
@@ -407,7 +407,7 @@ func TestScanKeepsTheSynologyThumbnailOfADeletedPhoto(t *testing.T) {
 	require.NoError(t, f.sc.ScanOnce(ctx))
 
 	require.FileExists(t, synoThumb, "@eaDir is never touched")
-	n, err := f.st.Count(ctx)
+	n, err := f.st.Count(ctx, store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 }
@@ -424,7 +424,7 @@ func TestScanRejectsContentThatDoesNotMatchTheExtension(t *testing.T) {
 
 	require.NoError(t, f.sc.ScanOnce(context.Background()))
 
-	n, err := f.st.Count(context.Background())
+	n, err := f.st.Count(context.Background(), store.Filter{})
 	require.NoError(t, err)
 	require.Equal(t, 0, n, "no row may be created for a file that is not a photo")
 }

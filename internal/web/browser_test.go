@@ -372,7 +372,7 @@ func indexAll(st *store.Store, mediaDir string, thumbs *thumb.Provider, want int
 
 	deadline := time.Now().Add(indexAllTimeout)
 	for {
-		n, err := st.Count(context.Background())
+		n, err := st.Count(context.Background(), store.Filter{})
 		if err != nil {
 			return err
 		}
