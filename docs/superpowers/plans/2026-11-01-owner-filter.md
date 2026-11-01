@@ -21,7 +21,7 @@
 - ブラウザテスト: `make browser-test`。1つだけなら `FAMIFO_BROWSER_TESTS=required go test -tags browser -run '<名前>' ./internal/web/`。コンパイルの確認だけなら `go vet -tags browser ./internal/web/`
 - JS の型検査: `npx --yes -p "typescript@$(jq -r .devDependencies.typescript package.json)" tsc -p jsconfig.json`（リポジトリのルートで）
 - `Filter` は呼び出し側が構造体リテラルで組み立てる。`WithOwner` のようなメソッド、`NewFilter`、絞り込んだ見え方を返す型は作らない
-- 列は変えない。スキーマ移行は書かない。索引は `CREATE INDEX IF NOT EXISTS` で足す
+- 表も索引も変えない。スキーマ移行は書かない
 - `chown` には追従しない。走査の飛ばし条件と watcher は変えない
 - URL の規則は Go に置く。JS は絞り込みのクエリを組み立てない（chunk.js がチャンクの番号を足すだけ）
 - JS では HTML の文字列を組み立てない
@@ -33,8 +33,8 @@
 
 | ファイル | 変更 |
 |---|---|
-| `internal/store/store.go` | `Filter`、`where`、4メソッドの引数、`Owners`、索引2つ |
-| `internal/store/store_test.go` | 絞り込みのテスト。既存の呼び出しに `store.Filter{}`。古いDBのテストの表に `owner_uid` |
+| `internal/store/store.go` | `Filter`、`where`、4メソッドの引数、`Owners` |
+| `internal/store/store_test.go` | 絞り込みのテスト。既存の呼び出しに `store.Filter{}` |
 | `internal/index/scan_test.go` / `watch_test.go` / `index_test.go` | `Count` の呼び出しに `store.Filter{}`（追従のみ） |
 | `internal/web/filter.go`（新規） | `filterFrom`、`filterURL`、`toggleOwner`、`ownerChoices` |
 | `internal/web/view.go` | `indexView` の URL と撮影者の節、`buildIndexView` と `listMedia` が `Filter` を取る |
@@ -128,7 +128,7 @@ Run: `go vet ./... && go vet -tags browser ./internal/web/`
 Expected: エラー無し
 
 Run: `go test -race ./...`
-Expected: `TestOpenRejectsADatabaseWhoseColumnsHaveChanged` を含めすべて PASS（まだ索引を足していない）
+Expected: `TestOpenRejectsADatabaseWhoseColumnsHaveChanged` を含めすべて PASS
 
 - [ ] **Step 2: 絞り込みのテストを書く**
 
@@ -295,33 +295,6 @@ Expected: コンパイルエラー `s.Owners undefined`
 
 - [ ] **Step 4: 実装する**
 
-`internal/store/store.go` の `schema` に索引を2つ足す。
-
-```go
-const schema = `
-CREATE TABLE IF NOT EXISTS media (
-    id             TEXT PRIMARY KEY,
-    path           TEXT NOT NULL UNIQUE,
-    owner_uid      INTEGER NOT NULL,
-    taken_at_local TEXT NOT NULL,
-    mod_time       INTEGER NOT NULL,
-    day            TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_media_order ON media(taken_at_local DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_media_day ON media(day);
-CREATE INDEX IF NOT EXISTS idx_media_owner_order ON media(owner_uid, taken_at_local DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_media_owner_day ON media(owner_uid, day);
-`
-```
-
-`schema` の直前にコメントを足す。
-
-```go
-// idx_media_owner_order と idx_media_owner_day は、1人に絞った一覧のための索引。
-// 1人なら RankOf も索引だけで数えられる。2人以上を選ぶと並び順は idx_media_order
-// から読み、uid で振り分ける。
-```
-
 `ListRange`:
 
 ```go
@@ -359,7 +332,8 @@ func (s *Store) RankOf(ctx context.Context, f Filter, id string) (int, error) {
 	}
 
 	// 自分より前に並ぶ行を数える。OFFSET で数えるのと違い、途中の行を読まずに
-	// 索引だけで答えが出る。
+	// 索引だけで答えが出る。持ち主で絞ると owner_uid を見るために行も読むが、
+	// 写真の数からして問題にならないので、持ち主を含む索引は持たない。
 	var rank int
 	err = s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM media
@@ -386,7 +360,7 @@ func (s *Store) Count(ctx context.Context, f Filter) (int, error) {
 }
 ```
 
-`DayGroups`（doc コメントの「day に索引があるので」の段落に「1人に絞ったときは idx_media_owner_day を同じように読む。」を足す）:
+`DayGroups`:
 
 ```go
 	where, args := f.where()
@@ -439,28 +413,7 @@ func (f Filter) where() (string, []any) {
 }
 ```
 
-- [ ] **Step 5: 古いDBのテストを直す**
-
-索引が `owner_uid` を参照するので、`owner_uid` の無い古い DB では `CREATE INDEX` が先に落ち、エラーが "cannot create the schema" になる。`TestOpenRejectsADatabaseWhoseColumnsHaveChanged` は "cannot read the database" を見ているので、古い DB の表に `owner_uid` を足し、テストの狙い（列の名前が変わった DB を読み取りで弾く）を保つ。
-
-`internal/store/store_test.go` の当該テストの `CREATE TABLE` を次にする。コメントの「索引の名前と day は今と同じなので」を「索引の名前と day・owner_uid は今と同じなので」に直す。
-
-```go
-	_, err = db.Exec(`
-CREATE TABLE media (
-    id        TEXT PRIMARY KEY,
-    path      TEXT NOT NULL UNIQUE,
-    owner_uid INTEGER NOT NULL,
-    shot_at   TEXT NOT NULL,
-    mod_time  INTEGER NOT NULL,
-    day       TEXT NOT NULL
-);
-CREATE INDEX idx_media_order ON media(shot_at DESC, id DESC);`)
-```
-
-`TestOpenRejectsADatabaseThatStoresTheCaptureTimeAsAnInstant` は `require.Error` だけを見るので、そのままで通る。
-
-- [ ] **Step 6: テストが通ることを確かめる**
+- [ ] **Step 5: テストが通ることを確かめる**
 
 Run: `go test -race ./internal/store/ ./internal/index/ ./internal/web/`
 Expected: PASS
@@ -468,7 +421,7 @@ Expected: PASS
 Run: `go vet ./... && go vet -tags browser ./internal/web/`
 Expected: エラー無し
 
-- [ ] **Step 7: コミット**
+- [ ] **Step 6: コミット**
 
 ```bash
 git add internal/store/ internal/index/scan_test.go internal/index/watch_test.go internal/index/index_test.go internal/web/view.go internal/web/web.go internal/web/browser_test.go
