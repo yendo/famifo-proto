@@ -442,6 +442,114 @@ func TestGalleryOpensNoItem(t *testing.T) {
 	require.Contains(t, body, `data-open="-1"`)
 }
 
+// ?owner= で絞ると、件数・日ごとの並び・チャンクが選んだ人の分になる。
+func TestGalleryFiltersByOwner(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	f.addOwnedBy(t, "a1.jpg", 1000)
+	f.addOwnedBy(t, "a2.jpg", 1000)
+	f.addOwnedBy(t, "b1.jpg", 1001)
+	f.addOwnedBy(t, "c1.jpg", 1002)
+
+	body := doGet(t, f.h, "/?owner=1000&owner=1001").Body.String()
+
+	require.Contains(t, body, `data-total="3"`)
+	got := embeddedDayGroups(t, body)
+	require.Len(t, got, 1)
+	require.Equal(t, 3, got[0].Count)
+}
+
+func TestTilesFilterByOwner(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	a := f.addOwnedBy(t, "a.jpg", 1000)
+	f.addOwnedBy(t, "b.jpg", 1001)
+
+	got := getTiles(t, f.h, "/tiles?chunk=0&owner=1000")
+
+	require.Equal(t, []string{a.ID()}, tileIDs(got))
+}
+
+// タイルのリンク先は絞り込みを引き継ぐ。個別表示で前後に送っても、閉じても、
+// 選んだ人の写真の中に留まる。値は重複を落として小さい順に書くので、同じ条件の
+// 組は同じ URL になる。
+func TestTilesCarryTheFilterInThePageURL(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	a := f.addOwnedBy(t, "a.jpg", 1000)
+
+	got := getTiles(t, f.h, "/tiles?owner=1001&owner=1000&owner=1000")
+
+	require.Len(t, got, 1)
+	require.Equal(t, "/item/"+a.ID()+"?owner=1000&owner=1001", got[0].PageURL)
+}
+
+// クライアントがチャンクを取る URL と、個別表示を閉じて戻る URL はサーバーが
+// 絞り込み込みで埋める。JS に絞り込みのクエリを組み立てさせない。
+func TestGalleryShipsTheFilteredURLs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		target, tiles, home string
+	}{
+		{"/", `data-tiles="/tiles"`, `data-home="/"`},
+		{"/?owner=1000", `data-tiles="/tiles?owner=1000"`, `data-home="/?owner=1000"`},
+		{"/?owner=1001&owner=1000", `data-tiles="/tiles?owner=1000&amp;owner=1001"`, `data-home="/?owner=1000&amp;owner=1001"`},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			t.Parallel()
+			f := newWebFixture(t, 10)
+
+			body := doGet(t, f.h, tc.target).Body.String()
+
+			require.Contains(t, body, tc.tiles)
+			require.Contains(t, body, tc.home)
+		})
+	}
+}
+
+func TestItemOpensTheFilteredGalleryAtThatItem(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	a := f.addOwnedBy(t, "a.jpg", 1000)
+	f.addOwnedBy(t, "b.jpg", 1001)
+
+	rec := doGet(t, f.h, "/item/"+a.ID()+"?owner=1000")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(t, body, `data-open="0"`)
+	require.Contains(t, body, `data-total="1"`)
+}
+
+// 選んでいない人の写真は絞り込んだ一覧に無いので、その一覧へ送る。
+func TestItemOutsideTheFilterRedirectsToTheFilteredGallery(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	b := f.addOwnedBy(t, "b.jpg", 1001)
+
+	rec := doGet(t, f.h, "/item/"+b.ID()+"?owner=1000")
+
+	require.Equal(t, http.StatusFound, rec.Code)
+	require.Equal(t, "/?owner=1000", rec.Header().Get("Location"))
+}
+
+func TestFilterRejectsABadOwner(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addOwnedBy(t, "a.jpg", 1000)
+	for _, target := range []string{
+		"/?owner=abc",
+		"/?owner=1000&owner=-1",
+		"/?owner=4294967296", // uint32 に収まらない
+		"/tiles?owner=abc",
+		"/item/" + m.ID() + "?owner=abc",
+	} {
+		t.Run(target, func(t *testing.T) {
+			require.Equal(t, http.StatusBadRequest, doGet(t, f.h, target).Code)
+		})
+	}
+}
+
 func doGet(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()

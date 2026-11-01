@@ -143,25 +143,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // handleIndex はギャラリーのトップページを返す。
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
-	h.renderIndex(w, r, noOpenItem)
+	f, err := filterFrom(r)
+	if err != nil {
+		http.Error(w, "bad filter", http.StatusBadRequest)
+		return
+	}
+	h.renderIndex(w, r, f, noOpenItem)
 }
 
 // handleItem は写真ごとのURLを受け、その写真を開いた状態のギャラリーを返す。
 // 返すHTMLは / と同じで、違いは「どれを開くか」を表す通し番号だけである。
 //
-// 消えた写真のURLを共有されることは普通に起きる。404にすると行き止まりになるので、
-// ギャラリーへ送る。
+// 消えた写真や、絞り込みに当てはまらない写真のURLを共有されることは普通に起きる。
+// 404にすると行き止まりになるので、絞り込んだままのギャラリーへ送る。
 func (h *Handler) handleItem(w http.ResponseWriter, r *http.Request) {
-	rank, err := h.store.RankOf(r.Context(), store.Filter{}, r.PathValue("id"))
+	f, err := filterFrom(r)
+	if err != nil {
+		http.Error(w, "bad filter", http.StatusBadRequest)
+		return
+	}
+	rank, err := h.store.RankOf(r.Context(), f, r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		http.Redirect(w, r, "/", http.StatusFound)
+		http.Redirect(w, r, filterURL("/", f), http.StatusFound)
 		return
 	}
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	h.renderIndex(w, r, rank)
+	h.renderIndex(w, r, f, rank)
 }
 
 // handleTiles は仮想スクロール用に、1チャンク分の写真をJSONで返す。
@@ -175,7 +185,12 @@ func (h *Handler) handleTiles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad chunk", http.StatusBadRequest)
 		return
 	}
-	tiles, err := h.listMedia(r, chunk*h.chunkSize, h.chunkSize)
+	f, err := filterFrom(r)
+	if err != nil {
+		http.Error(w, "bad filter", http.StatusBadRequest)
+		return
+	}
+	tiles, err := h.listMedia(r, f, chunk*h.chunkSize, h.chunkSize)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -253,9 +268,10 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 // renderIndex はトップページのHTMLを w に書き込む。openIndex は開いた状態で
-// 表示する写真の通し番号で、noOpenItem なら閉じたまま開く。
-func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, openIndex int) {
-	view, err := h.buildIndexView(r, openIndex)
+// 表示する写真の通し番号で、noOpenItem なら閉じたまま開く。f は一覧の絞り込みで、
+// 件数・日ごとの並び・URL のすべてに掛ける。
+func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, f store.Filter, openIndex int) {
+	view, err := h.buildIndexView(r, f, openIndex)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
