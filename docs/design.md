@@ -126,9 +126,9 @@ grill-meによる設計インタビューで確定した方針をまとめる。
     docs/superpowers/specs/2026-10-14-photo-owner-design.md）
   - 一覧の絞り込みは URL のクエリ（`?owner=<uid>` を繰り返す）で持つ。チャンクの
     取得先（`data-tiles`）、個別表示を閉じて戻る先（`data-home`）、タイルの
-    `pageUrl`、絞り込みのパネルのリンクは、どれもサーバーが条件込みで作る。JS は
-    条件の組み立て方を知らない。パネルは PC で左のサイドバー、スマホで下から出る
-    シートになる（経緯は docs/superpowers/specs/2026-11-01-owner-filter-design.md）
+    `pageUrl` は、どれもサーバーが条件込みで作る。JS は条件の組み立て方を知らない。
+    条件を変えるときは、絞り込みのパネル（一覧への GET のフォーム）をブラウザが
+    送る。パネルは PC で左のサイドバー、スマホで下から出るシートになる（経緯は docs/superpowers/specs/2026-11-01-owner-filter-design.md）
   - タイル・日ごとのカード・日付ラベルは gallery.js が DOM API で組み立てる。
     HTMLの文字列を作らないので、エスケープが要らない
   - どの日が横に並ぶかは列数（画面幅）で決まり、サーバーはレイアウト済みの

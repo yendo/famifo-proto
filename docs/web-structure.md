@@ -35,7 +35,7 @@ routes (methods of Handler)                               web.go
 
 filter.go
   filterFrom (?owner= -> store.Filter), filterURL (store.Filter -> query),
-  toggleOwner, ownerChoices (store.Owners -> owner.Name)
+  ownerChoices (store.Owners -> owner.Name)
 ```
 
 ## View models and templates
@@ -46,7 +46,7 @@ indexView                          view.go
   +-- TilesURL, HomeURL (carry the filter)
   +-- DayGroups ([]dayGroup as JSON)
   +-- OpenIndex, AuthEnabled
-  +-- Filtered, Owners ([]ownerChoice), EveryOwner, EveryOwnerURL
+  +-- Filtered, Owners ([]ownerChoice)
 
 []mediaView (JSON from /tiles)     view.go
   {id, pageUrl, fullUrl, thumbUrl, infoUrl, date, isVideo}
@@ -66,7 +66,8 @@ index.html
         +-- gallery.js  --> chunk.js, datefmt.js, layout.js, idiomorph.esm.js
         +-- lightbox.js --> gallery.js, chunk.js, datefmt.js
         +-- scrubber.js --> gallery.js, chunk.js, layout.js
-        +-- filters.js  (opens #filters as a sheet on narrow screens)
+        +-- filters.js  (submits the #filters form on change;
+                         opens it as a sheet on narrow screens)
 
 chunk.js --> fetch data-tiles + chunk
 lightbox.js --> fetch /info/{id}; closes to data-home
