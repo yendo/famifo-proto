@@ -6,7 +6,9 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 
+	"github.com/yendo/famifo-proto/internal/owner"
 	"github.com/yendo/famifo-proto/internal/store"
 )
 
@@ -41,4 +43,49 @@ func filterURL(path string, f store.Filter) string {
 		q.Add("owner", strconv.FormatUint(uint64(uid), 10))
 	}
 	return path + "?" + q.Encode()
+}
+
+// ownerChoice はパネルの撮影者の節の1項目。
+type ownerChoice struct {
+	Name     string
+	URL      string // この人を条件に入れた（選んでいれば外した）一覧の URL
+	Selected bool
+}
+
+// ownerChoices は撮影者の節の項目を名前順に返す。写真のある uid のうち、名前の
+// 引ける人だけを並べる。名前の無い人の写真は「全員」でだけ見える。
+func (h *Handler) ownerChoices(r *http.Request, f store.Filter) ([]ownerChoice, error) {
+	uids, err := h.store.Owners(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	var out []ownerChoice
+	for _, uid := range uids {
+		name := owner.Name(uid)
+		if name == "" {
+			continue
+		}
+		_, selected := slices.BinarySearch(f.Owners, uid)
+		out = append(out, ownerChoice{
+			Name:     name,
+			URL:      filterURL("/", toggleOwner(f, uid)),
+			Selected: selected,
+		})
+	}
+	// 同じ名前の人がいても順が揺れないよう、uid の順を保ったまま並べ替える。
+	slices.SortStableFunc(out, func(a, b ownerChoice) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
+// toggleOwner は f の撮影者の条件で uid を入れ替えたものを返す。選んでいれば外し、
+// 選んでいなければ入れる。並びは小さい順のまま保つ。f は変えない。
+func toggleOwner(f store.Filter, uid uint32) store.Filter {
+	owners := slices.Clone(f.Owners)
+	if i, found := slices.BinarySearch(owners, uid); found {
+		owners = slices.Delete(owners, i, i+1)
+	} else {
+		owners = slices.Insert(owners, i, uid)
+	}
+	f.Owners = owners
+	return f
 }

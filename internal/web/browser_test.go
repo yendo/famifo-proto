@@ -47,6 +47,7 @@ import (
 
 	"github.com/yendo/famifo-proto/internal/index"
 	"github.com/yendo/famifo-proto/internal/media"
+	"github.com/yendo/famifo-proto/internal/owner"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
@@ -588,8 +589,10 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 		};
 	})()`
 
+	// 高さは、1チャンクで埋まらないように選ぶ。広い画面では絞り込みのサイドバーが
+	// 出て列が減り、1行に並ぶ枚数も減る。2000 では1チャンクで埋まった（実測）。
 	err := chromedp.Run(rctx,
-		chromedp.EmulateViewport(1600, 2000),
+		chromedp.EmulateViewport(1600, 2600),
 		chromedp.Navigate(baseURL),
 		waitForGallery(10*time.Second),
 	)
@@ -1803,9 +1806,12 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 
-	// testDayCounts[0] は20枚。1600px(7列)では行を占有する。
+	// testDayCounts[0] は20枚。1600px ではどの列数でも行を占有する。列数は
+	// 決め打ちせず、レイアウトが使った値と比べる。広い画面では絞り込みの
+	// サイドバーが出て、一覧の幅はその分だけ狭い。
 	var res struct {
 		Span  int    `json:"span"`
+		Cols  int    `json:"cols"`
 		Label string `json:"label"`
 		Full  bool   `json:"full"`
 	}
@@ -1819,6 +1825,7 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 			const win = document.querySelector('#window');
 			return {
 				span: L.cards[0].span,
+				cols: L.cols,
 				label: card.querySelector('.daylabel').textContent,
 				full: Math.abs(card.getBoundingClientRect().width
 				               - win.getBoundingClientRect().width) < 1,
@@ -1827,7 +1834,7 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	require.Equal(t, 7, res.Span, "1600px is 7 columns, and a day of 20 items takes all of them")
+	require.Equal(t, res.Cols, res.Span, "a day of 20 items takes all the columns")
 	require.True(t, res.Full, "a day that takes the row spans the full width of the grid")
 
 	// ラベルはタイルの日付から作る。テスト写真の先頭の日と一致すること。
@@ -2684,6 +2691,118 @@ func TestClosingADirectlyOpenedItemKeepsTheFilter(t *testing.T) {
 	)
 	require.NoError(t, err, "the back button did not close the lightbox")
 	require.Equal(t, "/?owner=1000", here)
+}
+
+// filterPanelJS はパネルとボタンが表示されているかを読む。
+const filterPanelJS = `(() => {
+	const shown = (el) => !!el && getComputedStyle(el).display !== 'none';
+	const btn = document.querySelector('.filter-toggle');
+	return {
+		panel: shown(document.querySelector('#filters')),
+		toggle: shown(btn),
+		active: !!btn && btn.classList.contains('active'),
+	};
+})()`
+
+type filterPanelState struct {
+	Panel  bool `json:"panel"`
+	Toggle bool `json:"toggle"`
+	Active bool `json:"active"`
+}
+
+// ownerHrefJS は撮影者の節で name の項目のリンク先を読む JS 式を返す。項目は
+// ただのリンクなので、押した後の動きはブラウザに任せてよい。テストは押す代わりに
+// このリンク先を Navigate で開く。JS で押して読み直しを Poll で待つと、古い
+// 実行コンテキストで評価して落ちることがある。
+func ownerHrefJS(name string) string {
+	return fmt.Sprintf(`[...document.querySelectorAll('#filters a')].find(a => a.textContent === %s).getAttribute('href')`,
+		strconv.Quote(name))
+}
+
+// 広い画面ではパネルが左に常に出ていて、ボタンは出ない。項目を押すとその人の
+// 写真だけの一覧になる。
+func TestFilterSidebarOnWideScreens(t *testing.T) {
+	requireBrowser(t)
+	me, root := twoNamedOwners(t)
+
+	url, _ := startLightboxServer(t,
+		lightboxItem{"mine1.jpg", me, time.Unix(1600000300, 0)},
+		lightboxItem{"roots.jpg", root, time.Unix(1600000200, 0)},
+		lightboxItem{"mine2.jpg", me, time.Unix(1600000100, 0)},
+	)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var before, after filterPanelState
+	var href string
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1400, 900),
+		chromedp.Navigate(url),
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(filterPanelJS, &before),
+		chromedp.Evaluate(ownerHrefJS(owner.Name(root)), &href),
+	)
+	require.NoError(t, err)
+	require.True(t, before.Panel, "the sidebar is always shown on wide screens")
+	require.False(t, before.Toggle, "the toggle is only for narrow screens")
+	require.Equal(t, "/?owner=0", href)
+
+	var tiles int
+	err = chromedp.Run(rctx,
+		chromedp.Navigate(url+href),
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(`document.querySelectorAll('#window .tile').length`, &tiles),
+		chromedp.Evaluate(filterPanelJS, &after),
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, tiles, "only the photo of root is listed")
+	require.True(t, after.Panel)
+}
+
+// 狭い画面ではパネルは隠れていて、ボタンで開く。項目を押すとその人の一覧になり、
+// 絞り込み中はボタンが目立つ色になる。
+func TestFilterSheetOnNarrowScreens(t *testing.T) {
+	requireBrowser(t)
+	me, root := twoNamedOwners(t)
+
+	url, _ := startLightboxServer(t,
+		lightboxItem{"mine.jpg", me, time.Unix(1600000200, 0)},
+		lightboxItem{"roots.jpg", root, time.Unix(1600000100, 0)},
+	)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var closed, opened, filtered filterPanelState
+	var href string
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(400, 800),
+		chromedp.Navigate(url),
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(filterPanelJS, &closed),
+		chromedp.Click(`.filter-toggle`, chromedp.NodeVisible),
+		chromedp.Evaluate(filterPanelJS, &opened),
+		chromedp.Evaluate(ownerHrefJS(owner.Name(me)), &href),
+	)
+	require.NoError(t, err)
+	require.False(t, closed.Panel, "the sheet starts closed")
+	require.True(t, closed.Toggle)
+	require.False(t, closed.Active, "nothing is filtered yet")
+	require.True(t, opened.Panel, "the toggle opens the sheet")
+	require.Equal(t, "/?owner="+fmt.Sprint(me), href)
+
+	var tiles int
+	err = chromedp.Run(rctx,
+		chromedp.Navigate(url+href),
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(`document.querySelectorAll('#window .tile').length`, &tiles),
+		chromedp.Evaluate(filterPanelJS, &filtered),
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, tiles)
+	require.False(t, filtered.Panel, "the new page starts with the sheet closed")
+	require.True(t, filtered.Active, "the toggle shows that a filter is on")
 }
 
 // マウスで操作する端末では前後のボタンが見えていて、押すと送れること。

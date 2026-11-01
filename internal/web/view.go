@@ -21,6 +21,14 @@ type indexView struct {
 	DayGroups []dayGroup
 	// OpenIndex は開いた状態で表示する1件の通し番号。noOpenItem なら閉じたまま。
 	OpenIndex int
+	// Filtered は条件が1つでも掛かっているか。狭い画面の絞り込みボタンの色に使う。
+	Filtered bool
+	// Owners はパネルの撮影者の節の項目。名前順。空なら節もパネルも出さない。
+	Owners []ownerChoice
+	// EveryOwner は撮影者で絞っていないか。「全員」に印を付ける。
+	EveryOwner bool
+	// EveryOwnerURL は「全員」の URL。撮影者の条件だけを空にした一覧である。
+	EveryOwnerURL string
 	// AuthEnabled は認証が有効かどうか。無効ならログアウトのボタンを出さない。
 	AuthEnabled bool
 }
@@ -65,11 +73,19 @@ func (h *Handler) buildIndexView(r *http.Request, f store.Filter, openIndex int)
 	for _, d := range days {
 		dayGroups = append(dayGroups, dayGroup{Date: d.Date, Count: d.Count})
 	}
+	owners, err := h.ownerChoices(r, f)
+	if err != nil {
+		return indexView{}, err
+	}
+	everyOwner := f
+	everyOwner.Owners = nil
 
 	return indexView{
 		Total: total, ChunkSize: h.chunkSize,
 		TilesURL: filterURL("/tiles", f), HomeURL: filterURL("/", f),
 		DayGroups: dayGroups, OpenIndex: openIndex,
+		Filtered: len(f.Owners) > 0,
+		Owners:   owners, EveryOwner: len(f.Owners) == 0, EveryOwnerURL: filterURL("/", everyOwner),
 		AuthEnabled: h.auth != nil,
 	}, nil
 }
