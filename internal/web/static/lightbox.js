@@ -18,6 +18,10 @@ import { gallery } from "./gallery.js";
 (() => {
 	/** @type {HTMLElement | null} */
 	const box = document.querySelector("#lightbox");
+	/** @type {HTMLElement | null} */
+	const root = document.querySelector("#gallery");
+	// 閉じたときに戻る一覧の URL。サーバーが絞り込み込みで埋める。
+	const home = root?.dataset.home ?? "/";
 	if (!box || !gallery || !chunks) return;
 
 	const img = box.querySelector("img");
@@ -273,13 +277,13 @@ import { gallery } from "./gallery.js";
 
 	// requestClose は「閉じたい」という要求。積んだエントリがあるなら1つ戻り、
 	// popstate に閉じさせる。戻る先が無い（写真のURLを直接開いた）ときだけ、
-	// URLをギャラリーに直してから自分で閉じる。
+	// URLを絞り込んだままのギャラリーに直してから自分で閉じる。
 	function requestClose() {
 		if (pushed) {
 			history.back();
 			return;
 		}
-		history.replaceState(null, "", "/");
+		history.replaceState(null, "", home);
 		close();
 	}
 

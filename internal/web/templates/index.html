@@ -26,14 +26,37 @@
     <button type="submit">Log out</button>
   </form>
   {{end}}
+  {{/* 狭い画面でだけ出る。押すと #filters をシートとして開け閉めする
+       （filters.js）。条件が掛かっている間は active で目立たせる。
+       文字は出さず漏斗のアイコンにし、名前は aria-label で持つ。 */}}
+  {{if .Owners}}
+  <button class="filter-toggle{{if .Filtered}} active{{end}}" type="button" aria-label="絞り込み" aria-controls="filters" aria-expanded="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 4h18l-7 8.5V19l-4 2v-8.5z"/></svg>
+  </button>
+  {{end}}
 </header>
 
-<main id="gallery" class="gallery" data-total="{{.Total}}" data-chunk="{{.ChunkSize}}" data-open="{{.OpenIndex}}">
+<div class="page">
+  {{/* 絞り込みのパネル。広い画面では左のサイドバー、狭い画面では下から出る
+       シートになる（app.css）。一覧への GET のフォームで、チェックを変えると
+       filters.js が送り、ページごと読み直す。節は条件ごとに並べ、どの節の
+       チェックも同じフォームで一緒に送られる。何もチェックしなければ絞らない。 */}}
+  {{if .Owners}}
+  <form id="filters" class="filters" method="get" action="/" aria-label="絞り込み">
+    <fieldset class="filter-section">
+      <legend>撮影者</legend>
+      {{range .Owners}}<label><span>{{.Name}}</span><input type="checkbox" name="owner" value="{{.UID}}"{{if .Selected}} checked{{end}}></label>
+      {{end}}
+    </fieldset>
+  </form>
+  {{end}}
+<main id="gallery" class="gallery" data-total="{{.Total}}" data-chunk="{{.ChunkSize}}" data-tiles="{{.TilesURL}}" data-home="{{.HomeURL}}" data-open="{{.OpenIndex}}">
   <div id="spacer">
     <div id="window"></div>
     <div id="layoutprobe" aria-hidden="true"></div>
   </div>
 </main>
+</div>
 <script type="application/json" id="daygroups">{{.DayGroups}}</script>
 
 <div id="scrubber" class="scrubber" hidden>

@@ -57,17 +57,16 @@ body.locked {
 	font-size: 1rem;
 	letter-spacing: 0.08em;
 }
+/* .topbar は flex row。枚数表示の右に余白を全部取り、ログアウトと絞り込み
+   ボタンを右端へ押し出す。どちらが出ていなくても右寄せが崩れない。 */
 .count {
 	font-size: 0.8rem;
 	opacity: 0.6;
+	margin-right: auto;
 }
 
-/* .topbar は flex row。margin-left: auto でログアウトを右端に押し出す。
-   指定しないとブラウザ既定の淡色ボタンが暗い上部バーの上で枚数表示に
+/* 指定しないとブラウザ既定の淡色ボタンが暗い上部バーの上で枚数表示に
    ぶつかって浮く。 */
-.logout {
-	margin-left: auto;
-}
 .logout button {
 	border: 1px solid rgba(255, 255, 255, 0.3);
 	border-radius: 4px;
@@ -78,8 +77,116 @@ body.locked {
 	padding: 4px 10px;
 	cursor: pointer;
 }
-.logout button:hover {
+.logout button:hover,
+.filter-toggle:hover {
 	background: rgba(255, 255, 255, 0.1);
+}
+
+/* 絞り込みボタン。漏斗のアイコンだけの丸いボタンで、個別表示の丸いボタンに
+   そろえる。上部バーは文字のベースラインで揃えているので、これだけ中央に置く。 */
+.filter-toggle {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	align-self: center;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 1px solid rgba(255, 255, 255, 0.3);
+	border-radius: 50%;
+	background: transparent;
+	color: var(--fg);
+	cursor: pointer;
+}
+.filter-toggle svg {
+	width: 16px;
+	height: 16px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linejoin: round;
+}
+/* 条件が掛かっている間は反転させる。何が掛かっているかはシートを開けば分かる。 */
+.filter-toggle.active {
+	border-color: var(--fg);
+	background: var(--fg);
+	color: var(--bg);
+}
+
+/* 絞り込みのパネル。狭い画面では画面の下に固定したシートで、普段は隠す。
+   z-index はスクラバー(6)より上、個別表示(10)より下。 */
+.filters {
+	display: none;
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 7;
+	max-height: 60vh;
+	overflow-y: auto;
+	padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+	background: #222;
+	border-radius: 12px 12px 0 0;
+	box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.5);
+}
+.filters.open {
+	display: block;
+}
+/* 見出しと項目は同じ大きさにし、見出しは太字で分ける。チェックボックスは
+   右端に寄せ、チェックを変えても名前の位置が動かないようにする。 */
+.filter-section {
+	margin: 0 0 12px;
+	padding: 0;
+	border: 0;
+	font-size: 0.9rem;
+}
+.filter-section legend {
+	padding: 0;
+	margin-bottom: 4px;
+	font-weight: bold;
+}
+.filter-section label {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 8px 0;
+	cursor: pointer;
+}
+.filter-section input {
+	flex: none;
+	margin: 0;
+	width: 1.1em;
+	height: 1.1em;
+	cursor: pointer;
+}
+/* 広い画面ではパネルを左のサイドバーとして常に出す。トップバーの下に
+   貼り付けて、一覧をスクロールしても残す。一覧は残りの幅に収まり、列数は
+   gallery.js が #layoutprobe から測り直す。境目はタイルの列幅を変える
+   境目と同じ。 */
+@media (min-width: 1100px) {
+	.page {
+		display: flex;
+		align-items: flex-start;
+	}
+	.page > .gallery {
+		flex: 1;
+		min-width: 0;
+	}
+	.filters {
+		display: block;
+		position: sticky;
+		top: var(--topbar-h);
+		flex: none;
+		width: 200px;
+		max-height: calc(100vh - var(--topbar-h));
+		background: transparent;
+		border-radius: 0;
+		box-shadow: none;
+	}
+	.filter-toggle {
+		display: none;
+	}
 }
 
 /* スクロール領域。高さは #spacer が決める */

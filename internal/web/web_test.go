@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"html/template"
 	"image"
 	"image/jpeg"
 	"io"
@@ -440,6 +441,210 @@ func TestGalleryOpensNoItem(t *testing.T) {
 	body := doGet(t, f.h, "/").Body.String()
 
 	require.Contains(t, body, `data-open="-1"`)
+}
+
+// ?owner= で絞ると、件数・日ごとの並び・チャンクが選んだ人の分になる。
+func TestGalleryFiltersByOwner(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	f.addOwnedBy(t, "a1.jpg", 1000)
+	f.addOwnedBy(t, "a2.jpg", 1000)
+	f.addOwnedBy(t, "b1.jpg", 1001)
+	f.addOwnedBy(t, "c1.jpg", 1002)
+
+	body := doGet(t, f.h, "/?owner=1000&owner=1001").Body.String()
+
+	require.Contains(t, body, `data-total="3"`)
+	got := embeddedDayGroups(t, body)
+	require.Len(t, got, 1)
+	require.Equal(t, 3, got[0].Count)
+}
+
+func TestTilesFilterByOwner(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	a := f.addOwnedBy(t, "a.jpg", 1000)
+	f.addOwnedBy(t, "b.jpg", 1001)
+
+	got := getTiles(t, f.h, "/tiles?chunk=0&owner=1000")
+
+	require.Equal(t, []string{a.ID()}, tileIDs(got))
+}
+
+// タイルのリンク先は絞り込みを引き継ぐ。個別表示で前後に送っても、閉じても、
+// 選んだ人の写真の中に留まる。値は重複を落として小さい順に書くので、同じ条件の
+// 組は同じ URL になる。
+func TestTilesCarryTheFilterInThePageURL(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	a := f.addOwnedBy(t, "a.jpg", 1000)
+
+	got := getTiles(t, f.h, "/tiles?owner=1001&owner=1000&owner=1000")
+
+	require.Len(t, got, 1)
+	require.Equal(t, "/item/"+a.ID()+"?owner=1000&owner=1001", got[0].PageURL)
+}
+
+// クライアントがチャンクを取る URL と、個別表示を閉じて戻る URL はサーバーが
+// 絞り込み込みで埋める。JS に絞り込みのクエリを組み立てさせない。
+func TestGalleryShipsTheFilteredURLs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		target, tiles, home string
+	}{
+		{"/", `data-tiles="/tiles"`, `data-home="/"`},
+		{"/?owner=1000", `data-tiles="/tiles?owner=1000"`, `data-home="/?owner=1000"`},
+		{"/?owner=1001&owner=1000", `data-tiles="/tiles?owner=1000&amp;owner=1001"`, `data-home="/?owner=1000&amp;owner=1001"`},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			t.Parallel()
+			f := newWebFixture(t, 10)
+
+			body := doGet(t, f.h, tc.target).Body.String()
+
+			require.Contains(t, body, tc.tiles)
+			require.Contains(t, body, tc.home)
+		})
+	}
+}
+
+func TestItemOpensTheFilteredGalleryAtThatItem(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	a := f.addOwnedBy(t, "a.jpg", 1000)
+	f.addOwnedBy(t, "b.jpg", 1001)
+
+	rec := doGet(t, f.h, "/item/"+a.ID()+"?owner=1000")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(t, body, `data-open="0"`)
+	require.Contains(t, body, `data-total="1"`)
+}
+
+// 選んでいない人の写真は絞り込んだ一覧に無いので、その一覧へ送る。
+func TestItemOutsideTheFilterRedirectsToTheFilteredGallery(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	b := f.addOwnedBy(t, "b.jpg", 1001)
+
+	rec := doGet(t, f.h, "/item/"+b.ID()+"?owner=1000")
+
+	require.Equal(t, http.StatusFound, rec.Code)
+	require.Equal(t, "/?owner=1000", rec.Header().Get("Location"))
+}
+
+func TestFilterRejectsABadOwner(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addOwnedBy(t, "a.jpg", 1000)
+	for _, target := range []string{
+		"/?owner=abc",
+		"/?owner=1000&owner=-1",
+		"/?owner=4294967296", // uint32 に収まらない
+		"/tiles?owner=abc",
+		"/item/" + m.ID() + "?owner=abc",
+	} {
+		t.Run(target, func(t *testing.T) {
+			require.Equal(t, http.StatusBadRequest, doGet(t, f.h, target).Code)
+		})
+	}
+}
+
+// ownerCheckbox はパネルの撮影者の項目のチェックボックス。テンプレートと同じ形で書く。
+func ownerCheckbox(uid uint32, checked bool) string {
+	attr := ""
+	if checked {
+		attr = " checked"
+	}
+	return fmt.Sprintf(`<input type="checkbox" name="owner" value="%d"%s>`, uid, attr)
+}
+
+// パネルは一覧への GET のフォームで、撮影者の節には名前の引ける人だけが名前順に
+// チェックボックスで並ぶ。選んでいる人にチェックが付く。何も選ばなければ全員なので、
+// 「全員」の項目は無い。
+func TestPanelListsTheNamedOwners(t *testing.T) {
+	t.Parallel()
+	me, root := twoNamedOwners(t)
+	f := newWebFixture(t, 10)
+	f.addOwnedBy(t, "mine.jpg", me)
+	f.addOwnedBy(t, "roots.jpg", root)
+	f.addOwnedBy(t, "nobodys.jpg", 65534)
+
+	body := doGet(t, f.h, "/?owner="+fmt.Sprint(me)).Body.String()
+
+	require.Contains(t, body, `<form id="filters" class="filters" method="get" action="/"`)
+	mine := ownerCheckbox(me, true)
+	roots := ownerCheckbox(root, false)
+	require.Contains(t, body, mine)
+	require.Contains(t, body, roots)
+	require.Contains(t, body, template.HTMLEscapeString(owner.Name(me)))
+	require.Contains(t, body, template.HTMLEscapeString(owner.Name(root)))
+	first, second := mine, roots
+	if owner.Name(root) < owner.Name(me) {
+		first, second = roots, mine
+	}
+	require.Less(t, strings.Index(body, first), strings.Index(body, second), "ordered by name")
+	require.Equal(t, 2, strings.Count(body, `name="owner"`), "the two named owners; nobody is not listed")
+	require.NotContains(t, body, "全員")
+}
+
+// 誰も選んでいなければ、どのチェックボックスにもチェックが付かない。
+func TestPanelChecksNoOneWithoutAFilter(t *testing.T) {
+	t.Parallel()
+	me, _ := twoNamedOwners(t)
+	f := newWebFixture(t, 10)
+	f.addOwnedBy(t, "mine.jpg", me)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.Contains(t, body, ownerCheckbox(me, false))
+	require.NotContains(t, body, ` checked>`)
+	require.NotContains(t, body, `filter-toggle active`)
+}
+
+// 条件が掛かっていれば絞り込みボタンが目立つ色になる。
+func TestPanelToggleShowsTheFilterIsOn(t *testing.T) {
+	t.Parallel()
+	me, _ := twoNamedOwners(t)
+	f := newWebFixture(t, 10)
+	f.addOwnedBy(t, "mine.jpg", me)
+
+	body := doGet(t, f.h, "/?owner="+fmt.Sprint(me)).Body.String()
+
+	require.Contains(t, body, `filter-toggle active`)
+}
+
+// 絞り込みボタンは文字ではなくアイコンで、名前は読み上げ用の aria-label で持つ。
+func TestPanelToggleIsAnIconWithALabel(t *testing.T) {
+	t.Parallel()
+	me, _ := twoNamedOwners(t)
+	f := newWebFixture(t, 10)
+	f.addOwnedBy(t, "mine.jpg", me)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	i := strings.Index(body, `<button class="filter-toggle"`)
+	require.GreaterOrEqual(t, i, 0, "the toggle is not rendered")
+	j := strings.Index(body[i:], `</button>`)
+	require.GreaterOrEqual(t, j, 0, "the toggle is not closed")
+	button := body[i : i+j]
+	require.Contains(t, button, `aria-label="絞り込み"`)
+	require.Contains(t, button, `<svg`)
+	require.NotContains(t, button, `>絞り込み`, "the toggle shows no text")
+}
+
+// 名前の引ける撮影者が1人もいなければ（/etc/passwd をマウントしていないなど）、
+// 節が無いのでパネルもボタンも出さない。
+func TestPanelIsAbsentWithoutNamedOwners(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	f.addOwnedBy(t, "nobodys.jpg", 65534)
+
+	body := doGet(t, f.h, "/").Body.String()
+
+	require.NotContains(t, body, `id="filters"`)
+	require.NotContains(t, body, `filter-toggle`)
 }
 
 func doGet(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {

@@ -372,7 +372,7 @@ func indexAll(st *store.Store, mediaDir string, thumbs *thumb.Provider, want int
 
 	deadline := time.Now().Add(indexAllTimeout)
 	for {
-		n, err := st.Count(context.Background())
+		n, err := st.Count(context.Background(), store.Filter{})
 		if err != nil {
 			return err
 		}
@@ -588,8 +588,10 @@ func TestInitialRenderFillsViewport(t *testing.T) {
 		};
 	})()`
 
+	// 高さは、1チャンクで埋まらないように選ぶ。広い画面では絞り込みのサイドバーが
+	// 出て列が減り、1行に並ぶ枚数も減る。2000 では1チャンクで埋まった（実測）。
 	err := chromedp.Run(rctx,
-		chromedp.EmulateViewport(1600, 2000),
+		chromedp.EmulateViewport(1600, 2600),
 		chromedp.Navigate(baseURL),
 		waitForGallery(10*time.Second),
 	)
@@ -1803,9 +1805,12 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 	requireBrowser(t)
 	ctx := newTab(t)
 
-	// testDayCounts[0] は20枚。1600px(7列)では行を占有する。
+	// testDayCounts[0] は20枚。1600px ではどの列数でも行を占有する。列数は
+	// 決め打ちせず、レイアウトが使った値と比べる。広い画面では絞り込みの
+	// サイドバーが出て、一覧の幅はその分だけ狭い。
 	var res struct {
 		Span  int    `json:"span"`
+		Cols  int    `json:"cols"`
 		Label string `json:"label"`
 		Full  bool   `json:"full"`
 	}
@@ -1819,6 +1824,7 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 			const win = document.querySelector('#window');
 			return {
 				span: L.cards[0].span,
+				cols: L.cols,
 				label: card.querySelector('.daylabel').textContent,
 				full: Math.abs(card.getBoundingClientRect().width
 				               - win.getBoundingClientRect().width) < 1,
@@ -1827,7 +1833,7 @@ func TestBigDayTakesWholeRowsAndIsLabelled(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	require.Equal(t, 7, res.Span, "1600px is 7 columns, and a day of 20 items takes all of them")
+	require.Equal(t, res.Cols, res.Span, "a day of 20 items takes all the columns")
 	require.True(t, res.Full, "a day that takes the row spans the full width of the grid")
 
 	// ラベルはタイルの日付から作る。テスト写真の先頭の日と一致すること。
@@ -2619,6 +2625,187 @@ func TestLightboxBackButtonCloses(t *testing.T) {
 	)
 	require.NoError(t, err, "the back button did not close the lightbox")
 	require.Equal(t, "/", path)
+}
+
+// 絞り込んだ一覧のチャンクと送り先は、選んだ人の写真だけである。新しい順に
+// a1(1000), b1(1001), a2(1000) と並べる。1000 で絞ると a1 の次は a2 になる。
+func TestLightboxStaysInsideTheFilter(t *testing.T) {
+	requireBrowser(t)
+
+	url, ids := startLightboxServer(t,
+		lightboxItem{"a1.jpg", 1000, time.Unix(1600000200, 0)},
+		lightboxItem{"b1.jpg", 1001, time.Unix(1600000100, 0)},
+		lightboxItem{"a2.jpg", 1000, time.Unix(1600000000, 0)},
+	)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var tiles int
+	var src string
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(url+"/?owner=1000"),
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(`document.querySelectorAll('#window .tile').length`, &tiles),
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.KeyEvent(kb.ArrowRight),
+		chromedp.Poll(fmt.Sprintf(`location.pathname === %s`, strconv.Quote("/item/"+ids[2])), nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(`document.querySelector('#lightbox img').getAttribute('src')`, &src),
+	)
+	require.NoError(t, err, "the lightbox did not move to the next photo of the owner")
+	require.Equal(t, 2, tiles, "the gallery shows only the photos of the owner")
+	require.Equal(t, "/full/"+ids[2], src)
+
+	var search string
+	err = chromedp.Run(rctx, chromedp.Evaluate(`location.search`, &search))
+	require.NoError(t, err)
+	require.Equal(t, "?owner=1000", search, "the item URL keeps the filter")
+}
+
+// 写真の URL を直接開いたときは戻る先の履歴が無いので、閉じると URL を一覧に
+// 書き直す。そのとき絞り込みを落とさない。
+func TestClosingADirectlyOpenedItemKeepsTheFilter(t *testing.T) {
+	requireBrowser(t)
+
+	url, ids := startLightboxServer(t,
+		lightboxItem{"a1.jpg", 1000, time.Unix(1600000200, 0)},
+		lightboxItem{"b1.jpg", 1001, time.Unix(1600000100, 0)},
+	)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var here string
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(url+"/item/"+ids[0]+"?owner=1000"),
+		waitForGallery(10*time.Second),
+		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Click(`#lightbox .lb-back`, chromedp.NodeVisible),
+		chromedp.Poll(`document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(`location.pathname + location.search`, &here),
+	)
+	require.NoError(t, err, "the back button did not close the lightbox")
+	require.Equal(t, "/?owner=1000", here)
+}
+
+// filterPanelJS はパネルとボタンが表示されているかを読む。
+const filterPanelJS = `(() => {
+	const shown = (el) => !!el && getComputedStyle(el).display !== 'none';
+	const btn = document.querySelector('.filter-toggle');
+	return {
+		panel: shown(document.querySelector('#filters')),
+		toggle: shown(btn),
+		active: !!btn && btn.classList.contains('active'),
+	};
+})()`
+
+type filterPanelState struct {
+	Panel  bool `json:"panel"`
+	Toggle bool `json:"toggle"`
+	Active bool `json:"active"`
+}
+
+// ownerBox は撮影者の節で uid のチェックボックスを指すセレクタ。
+func ownerBox(uid uint32) string {
+	return fmt.Sprintf(`#filters input[name="owner"][value="%d"]`, uid)
+}
+
+// 広い画面ではパネルが左に常に出ていて、ボタンは出ない。チェックを入れると
+// その人の写真だけの一覧になる。
+func TestFilterSidebarOnWideScreens(t *testing.T) {
+	requireBrowser(t)
+	me, root := twoNamedOwners(t)
+
+	url, _ := startLightboxServer(t,
+		lightboxItem{"mine1.jpg", me, time.Unix(1600000300, 0)},
+		lightboxItem{"roots.jpg", root, time.Unix(1600000200, 0)},
+		lightboxItem{"mine2.jpg", me, time.Unix(1600000100, 0)},
+	)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var before, after filterPanelState
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1400, 900),
+		chromedp.Navigate(url),
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(filterPanelJS, &before),
+	)
+	require.NoError(t, err)
+	require.True(t, before.Panel, "the sidebar is always shown on wide screens")
+	require.False(t, before.Toggle, "the toggle is only for narrow screens")
+
+	// チェックを入れるとフォームが送られ、ページごと読み直す。
+	_, err = chromedp.RunResponse(rctx, chromedp.Click(ownerBox(root), chromedp.NodeVisible))
+	require.NoError(t, err)
+
+	var search string
+	var tiles int
+	var checked bool
+	err = chromedp.Run(rctx,
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(`location.search`, &search),
+		chromedp.Evaluate(`document.querySelectorAll('#window .tile').length`, &tiles),
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%s).checked`, strconv.Quote(ownerBox(root))), &checked),
+		chromedp.Evaluate(filterPanelJS, &after),
+	)
+	require.NoError(t, err)
+	require.Equal(t, "?owner=0", search)
+	require.Equal(t, 1, tiles, "only the photo of root is listed")
+	require.True(t, checked, "the new page keeps the check")
+	require.True(t, after.Panel)
+}
+
+// 狭い画面ではパネルは隠れていて、ボタンで開く。チェックを入れるとその人の
+// 一覧になり、絞り込み中はボタンが目立つ色になる。
+func TestFilterSheetOnNarrowScreens(t *testing.T) {
+	requireBrowser(t)
+	me, root := twoNamedOwners(t)
+
+	url, _ := startLightboxServer(t,
+		lightboxItem{"mine.jpg", me, time.Unix(1600000200, 0)},
+		lightboxItem{"roots.jpg", root, time.Unix(1600000100, 0)},
+	)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var closed, opened, filtered filterPanelState
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(400, 800),
+		chromedp.Navigate(url),
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(filterPanelJS, &closed),
+		chromedp.Click(`.filter-toggle`, chromedp.NodeVisible),
+		chromedp.Evaluate(filterPanelJS, &opened),
+	)
+	require.NoError(t, err)
+	require.False(t, closed.Panel, "the sheet starts closed")
+	require.True(t, closed.Toggle)
+	require.False(t, closed.Active, "nothing is filtered yet")
+	require.True(t, opened.Panel, "the toggle opens the sheet")
+
+	_, err = chromedp.RunResponse(rctx, chromedp.Click(ownerBox(me), chromedp.NodeVisible))
+	require.NoError(t, err)
+
+	var search string
+	var tiles int
+	err = chromedp.Run(rctx,
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(`location.search`, &search),
+		chromedp.Evaluate(`document.querySelectorAll('#window .tile').length`, &tiles),
+		chromedp.Evaluate(filterPanelJS, &filtered),
+	)
+	require.NoError(t, err)
+	require.Equal(t, "?owner="+fmt.Sprint(me), search)
+	require.Equal(t, 1, tiles)
+	require.False(t, filtered.Panel, "the new page starts with the sheet closed")
+	require.True(t, filtered.Active, "the toggle shows that a filter is on")
 }
 
 // マウスで操作する端末では前後のボタンが見えていて、押すと送れること。
