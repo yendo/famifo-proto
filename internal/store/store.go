@@ -25,6 +25,9 @@ var ErrNotFound = errors.New("media not found")
 // 呼び出し側は構造体リテラルで一度に組み立てる。条件は URL に書かれた組をまとめて
 // 掛けるもので、1つずつ積んでいくものではない。
 type Filter struct {
+	// Kinds は種類。どれかの種類に絞る。空なら種類で絞らない。
+	Kinds []media.Kind
+
 	// Owners は持ち主の uid。どれかが持ち主の写真に絞る。空なら持ち主で絞らない。
 	// 「指定なし」を空で表すので、uid 0（root）と取り違えない。
 	Owners []uint32
@@ -40,7 +43,8 @@ CREATE TABLE IF NOT EXISTS media (
     owner_uid      INTEGER NOT NULL,
     taken_at_local TEXT NOT NULL,
     mod_time       INTEGER NOT NULL,
-    day            TEXT NOT NULL
+    day            TEXT NOT NULL,
+    kind           TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_media_order ON media(taken_at_local DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_media_day ON media(day);
@@ -80,10 +84,11 @@ func Open(dbPath string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-// probeReadable はアプリが読む列をひと通り選んで、DBが実際に読めることを
-// 確かめる。行の有無は問わないので LIMIT 1 で足り、値も取り出さない。
+// probeReadable はアプリが使う列をひと通り選んで、DBが実際に読めることを
+// 確かめる。行の有無は問わないので LIMIT 1 で足り、値も取り出さない。day と kind は
+// 復元には読まないが、一覧の区切りと絞り込みで使うので一緒に確かめる。
 func probeReadable(db *sql.DB) error {
-	rows, err := db.Query(`SELECT id, ` + selectCols + ` FROM media LIMIT 1`)
+	rows, err := db.Query(`SELECT id, ` + selectCols + `, day, kind FROM media LIMIT 1`)
 	if err != nil {
 		return fmt.Errorf("cannot read the database: %w", err)
 	}
@@ -94,19 +99,20 @@ func probeReadable(db *sql.DB) error {
 func (s *Store) Close() error { return s.db.Close() }
 
 const upsertSQL = `
-INSERT INTO media (id, path, owner_uid, taken_at_local, mod_time, day)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO media (id, path, owner_uid, taken_at_local, mod_time, day, kind)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     path           = excluded.path,
     owner_uid      = excluded.owner_uid,
     taken_at_local = excluded.taken_at_local,
     mod_time       = excluded.mod_time,
-    day            = excluded.day`
+    day            = excluded.day,
+    kind           = excluded.kind`
 
 // Upsert は1件を登録または更新する。
 func (s *Store) Upsert(ctx context.Context, m media.Media) error {
 	_, err := s.db.ExecContext(ctx, upsertSQL,
-		m.ID(), m.Path(), int64(m.OwnerUID()), m.TakenAtLocal(), m.ModTime().Unix(), m.Day())
+		m.ID(), m.Path(), int64(m.OwnerUID()), m.TakenAtLocal(), m.ModTime().Unix(), m.Day(), string(m.Kind()))
 	if err != nil {
 		return fmt.Errorf("cannot save the media (%s): %w", m.Path(), err)
 	}
@@ -250,8 +256,8 @@ func (s *Store) RankOf(ctx context.Context, f Filter, id string) (int, error) {
 	}
 
 	// 自分より前に並ぶ行を数える。OFFSET で数えるのと違い、途中の行を読まずに
-	// 索引だけで答えが出る。持ち主で絞ると owner_uid を見るために行も読むが、
-	// 写真の数からして問題にならないので、持ち主を含む索引は持たない。
+	// 索引だけで答えが出る。持ち主や種類で絞るとその列を見るために行も読むが、
+	// 写真の数からして問題にならないので、それらを含む索引は持たない。
 	var rank int
 	err = s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM media
@@ -344,7 +350,7 @@ func (s *Store) Owners(ctx context.Context) ([]uint32, error) {
 
 // selectCols は scanMedia の Scan と列順を合わせるための並び。idは含めない。
 // パスから導ける値なので、復元は media.Restore に任せる。day も同じく
-// taken_at_local から導けるので含めない。
+// taken_at_local から、kind もパスから導けるので含めない。
 const selectCols = `path, owner_uid, taken_at_local, mod_time`
 
 // scanMedia は1行を復元する。引数の並びは selectCols と一致していなければならない。
@@ -363,6 +369,12 @@ func scanMedia(row interface{ Scan(...any) error }) (media.Media, error) {
 func (f Filter) where() (string, []any) {
 	var conds []string
 	var args []any
+	if len(f.Kinds) > 0 {
+		conds = append(conds, "kind IN (?"+strings.Repeat(", ?", len(f.Kinds)-1)+")")
+		for _, k := range f.Kinds {
+			args = append(args, string(k))
+		}
+	}
 	if len(f.Owners) > 0 {
 		conds = append(conds, "owner_uid IN (?"+strings.Repeat(", ?", len(f.Owners)-1)+")")
 		for _, uid := range f.Owners {

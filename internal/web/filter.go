@@ -8,18 +8,30 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yendo/famifo-proto/internal/media"
 	"github.com/yendo/famifo-proto/internal/owner"
 	"github.com/yendo/famifo-proto/internal/store"
 )
 
-// filterFrom は要求のクエリから一覧の絞り込みを読む。?owner= は何度でも書け、
-// 選んだ誰かが撮った写真に絞る。どれか1つでも uid として読めなければエラーにする。
+// filterFrom は要求のクエリから一覧の絞り込みを読む。?kind= と ?owner= はどちらも
+// 何度でも書ける。?kind= は選んだどれかの種類に、?owner= は選んだ誰かが撮った写真に
+// 絞り、両方あれば両方を満たすものに絞る。どれか1つでも読めない値があればエラーにする。
 //
 // 値は重複を落として小さい順に並べる。filterURL はこの並びのまま書くので、同じ
 // 条件の組は同じ URL になる。
 func filterFrom(r *http.Request) (store.Filter, error) {
 	var f store.Filter
-	for _, raw := range r.URL.Query()["owner"] {
+	q := r.URL.Query()
+	for _, raw := range q["kind"] {
+		k := media.Kind(raw)
+		if k != media.Photo && k != media.Video {
+			return store.Filter{}, fmt.Errorf("invalid kind: %q", raw)
+		}
+		f.Kinds = append(f.Kinds, k)
+	}
+	slices.Sort(f.Kinds)
+	f.Kinds = slices.Compact(f.Kinds)
+	for _, raw := range q["owner"] {
 		uid, err := strconv.ParseUint(raw, 10, 32)
 		if err != nil {
 			return store.Filter{}, fmt.Errorf("invalid owner: %q", raw)
@@ -35,14 +47,33 @@ func filterFrom(r *http.Request) (store.Filter, error) {
 // path のまま。絞り込みを引き継ぐ URL は、すべてここで作る。JS は条件の組み立て方を
 // 知らない。条件を変えるときは、パネルのフォームをブラウザが送る。
 func filterURL(path string, f store.Filter) string {
-	if len(f.Owners) == 0 {
+	if len(f.Kinds) == 0 && len(f.Owners) == 0 {
 		return path
 	}
 	q := url.Values{}
+	for _, k := range f.Kinds {
+		q.Add("kind", string(k))
+	}
 	for _, uid := range f.Owners {
 		q.Add("owner", strconv.FormatUint(uint64(uid), 10))
 	}
 	return path + "?" + q.Encode()
+}
+
+// kindChoice はパネルの種類の節の1項目。チェックボックスの値は Kind である。
+type kindChoice struct {
+	Label    string
+	Kind     media.Kind
+	Selected bool
+}
+
+// kindChoices は種類の節の項目を写真・動画の順で返す。どちらも常に並べる。
+func kindChoices(f store.Filter) []kindChoice {
+	out := []kindChoice{{Label: "写真", Kind: media.Photo}, {Label: "動画", Kind: media.Video}}
+	for i := range out {
+		out[i].Selected = slices.Contains(f.Kinds, out[i].Kind)
+	}
+	return out
 }
 
 // ownerChoice はパネルの撮影者の節の1項目。チェックボックスの値は uid である。

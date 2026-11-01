@@ -110,6 +110,17 @@ func (m Media) Day() string { return m.takenAtLocal[:len("2006-01-02")] }
 // サムネイルがどの版から作られたかの判別に使う。
 func (m Media) ModTime() time.Time { return m.modTime }
 
+// Kind は写真か動画かを返す。一覧の絞り込みに使う。
+//
+// Day と同じくパスから導く。インデックスには絞り込みのために書くが、別に持つと
+// パスとずれる経路ができる。
+func (m Media) Kind() Kind {
+	if imagefmt.IsVideo(m.path) {
+		return Video
+	}
+	return Photo
+}
+
 // IsCandidate は path がインデックスに載りうるかを報告する。パスだけで
 // 決まる条件に限り、ファイルの状態（シンボリックリンクか、中身が拡張子の
 // とおりか）は見ない。それは読む直前にしか確かめられない。
@@ -120,3 +131,11 @@ func (m Media) ModTime() time.Time { return m.modTime }
 func IsCandidate(path string) bool {
 	return imagefmt.IsSupported(path) && !synology.InManagedDir(path)
 }
+
+// Kind は1件の種類。値はインデックスの列と URL にそのまま書く。
+type Kind string
+
+const (
+	Photo Kind = "photo"
+	Video Kind = "video"
+)

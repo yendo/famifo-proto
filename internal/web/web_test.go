@@ -460,6 +460,33 @@ func TestGalleryFiltersByOwner(t *testing.T) {
 	require.Equal(t, 3, got[0].Count)
 }
 
+// ?kind= で絞ると、選んだ種類だけになる。撮影者の条件とは両方を満たすものに絞る。
+func TestGalleryFiltersByKind(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		target string
+		total  int
+	}{
+		{"/?kind=photo", 2},
+		{"/?kind=video", 2},
+		{"/?kind=photo&kind=video", 4},
+		{"/?kind=video&owner=1000", 1},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			t.Parallel()
+			f := newWebFixture(t, 10)
+			f.addOwnedBy(t, "a.jpg", 1000)
+			f.addOwnedBy(t, "b.mov", 1000)
+			f.addOwnedBy(t, "c.jpg", 1001)
+			f.addOwnedBy(t, "d.mp4", 1001)
+
+			body := doGet(t, f.h, tc.target).Body.String()
+
+			require.Contains(t, body, fmt.Sprintf(`data-total="%d"`, tc.total))
+		})
+	}
+}
+
 func TestTilesFilterByOwner(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
@@ -469,6 +496,17 @@ func TestTilesFilterByOwner(t *testing.T) {
 	got := getTiles(t, f.h, "/tiles?chunk=0&owner=1000")
 
 	require.Equal(t, []string{a.ID()}, tileIDs(got))
+}
+
+func TestTilesFilterByKind(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	f.addOwnedBy(t, "a.jpg", 1000)
+	v := f.addOwnedBy(t, "b.mov", 1000)
+
+	got := getTiles(t, f.h, "/tiles?chunk=0&kind=video")
+
+	require.Equal(t, []string{v.ID()}, tileIDs(got))
 }
 
 // タイルのリンク先は絞り込みを引き継ぐ。個別表示で前後に送っても、閉じても、
@@ -495,6 +533,7 @@ func TestGalleryShipsTheFilteredURLs(t *testing.T) {
 		{"/", `data-tiles="/tiles"`, `data-home="/"`},
 		{"/?owner=1000", `data-tiles="/tiles?owner=1000"`, `data-home="/?owner=1000"`},
 		{"/?owner=1001&owner=1000", `data-tiles="/tiles?owner=1000&amp;owner=1001"`, `data-home="/?owner=1000&amp;owner=1001"`},
+		{"/?owner=1000&kind=video&kind=photo&kind=video", `data-tiles="/tiles?kind=photo&amp;kind=video&amp;owner=1000"`, `data-home="/?kind=photo&amp;kind=video&amp;owner=1000"`},
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			t.Parallel()
@@ -544,6 +583,23 @@ func TestFilterRejectsABadOwner(t *testing.T) {
 		"/?owner=4294967296", // uint32 に収まらない
 		"/tiles?owner=abc",
 		"/item/" + m.ID() + "?owner=abc",
+	} {
+		t.Run(target, func(t *testing.T) {
+			require.Equal(t, http.StatusBadRequest, doGet(t, f.h, target).Code)
+		})
+	}
+}
+
+func TestFilterRejectsABadKind(t *testing.T) {
+	t.Parallel()
+	f := newWebFixture(t, 10)
+	m := f.addOwnedBy(t, "a.jpg", 1000)
+	for _, target := range []string{
+		"/?kind=movie",
+		"/?kind=photo&kind=",
+		"/?kind=Video", // 値は小文字だけ
+		"/tiles?kind=movie",
+		"/item/" + m.ID() + "?kind=movie",
 	} {
 		t.Run(target, func(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, doGet(t, f.h, target).Code)
@@ -634,17 +690,51 @@ func TestPanelToggleIsAnIconWithALabel(t *testing.T) {
 	require.NotContains(t, button, `>絞り込み`, "the toggle shows no text")
 }
 
+// kindCheckbox はパネルの種類の項目のチェックボックス。テンプレートと同じ形で書く。
+func kindCheckbox(kind media.Kind, checked bool) string {
+	attr := ""
+	if checked {
+		attr = " checked"
+	}
+	return fmt.Sprintf(`<input type="checkbox" name="kind" value="%s"%s>`, kind, attr)
+}
+
+// 種類の節は撮影者の節より前に、写真・動画の順で並ぶ。選んでいる種類にチェックが付き、
+// 絞り込みボタンが目立つ色になる。
+func TestPanelListsTheKindsBeforeTheOwners(t *testing.T) {
+	t.Parallel()
+	me, _ := twoNamedOwners(t)
+	f := newWebFixture(t, 10)
+	f.addOwnedBy(t, "mine.jpg", me)
+
+	body := doGet(t, f.h, "/?kind=video").Body.String()
+
+	photo := kindCheckbox(media.Photo, false)
+	video := kindCheckbox(media.Video, true)
+	require.Contains(t, body, photo)
+	require.Contains(t, body, video)
+	require.Contains(t, body, "<span>写真</span>")
+	require.Contains(t, body, "<span>動画</span>")
+	require.Less(t, strings.Index(body, photo), strings.Index(body, video), "photos come first")
+	require.Less(t, strings.Index(body, "<legend>種類</legend>"), strings.Index(body, "<legend>撮影者</legend>"))
+	require.Less(t, strings.Index(body, video), strings.Index(body, `name="owner"`))
+	require.Contains(t, body, `filter-toggle active`)
+}
+
 // 名前の引ける撮影者が1人もいなければ（/etc/passwd をマウントしていないなど）、
-// 節が無いのでパネルもボタンも出さない。
-func TestPanelIsAbsentWithoutNamedOwners(t *testing.T) {
+// 撮影者の節だけを出さない。種類では絞れるので、パネルとボタンは出す。
+func TestPanelOmitsTheOwnersWithoutNamedOwners(t *testing.T) {
 	t.Parallel()
 	f := newWebFixture(t, 10)
 	f.addOwnedBy(t, "nobodys.jpg", 65534)
 
 	body := doGet(t, f.h, "/").Body.String()
 
-	require.NotContains(t, body, `id="filters"`)
-	require.NotContains(t, body, `filter-toggle`)
+	require.Contains(t, body, `id="filters"`)
+	require.Contains(t, body, `filter-toggle`)
+	require.Contains(t, body, kindCheckbox(media.Photo, false))
+	require.NotContains(t, body, "撮影者")
+	require.NotContains(t, body, `name="owner"`)
 }
 
 func doGet(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
