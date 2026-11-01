@@ -486,17 +486,18 @@ func ownedAt(t *testing.T, path string, uid uint32, takenAt time.Time) media.Med
 	return m
 }
 
-// seedThreeOwners は3人分の写真を2日に分けて入れる。新しい順に
+// seedThreeOwners は3人分の写真と動画を2日に分けて入れる。新しい順に
 // a1(1000), b1(1001), r1(0) が 2026-02-08、a2(1000), b2(1001) が 2026-02-03。
+// b1 と a2 が動画で、ほかは写真。
 // root の uid 0 を混ぜて、「指定なし」と取り違えないことも一緒に縛る。
 func seedThreeOwners(t *testing.T, s *store.Store) {
 	t.Helper()
 	ctx := context.Background()
 	for _, m := range []media.Media{
 		ownedAt(t, "/items/a1.jpg", 1000, time.Date(2026, 2, 8, 12, 0, 0, 0, time.UTC)),
-		ownedAt(t, "/items/b1.jpg", 1001, time.Date(2026, 2, 8, 11, 0, 0, 0, time.UTC)),
+		ownedAt(t, "/items/b1.mov", 1001, time.Date(2026, 2, 8, 11, 0, 0, 0, time.UTC)),
 		ownedAt(t, "/items/r1.jpg", 0, time.Date(2026, 2, 8, 10, 0, 0, 0, time.UTC)),
-		ownedAt(t, "/items/a2.jpg", 1000, time.Date(2026, 2, 3, 12, 0, 0, 0, time.UTC)),
+		ownedAt(t, "/items/a2.mp4", 1000, time.Date(2026, 2, 3, 12, 0, 0, 0, time.UTC)),
 		ownedAt(t, "/items/b2.jpg", 1001, time.Date(2026, 2, 3, 11, 0, 0, 0, time.UTC)),
 	} {
 		require.NoError(t, s.Upsert(ctx, m))
@@ -505,7 +506,7 @@ func seedThreeOwners(t *testing.T, s *store.Store) {
 
 // 総枚数・日ごとの並び・チャンクの3つが同じ条件で絞られること。どれか1つでも
 // 条件を落とすと、一覧の高さと中身がずれる。
-func TestFilterByOwners(t *testing.T) {
+func TestFilterNarrowsTheGallery(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name  string
@@ -516,19 +517,19 @@ func TestFilterByOwners(t *testing.T) {
 		{
 			"no filter",
 			store.Filter{},
-			[]string{"/items/a1.jpg", "/items/b1.jpg", "/items/r1.jpg", "/items/a2.jpg", "/items/b2.jpg"},
+			[]string{"/items/a1.jpg", "/items/b1.mov", "/items/r1.jpg", "/items/a2.mp4", "/items/b2.jpg"},
 			[]store.DayGroup{{Date: "2026-02-08", Count: 3}, {Date: "2026-02-03", Count: 2}},
 		},
 		{
 			"one owner",
 			store.Filter{Owners: []uint32{1000}},
-			[]string{"/items/a1.jpg", "/items/a2.jpg"},
+			[]string{"/items/a1.jpg", "/items/a2.mp4"},
 			[]store.DayGroup{{Date: "2026-02-08", Count: 1}, {Date: "2026-02-03", Count: 1}},
 		},
 		{
 			"two owners",
 			store.Filter{Owners: []uint32{1000, 1001}},
-			[]string{"/items/a1.jpg", "/items/b1.jpg", "/items/a2.jpg", "/items/b2.jpg"},
+			[]string{"/items/a1.jpg", "/items/b1.mov", "/items/a2.mp4", "/items/b2.jpg"},
 			[]store.DayGroup{{Date: "2026-02-08", Count: 2}, {Date: "2026-02-03", Count: 2}},
 		},
 		{
@@ -536,6 +537,30 @@ func TestFilterByOwners(t *testing.T) {
 			store.Filter{Owners: []uint32{0}},
 			[]string{"/items/r1.jpg"},
 			[]store.DayGroup{{Date: "2026-02-08", Count: 1}},
+		},
+		{
+			"photos",
+			store.Filter{Kinds: []media.Kind{media.Photo}},
+			[]string{"/items/a1.jpg", "/items/r1.jpg", "/items/b2.jpg"},
+			[]store.DayGroup{{Date: "2026-02-08", Count: 2}, {Date: "2026-02-03", Count: 1}},
+		},
+		{
+			"videos",
+			store.Filter{Kinds: []media.Kind{media.Video}},
+			[]string{"/items/b1.mov", "/items/a2.mp4"},
+			[]store.DayGroup{{Date: "2026-02-08", Count: 1}, {Date: "2026-02-03", Count: 1}},
+		},
+		{
+			"both kinds",
+			store.Filter{Kinds: []media.Kind{media.Photo, media.Video}},
+			[]string{"/items/a1.jpg", "/items/b1.mov", "/items/r1.jpg", "/items/a2.mp4", "/items/b2.jpg"},
+			[]store.DayGroup{{Date: "2026-02-08", Count: 3}, {Date: "2026-02-03", Count: 2}},
+		},
+		{
+			"videos of one owner",
+			store.Filter{Kinds: []media.Kind{media.Video}, Owners: []uint32{1000}},
+			[]string{"/items/a2.mp4"},
+			[]store.DayGroup{{Date: "2026-02-03", Count: 1}},
 		},
 		{
 			"an owner without photos",
@@ -576,8 +601,10 @@ func TestRankOfLocatesTheItemInAFilteredListRange(t *testing.T) {
 	for _, f := range []store.Filter{
 		{Owners: []uint32{1000}},
 		{Owners: []uint32{1000, 1001}},
+		{Kinds: []media.Kind{media.Video}},
+		{Kinds: []media.Kind{media.Photo}, Owners: []uint32{1000, 1001}},
 	} {
-		t.Run(fmt.Sprint(f.Owners), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%+v", f), func(t *testing.T) {
 			t.Parallel()
 			s := openTestStore(t)
 			ctx := context.Background()
@@ -594,17 +621,26 @@ func TestRankOfLocatesTheItemInAFilteredListRange(t *testing.T) {
 	}
 }
 
-// 選んでいない人の写真は、絞り込んだ一覧には無い。/item/{id} は一覧へ送り直す。
+// 選んでいない人の写真や、選んでいない種類は、絞り込んだ一覧には無い。
+// /item/{id} は一覧へ送り直す。
 func TestRankOfOutsideTheFilterReturnsErrNotFound(t *testing.T) {
 	t.Parallel()
-	s := openTestStore(t)
-	ctx := context.Background()
-	seedThreeOwners(t, s)
-	other := ownedAt(t, "/items/b1.jpg", 1001, time.Date(2026, 2, 8, 11, 0, 0, 0, time.UTC))
+	for _, f := range []store.Filter{
+		{Owners: []uint32{1000}},
+		{Kinds: []media.Kind{media.Photo}},
+	} {
+		t.Run(fmt.Sprintf("%+v", f), func(t *testing.T) {
+			t.Parallel()
+			s := openTestStore(t)
+			ctx := context.Background()
+			seedThreeOwners(t, s)
+			other := ownedAt(t, "/items/b1.mov", 1001, time.Date(2026, 2, 8, 11, 0, 0, 0, time.UTC))
 
-	_, err := s.RankOf(ctx, store.Filter{Owners: []uint32{1000}}, other.ID())
+			_, err := s.RankOf(ctx, f, other.ID())
 
-	require.ErrorIs(t, err, store.ErrNotFound)
+			require.ErrorIs(t, err, store.ErrNotFound)
+		})
+	}
 }
 
 // 撮影者の選択肢の元。写真のある uid だけを、重複なしで小さい順に返す。
@@ -650,6 +686,32 @@ CREATE TABLE media (
     day      TEXT NOT NULL
 );
 CREATE INDEX idx_media_order ON media(shot_at DESC, id DESC);`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	_, err = store.Open(path)
+
+	require.Error(t, err, "an unreadable database must not start up")
+	require.Contains(t, err.Error(), "cannot read the database")
+}
+
+// 種類の列が無かった世代のDB。一覧の読み出しには使わない列でも、絞り込みと書き込みで
+// 落ちるので Open で弾く。
+func TestOpenRejectsADatabaseWithoutTheKind(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "stale.db")
+
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+CREATE TABLE media (
+    id             TEXT PRIMARY KEY,
+    path           TEXT NOT NULL UNIQUE,
+    owner_uid      INTEGER NOT NULL,
+    taken_at_local TEXT NOT NULL,
+    mod_time       INTEGER NOT NULL,
+    day            TEXT NOT NULL
+);`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 

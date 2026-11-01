@@ -132,7 +132,7 @@ body.locked {
 .filters.open {
 	display: block;
 }
-/* 見出しと項目は同じ大きさにし、見出しは太字で分ける。チェックボックスは
+/* 見出しは太字にし、項目は一段小さくして分ける。チェックボックスは
    右端に寄せ、チェックを変えても名前の位置が動かないようにする。 */
 .filter-section {
 	margin: 0 0 12px;
@@ -151,6 +151,7 @@ body.locked {
 	justify-content: space-between;
 	gap: 8px;
 	padding: 8px 0;
+	font-size: 0.8rem;
 	cursor: pointer;
 }
 .filter-section input {

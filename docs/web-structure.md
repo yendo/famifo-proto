@@ -34,8 +34,8 @@ routes (methods of Handler)                               web.go
   GET /info/{id}   handleInfo  ----> lookupMedia -> owner.Name -> JSON
 
 filter.go
-  filterFrom (?owner= -> store.Filter), filterURL (store.Filter -> query),
-  ownerChoices (store.Owners -> owner.Name)
+  filterFrom (?kind=, ?owner= -> store.Filter), filterURL (store.Filter -> query),
+  kindChoices (photo, video), ownerChoices (store.Owners -> owner.Name)
 ```
 
 ## View models and templates
@@ -46,11 +46,11 @@ indexView                          view.go
   +-- TilesURL, HomeURL (carry the filter)
   +-- DayGroups ([]dayGroup as JSON)
   +-- OpenIndex, AuthEnabled
-  +-- Filtered, Owners ([]ownerChoice)
+  +-- Filtered, Kinds ([]kindChoice), Owners ([]ownerChoice)
 
 []mediaView (JSON from /tiles)     view.go
   {id, pageUrl, fullUrl, thumbUrl, infoUrl, date, isVideo}
-  pageUrl carries the filter (/item/{id}?owner=...)
+  pageUrl carries the filter (/item/{id}?kind=...&owner=...)
 
 infoView (JSON from /info/{id})    view.go
   {owner?, takenAt}

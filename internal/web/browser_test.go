@@ -2761,8 +2761,8 @@ func TestFilterSidebarOnWideScreens(t *testing.T) {
 	require.True(t, after.Panel)
 }
 
-// 狭い画面ではパネルは隠れていて、ボタンで開く。チェックを入れるとその人の
-// 一覧になり、絞り込み中はボタンが目立つ色になる。
+// 狭い画面ではパネルは隠れていて、ボタンで開く。開いている間のチェックは溜めて
+// おき、閉じたときにまとめて送る。絞り込み中はボタンが目立つ色になる。
 func TestFilterSheetOnNarrowScreens(t *testing.T) {
 	requireBrowser(t)
 	me, root := twoNamedOwners(t)
@@ -2790,10 +2790,29 @@ func TestFilterSheetOnNarrowScreens(t *testing.T) {
 	require.False(t, closed.Active, "nothing is filtered yet")
 	require.True(t, opened.Panel, "the toggle opens the sheet")
 
-	_, err = chromedp.RunResponse(rctx, chromedp.Click(ownerBox(me), chromedp.NodeVisible))
+	// 開いている間はチェックを変えても送らない。続けて何項目でも選べる。読み直すと
+	// 消える印を置いておき、同じページのままであることを確かめる。
+	var search string
+	var stayed bool
+	var pending filterPanelState
+	err = chromedp.Run(rctx,
+		chromedp.Evaluate(`window.samePage = true`, nil),
+		chromedp.Click(ownerBox(me), chromedp.NodeVisible),
+		chromedp.Click(ownerBox(root), chromedp.NodeVisible),
+		chromedp.Click(ownerBox(root), chromedp.NodeVisible),
+		chromedp.Evaluate(`window.samePage === true`, &stayed),
+		chromedp.Evaluate(`location.search`, &search),
+		chromedp.Evaluate(filterPanelJS, &pending),
+	)
+	require.NoError(t, err)
+	require.True(t, stayed, "a change inside the sheet does not reload the page")
+	require.Empty(t, search)
+	require.True(t, pending.Panel, "the sheet stays open while picking")
+
+	// 閉じると、溜めた変更をまとめて1回送る。
+	_, err = chromedp.RunResponse(rctx, chromedp.Click(`.filter-toggle`, chromedp.NodeVisible))
 	require.NoError(t, err)
 
-	var search string
 	var tiles int
 	err = chromedp.Run(rctx,
 		waitForGallery(10*time.Second),

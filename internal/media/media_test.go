@@ -129,3 +129,25 @@ func TestRestoreKeepsTheStoredValues(t *testing.T) {
 	require.Equal(t, "2021-03-04", m.Day())
 	require.True(t, m.ModTime().Equal(testModTime))
 }
+
+// 種類は拡張子から決まる。一覧を写真か動画かで絞るのに使う。
+func TestKindFollowsTheExtension(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		path string
+		want media.Kind
+	}{
+		{"/items/a.jpg", media.Photo},
+		{"/items/a.heic", media.Photo},
+		{"/items/clip.mov", media.Video},
+		{"/items/CLIP.MP4", media.Video},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
+			m, err := media.New(tc.path, 0, time.Time{}, testModTime)
+
+			require.NoError(t, err)
+			require.Equal(t, tc.want, m.Kind())
+		})
+	}
+}

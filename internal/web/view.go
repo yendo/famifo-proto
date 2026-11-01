@@ -23,7 +23,9 @@ type indexView struct {
 	OpenIndex int
 	// Filtered は条件が1つでも掛かっているか。狭い画面の絞り込みボタンの色に使う。
 	Filtered bool
-	// Owners はパネルの撮影者の節の項目。名前順。空なら節もパネルも出さない。
+	// Kinds はパネルの種類の節の項目。写真・動画の順。
+	Kinds []kindChoice
+	// Owners はパネルの撮影者の節の項目。名前順。空なら節を出さない。
 	Owners []ownerChoice
 	// AuthEnabled は認証が有効かどうか。無効ならログアウトのボタンを出さない。
 	AuthEnabled bool
@@ -78,7 +80,8 @@ func (h *Handler) buildIndexView(r *http.Request, f store.Filter, openIndex int)
 		Total: total, ChunkSize: h.chunkSize,
 		TilesURL: filterURL("/tiles", f), HomeURL: filterURL("/", f),
 		DayGroups: dayGroups, OpenIndex: openIndex,
-		Filtered:    len(f.Owners) > 0,
+		Filtered:    len(f.Kinds) > 0 || len(f.Owners) > 0,
+		Kinds:       kindChoices(f),
 		Owners:      owners,
 		AuthEnabled: h.auth != nil,
 	}, nil
