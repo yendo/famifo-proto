@@ -107,28 +107,33 @@ body.locked {
 .filters.open {
 	display: block;
 }
-.filter-section h2 {
-	margin: 0 0 4px;
-	font-size: 0.8rem;
-	font-weight: normal;
-	opacity: 0.6;
-}
-.filter-section ul {
+/* 見出しと項目は同じ大きさにし、見出しは太字で分ける。チェックボックスは
+   右端に寄せ、チェックを変えても名前の位置が動かないようにする。 */
+.filter-section {
 	margin: 0 0 12px;
 	padding: 0;
-	list-style: none;
+	border: 0;
+	font-size: 0.9rem;
 }
-.filter-section a {
-	display: block;
-	padding: 8px 0;
-	color: var(--fg);
-	text-decoration: none;
-}
-.filter-section a.selected {
+.filter-section legend {
+	padding: 0;
+	margin-bottom: 4px;
 	font-weight: bold;
 }
-.filter-section a.selected::before {
-	content: "✓ ";
+.filter-section label {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 8px 0;
+	cursor: pointer;
+}
+.filter-section input {
+	flex: none;
+	margin: 0;
+	width: 1.1em;
+	height: 1.1em;
+	cursor: pointer;
 }
 /* 広い画面ではパネルを左のサイドバーとして常に出す。トップバーの下に
    貼り付けて、一覧をスクロールしても残す。一覧は残りの幅に収まり、列数は

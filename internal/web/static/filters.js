@@ -1,15 +1,20 @@
 // @ts-check
 
-// 絞り込みのパネルを、狭い画面でシートとして開け閉めする。広い画面ではボタンが
-// 出ず、パネルは CSS がサイドバーとして常に出す。項目はただのリンクなので、
-// 選んだ後の処理はここには無い。
+// 絞り込みのパネル。チェックを変えたらフォームを送る。狭い画面ではシートとして
+// 開け閉めする。広い画面ではボタンが出ず、パネルは CSS がサイドバーとして常に出す。
 
 (() => {
 	/** @type {HTMLElement | null} */
 	const btn = document.querySelector(".filter-toggle");
-	/** @type {HTMLElement | null} */
+	/** @type {HTMLFormElement | null} */
 	const panel = document.querySelector("#filters");
-	if (!btn || !panel) return;
+	if (!panel) return;
+
+	// チェックボックスは変えただけでは何も送らない。変えるたびに送り、選んだ
+	// 条件の一覧に読み直す。
+	panel.addEventListener("change", () => panel.requestSubmit());
+
+	if (!btn) return;
 
 	btn.addEventListener("click", () => {
 		const open = panel.classList.toggle("open");

@@ -35,19 +35,17 @@
 
 <div class="page">
   {{/* 絞り込みのパネル。広い画面では左のサイドバー、狭い画面では下から出る
-       シートになる（app.css）。項目はどれもサーバーが作った URL へのリンクで、
-       選ぶとページごと読み直す。節は条件ごとに並べる。 */}}
+       シートになる（app.css）。一覧への GET のフォームで、チェックを変えると
+       filters.js が送り、ページごと読み直す。節は条件ごとに並べ、どの節の
+       チェックも同じフォームで一緒に送られる。何もチェックしなければ絞らない。 */}}
   {{if .Owners}}
-  <nav id="filters" class="filters" aria-label="絞り込み">
-    <section class="filter-section">
-      <h2>撮影者</h2>
-      <ul>
-        <li><a href="{{.EveryOwnerURL}}"{{if .EveryOwner}} class="selected"{{end}}>全員</a></li>
-        {{range .Owners}}<li><a href="{{.URL}}"{{if .Selected}} class="selected"{{end}}>{{.Name}}</a></li>
-        {{end}}
-      </ul>
-    </section>
-  </nav>
+  <form id="filters" class="filters" method="get" action="/" aria-label="絞り込み">
+    <fieldset class="filter-section">
+      <legend>撮影者</legend>
+      {{range .Owners}}<label><span>{{.Name}}</span><input type="checkbox" name="owner" value="{{.UID}}"{{if .Selected}} checked{{end}}></label>
+      {{end}}
+    </fieldset>
+  </form>
   {{end}}
 <main id="gallery" class="gallery" data-total="{{.Total}}" data-chunk="{{.ChunkSize}}" data-tiles="{{.TilesURL}}" data-home="{{.HomeURL}}" data-open="{{.OpenIndex}}">
   <div id="spacer">

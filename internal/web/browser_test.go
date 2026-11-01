@@ -47,7 +47,6 @@ import (
 
 	"github.com/yendo/famifo-proto/internal/index"
 	"github.com/yendo/famifo-proto/internal/media"
-	"github.com/yendo/famifo-proto/internal/owner"
 	"github.com/yendo/famifo-proto/internal/store"
 	"github.com/yendo/famifo-proto/internal/thumb"
 )
@@ -2710,17 +2709,13 @@ type filterPanelState struct {
 	Active bool `json:"active"`
 }
 
-// ownerHrefJS は撮影者の節で name の項目のリンク先を読む JS 式を返す。項目は
-// ただのリンクなので、押した後の動きはブラウザに任せてよい。テストは押す代わりに
-// このリンク先を Navigate で開く。JS で押して読み直しを Poll で待つと、古い
-// 実行コンテキストで評価して落ちることがある。
-func ownerHrefJS(name string) string {
-	return fmt.Sprintf(`[...document.querySelectorAll('#filters a')].find(a => a.textContent === %s).getAttribute('href')`,
-		strconv.Quote(name))
+// ownerBox は撮影者の節で uid のチェックボックスを指すセレクタ。
+func ownerBox(uid uint32) string {
+	return fmt.Sprintf(`#filters input[name="owner"][value="%d"]`, uid)
 }
 
-// 広い画面ではパネルが左に常に出ていて、ボタンは出ない。項目を押すとその人の
-// 写真だけの一覧になる。
+// 広い画面ではパネルが左に常に出ていて、ボタンは出ない。チェックを入れると
+// その人の写真だけの一覧になる。
 func TestFilterSidebarOnWideScreens(t *testing.T) {
 	requireBrowser(t)
 	me, root := twoNamedOwners(t)
@@ -2735,33 +2730,39 @@ func TestFilterSidebarOnWideScreens(t *testing.T) {
 	defer cancel()
 
 	var before, after filterPanelState
-	var href string
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(1400, 900),
 		chromedp.Navigate(url),
 		waitForGallery(10*time.Second),
 		chromedp.Evaluate(filterPanelJS, &before),
-		chromedp.Evaluate(ownerHrefJS(owner.Name(root)), &href),
 	)
 	require.NoError(t, err)
 	require.True(t, before.Panel, "the sidebar is always shown on wide screens")
 	require.False(t, before.Toggle, "the toggle is only for narrow screens")
-	require.Equal(t, "/?owner=0", href)
 
+	// チェックを入れるとフォームが送られ、ページごと読み直す。
+	_, err = chromedp.RunResponse(rctx, chromedp.Click(ownerBox(root), chromedp.NodeVisible))
+	require.NoError(t, err)
+
+	var search string
 	var tiles int
+	var checked bool
 	err = chromedp.Run(rctx,
-		chromedp.Navigate(url+href),
 		waitForGallery(10*time.Second),
+		chromedp.Evaluate(`location.search`, &search),
 		chromedp.Evaluate(`document.querySelectorAll('#window .tile').length`, &tiles),
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%s).checked`, strconv.Quote(ownerBox(root))), &checked),
 		chromedp.Evaluate(filterPanelJS, &after),
 	)
 	require.NoError(t, err)
+	require.Equal(t, "?owner=0", search)
 	require.Equal(t, 1, tiles, "only the photo of root is listed")
+	require.True(t, checked, "the new page keeps the check")
 	require.True(t, after.Panel)
 }
 
-// 狭い画面ではパネルは隠れていて、ボタンで開く。項目を押すとその人の一覧になり、
-// 絞り込み中はボタンが目立つ色になる。
+// 狭い画面ではパネルは隠れていて、ボタンで開く。チェックを入れるとその人の
+// 一覧になり、絞り込み中はボタンが目立つ色になる。
 func TestFilterSheetOnNarrowScreens(t *testing.T) {
 	requireBrowser(t)
 	me, root := twoNamedOwners(t)
@@ -2775,7 +2776,6 @@ func TestFilterSheetOnNarrowScreens(t *testing.T) {
 	defer cancel()
 
 	var closed, opened, filtered filterPanelState
-	var href string
 	err := chromedp.Run(rctx,
 		chromedp.EmulateViewport(400, 800),
 		chromedp.Navigate(url),
@@ -2783,23 +2783,26 @@ func TestFilterSheetOnNarrowScreens(t *testing.T) {
 		chromedp.Evaluate(filterPanelJS, &closed),
 		chromedp.Click(`.filter-toggle`, chromedp.NodeVisible),
 		chromedp.Evaluate(filterPanelJS, &opened),
-		chromedp.Evaluate(ownerHrefJS(owner.Name(me)), &href),
 	)
 	require.NoError(t, err)
 	require.False(t, closed.Panel, "the sheet starts closed")
 	require.True(t, closed.Toggle)
 	require.False(t, closed.Active, "nothing is filtered yet")
 	require.True(t, opened.Panel, "the toggle opens the sheet")
-	require.Equal(t, "/?owner="+fmt.Sprint(me), href)
 
+	_, err = chromedp.RunResponse(rctx, chromedp.Click(ownerBox(me), chromedp.NodeVisible))
+	require.NoError(t, err)
+
+	var search string
 	var tiles int
 	err = chromedp.Run(rctx,
-		chromedp.Navigate(url+href),
 		waitForGallery(10*time.Second),
+		chromedp.Evaluate(`location.search`, &search),
 		chromedp.Evaluate(`document.querySelectorAll('#window .tile').length`, &tiles),
 		chromedp.Evaluate(filterPanelJS, &filtered),
 	)
 	require.NoError(t, err)
+	require.Equal(t, "?owner="+fmt.Sprint(me), search)
 	require.Equal(t, 1, tiles)
 	require.False(t, filtered.Panel, "the new page starts with the sheet closed")
 	require.True(t, filtered.Active, "the toggle shows that a filter is on")

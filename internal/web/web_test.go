@@ -551,17 +551,18 @@ func TestFilterRejectsABadOwner(t *testing.T) {
 	}
 }
 
-// ownerLink はパネルの撮影者の項目のマークアップ。テンプレートと同じ形で書く。
-func ownerLink(url, name string, selected bool) string {
-	class := ""
-	if selected {
-		class = ` class="selected"`
+// ownerCheckbox はパネルの撮影者の項目のチェックボックス。テンプレートと同じ形で書く。
+func ownerCheckbox(uid uint32, checked bool) string {
+	attr := ""
+	if checked {
+		attr = " checked"
 	}
-	return `<a href="` + template.HTMLEscapeString(url) + `"` + class + `>` + template.HTMLEscapeString(name) + `</a>`
+	return fmt.Sprintf(`<input type="checkbox" name="owner" value="%d"%s>`, uid, attr)
 }
 
-// 撮影者の節には名前の引ける人だけが名前順に並ぶ。各項目はその人を条件に
-// 入れる（選んでいれば外す）URL へのリンクで、選んでいる人に印が付く。
+// パネルは一覧への GET のフォームで、撮影者の節には名前の引ける人だけが名前順に
+// チェックボックスで並ぶ。選んでいる人にチェックが付く。何も選ばなければ全員なので、
+// 「全員」の項目は無い。
 func TestPanelListsTheNamedOwners(t *testing.T) {
 	t.Parallel()
 	me, root := twoNamedOwners(t)
@@ -570,26 +571,26 @@ func TestPanelListsTheNamedOwners(t *testing.T) {
 	f.addOwnedBy(t, "roots.jpg", root)
 	f.addOwnedBy(t, "nobodys.jpg", 65534)
 
-	meQ := fmt.Sprint(me)
-	body := doGet(t, f.h, "/?owner="+meQ).Body.String()
+	body := doGet(t, f.h, "/?owner="+fmt.Sprint(me)).Body.String()
 
-	// 選んでいる自分を押すと外れて全員、root を押すと2人になる。
-	mine := ownerLink("/", owner.Name(me), true)
-	roots := ownerLink("/?owner=0&owner="+meQ, owner.Name(root), false)
+	require.Contains(t, body, `<form id="filters" class="filters" method="get" action="/"`)
+	mine := ownerCheckbox(me, true)
+	roots := ownerCheckbox(root, false)
 	require.Contains(t, body, mine)
 	require.Contains(t, body, roots)
+	require.Contains(t, body, template.HTMLEscapeString(owner.Name(me)))
+	require.Contains(t, body, template.HTMLEscapeString(owner.Name(root)))
 	first, second := mine, roots
 	if owner.Name(root) < owner.Name(me) {
 		first, second = roots, mine
 	}
 	require.Less(t, strings.Index(body, first), strings.Index(body, second), "ordered by name")
-	// テンプレートは各項目を <li><a href= で始める。
-	require.Equal(t, 3, strings.Count(body, `<li><a href=`), "everyone and the two named owners; nobody is not listed")
-	require.Contains(t, body, ownerLink("/", "全員", false))
+	require.Equal(t, 2, strings.Count(body, `name="owner"`), "the two named owners; nobody is not listed")
+	require.NotContains(t, body, "全員")
 }
 
-// 誰も選んでいなければ「全員」に印が付く。
-func TestPanelMarksEveryoneWithoutAFilter(t *testing.T) {
+// 誰も選んでいなければ、どのチェックボックスにもチェックが付かない。
+func TestPanelChecksNoOneWithoutAFilter(t *testing.T) {
 	t.Parallel()
 	me, _ := twoNamedOwners(t)
 	f := newWebFixture(t, 10)
@@ -597,8 +598,8 @@ func TestPanelMarksEveryoneWithoutAFilter(t *testing.T) {
 
 	body := doGet(t, f.h, "/").Body.String()
 
-	require.Contains(t, body, ownerLink("/", "全員", true))
-	require.Contains(t, body, ownerLink("/?owner="+fmt.Sprint(me), owner.Name(me), false))
+	require.Contains(t, body, ownerCheckbox(me, false))
+	require.NotContains(t, body, ` checked>`)
 	require.NotContains(t, body, `filter-toggle active`)
 }
 
