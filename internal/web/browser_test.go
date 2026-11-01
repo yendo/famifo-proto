@@ -2621,6 +2621,71 @@ func TestLightboxBackButtonCloses(t *testing.T) {
 	require.Equal(t, "/", path)
 }
 
+// 絞り込んだ一覧のチャンクと送り先は、選んだ人の写真だけである。新しい順に
+// a1(1000), b1(1001), a2(1000) と並べる。1000 で絞ると a1 の次は a2 になる。
+func TestLightboxStaysInsideTheFilter(t *testing.T) {
+	requireBrowser(t)
+
+	url, ids := startLightboxServer(t,
+		lightboxItem{"a1.jpg", 1000, time.Unix(1600000200, 0)},
+		lightboxItem{"b1.jpg", 1001, time.Unix(1600000100, 0)},
+		lightboxItem{"a2.jpg", 1000, time.Unix(1600000000, 0)},
+	)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var tiles int
+	var src string
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(url+"/?owner=1000"),
+		waitForGallery(10*time.Second),
+		chromedp.Evaluate(`document.querySelectorAll('#window .tile').length`, &tiles),
+		chromedp.Click(`#window .tile`, chromedp.NodeVisible),
+		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.KeyEvent(kb.ArrowRight),
+		chromedp.Poll(fmt.Sprintf(`location.pathname === %s`, strconv.Quote("/item/"+ids[2])), nil,
+			chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(`document.querySelector('#lightbox img').getAttribute('src')`, &src),
+	)
+	require.NoError(t, err, "the lightbox did not move to the next photo of the owner")
+	require.Equal(t, 2, tiles, "the gallery shows only the photos of the owner")
+	require.Equal(t, "/full/"+ids[2], src)
+
+	var search string
+	err = chromedp.Run(rctx, chromedp.Evaluate(`location.search`, &search))
+	require.NoError(t, err)
+	require.Equal(t, "?owner=1000", search, "the item URL keeps the filter")
+}
+
+// 写真の URL を直接開いたときは戻る先の履歴が無いので、閉じると URL を一覧に
+// 書き直す。そのとき絞り込みを落とさない。
+func TestClosingADirectlyOpenedItemKeepsTheFilter(t *testing.T) {
+	requireBrowser(t)
+
+	url, ids := startLightboxServer(t,
+		lightboxItem{"a1.jpg", 1000, time.Unix(1600000200, 0)},
+		lightboxItem{"b1.jpg", 1001, time.Unix(1600000100, 0)},
+	)
+
+	rctx, cancel := context.WithTimeout(newTab(t), 30*time.Second)
+	defer cancel()
+
+	var here string
+	err := chromedp.Run(rctx,
+		chromedp.EmulateViewport(1200, 900),
+		chromedp.Navigate(url+"/item/"+ids[0]+"?owner=1000"),
+		waitForGallery(10*time.Second),
+		chromedp.Poll(`!document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Click(`#lightbox .lb-back`, chromedp.NodeVisible),
+		chromedp.Poll(`document.querySelector('#lightbox').hidden`, nil, chromedp.WithPollingTimeout(5*time.Second)),
+		chromedp.Evaluate(`location.pathname + location.search`, &here),
+	)
+	require.NoError(t, err, "the back button did not close the lightbox")
+	require.Equal(t, "/?owner=1000", here)
+}
+
 // マウスで操作する端末では前後のボタンが見えていて、押すと送れること。
 // タッチ端末で出さないことは、コンテナを hover できる端末として起動している
 // （setupBrowserEnv を参照）のでここでは確かめられない。

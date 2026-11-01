@@ -44,6 +44,9 @@ export const chunks = (() => {
 
 	const tileCount = Number(root.dataset.total);
 	const chunkSize = Number(root.dataset.chunk);
+	// /tiles の URL はサーバーが絞り込み込みで埋める。ここではチャンクの番号だけを
+	// 足す。絞り込みのクエリを JS で組み立てると、URL の規則が Go と2箇所に分かれる。
+	const tilesUrl = root.dataset.tiles ?? "/tiles";
 
 	/** @type {Map<number, Tile[]>} チャンク番号 -> そのチャンクのタイル */
 	const loaded = new Map();
@@ -135,7 +138,9 @@ export const chunks = (() => {
 
 		const controller = new AbortController();
 		const job = (async () => {
-			const res = await fetch(`/tiles?chunk=${ci}`, {
+			const url = new URL(tilesUrl, location.href);
+			url.searchParams.set("chunk", String(ci));
+			const res = await fetch(url, {
 				signal: controller.signal,
 			});
 			// 401 はセッションが切れたということ。ここで握り潰すと、タイルが永久に
