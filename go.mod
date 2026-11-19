@@ -13,7 +13,7 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.16
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/image v0.47.0
-	golang.org/x/oauth2 v0.37.0
+	golang.org/x/oauth2 v0.38.0
 	modernc.org/sqlite v1.60.1
 )
 
